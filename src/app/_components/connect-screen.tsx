@@ -10,6 +10,7 @@ const ERRORS: Record<string, string> = {
   missing_code: "Sign-in didn't complete. Please try again.",
   bad_state: "Your sign-in link expired. Please try again.",
   oauth_callback: "Couldn't finish connecting. Please try again.",
+  rate_limited: "Too many attempts. Please wait a moment and try again.",
 };
 
 export function ConnectScreen() {

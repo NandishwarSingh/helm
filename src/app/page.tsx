@@ -7,7 +7,12 @@ import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { ConnectScreen } from "@/app/_components/connect-screen";
 import { GmailPanel } from "@/app/_components/gmail-panel";
 import { BrandMark } from "@/components/brand-mark";
-import { CalendarIcon, ComposeIcon, MailIcon } from "@/components/icons";
+import {
+  CalendarIcon,
+  ComposeIcon,
+  MailIcon,
+  SignOutIcon,
+} from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { siteConfig } from "@/config/site";
 import { viewSwap } from "@/lib/motion";
@@ -100,7 +105,14 @@ export default function Home() {
           </nav>
 
           <div className="rail-foot">
-            {connected ? "Google connected" : "Not connected"}
+            <span className="rail-status">
+              {connected ? "Google connected" : "Not connected"}
+            </span>
+            <form action="/api/auth/logout" method="post">
+              <button type="submit" className="icon-btn" title="Sign out">
+                <SignOutIcon size={15} />
+              </button>
+            </form>
           </div>
         </aside>
 

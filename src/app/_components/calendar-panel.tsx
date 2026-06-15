@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons";
 import {
   formatAttendees,
   formatEventWhen,
@@ -116,10 +117,11 @@ export function CalendarPanel() {
       <div className="week-nav">
         <button
           type="button"
+          className="icon-btn"
           onClick={() => setWeekOffset((w) => w - 1)}
           aria-label="Previous week"
         >
-          ←
+          <ChevronLeftIcon size={16} />
         </button>{" "}
         <strong>{weekLabel}</strong>
         {weekOffset !== 0 && (
@@ -133,10 +135,11 @@ export function CalendarPanel() {
         {" "}
         <button
           type="button"
+          className="icon-btn"
           onClick={() => setWeekOffset((w) => w + 1)}
           aria-label="Next week"
         >
-          →
+          <ChevronRightIcon size={16} />
         </button>
       </div>
 

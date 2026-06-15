@@ -52,3 +52,22 @@ export const RefreshIcon = (p: IconProps) => (
     <path d="M20 4v5h-5" />
   </Svg>
 );
+
+export const SignOutIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2" />
+    <path d="M10 12h10m0 0-3-3m3 3-3 3" />
+  </Svg>
+);
+
+export const ChevronLeftIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m14 6-6 6 6 6" />
+  </Svg>
+);
+
+export const ChevronRightIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m10 6 6 6-6 6" />
+  </Svg>
+);

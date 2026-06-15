@@ -57,3 +57,9 @@ export async function ensureTenantId(): Promise<string> {
   });
   return id;
 }
+
+/** Clears the session cookie, signing the user out of this browser. */
+export async function clearSession(): Promise<void> {
+  const store = await cookies();
+  store.delete(COOKIE);
+}

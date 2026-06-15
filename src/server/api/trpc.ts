@@ -6,11 +6,12 @@
  * TL;DR - This is where all the tRPC server stuff is created and plugged in. The pieces you will
  * need to use are documented accordingly near the end.
  */
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { db } from "@/server/db";
+import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 
 /**
  * 1. CONTEXT
@@ -97,10 +98,30 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
 });
 
 /**
- * Public (unauthenticated) procedure
- *
- * This is the base piece you use to build new queries and mutations on your tRPC API. It does not
- * guarantee that a user querying is authorized, but you can still access user session data if they
- * are logged in.
+ * Throttles mutations per client IP so write endpoints (send, draft, refresh)
+ * can't be hammered. Queries are left unthrottled.
  */
-export const publicProcedure = t.procedure.use(timingMiddleware);
+const rateLimitMiddleware = t.middleware(async ({ ctx, type, next }) => {
+  if (type === "mutation") {
+    const { ok, retryAfterMs } = rateLimit(
+      `mutation:${clientIp(ctx.headers)}`,
+      30,
+      60_000,
+    );
+    if (!ok) {
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: `Too many requests. Try again in ${Math.ceil(retryAfterMs / 1000)}s.`,
+      });
+    }
+  }
+  return next();
+});
+
+/**
+ * Public procedure — the base for queries and mutations. Mutations are rate
+ * limited per IP; it does not require an authenticated session.
+ */
+export const publicProcedure = t.procedure
+  .use(rateLimitMiddleware)
+  .use(timingMiddleware);

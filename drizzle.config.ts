@@ -8,5 +8,9 @@ export default {
   dbCredentials: {
     url: env.DATABASE_URL,
   },
+  // Timestamp-prefixed migration filenames (e.g. 20260611123000_add_x.sql).
+  migrations: {
+    prefix: "timestamp",
+  },
   tablesFilter: ["corsair_*"],
 } satisfies Config;
