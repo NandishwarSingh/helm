@@ -227,10 +227,12 @@ export function CalendarPanel() {
           </div>
         )}
 
-        {grouped.map(([label, dayEvents]) => (
-          <section className="cal-day" key={label}>
-            <h2 className="cal-day-label">{label}</h2>
-            {(dayEvents ?? []).map((event, i) => (
+        {grouped.length > 0 && (
+          <div className="cal-list">
+            {grouped.map(([label, dayEvents]) => (
+              <section className="cal-day" key={label}>
+                <h2 className="cal-day-label">{label}</h2>
+                {(dayEvents ?? []).map((event, i) => (
               <motion.article
                 className="event-row"
                 key={event.id}
@@ -275,8 +277,10 @@ export function CalendarPanel() {
                 </div>
               </motion.article>
             ))}
-          </section>
-        ))}
+              </section>
+            ))}
+          </div>
+        )}
       </div>
 
       <AnimatePresence>

@@ -47,7 +47,11 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
 
   const selectedEmail = api.gmail.getMessage.useQuery(
     { id: selectedId! },
-    { enabled: !!selectedId },
+    {
+      enabled: !!selectedId,
+      refetchOnWindowFocus: false,
+      staleTime: 5 * 60 * 1000,
+    },
   );
 
   const drafts = api.gmail.listDrafts.useQuery(

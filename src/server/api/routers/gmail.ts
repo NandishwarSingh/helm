@@ -108,24 +108,8 @@ export const gmailRouter = createTRPCRouter({
     .query(async ({ input }) => {
       try {
         const tenant = await getTenant();
-        const cached = await tenant.gmail.db.messages.findByEntityId(input.id);
-
-        // Cache-hit only when the full plain-text body is present (list-view
-        // hydration stores headers but no body), so opens always show content.
-        if (cached?.data.body) {
-          return {
-            id: cached.entity_id,
-            threadId: cached.data.threadId ?? "",
-            subject: cached.data.subject ?? "",
-            from: cached.data.from ?? "",
-            to: cached.data.to ?? "",
-            body: cached.data.body,
-            html: "",
-            snippet: cached.data.snippet ?? "",
-            date: cached.data.internalDate ?? null,
-          };
-        }
-
+        // Always fetch the full message so the open view consistently has both
+        // the rich HTML and a plain-text fallback (the list cache holds neither).
         const message = await tenant.gmail.api.messages.get({
           id: input.id,
           format: "full",

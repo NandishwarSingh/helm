@@ -41,10 +41,8 @@ export function extractBodyFromPayload(payload?: GmailPart): string {
     if (text) return text;
   }
 
-  if (payload.body?.data) {
-    return decodeBase64Url(payload.body.data);
-  }
-
+  // Intentionally no generic body fallback: an HTML-only message must not leak
+  // its raw markup here. HTML is handled separately by extractHtmlFromPayload.
   return "";
 }
 

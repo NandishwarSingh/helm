@@ -37,18 +37,14 @@ export const metadata: Metadata = {
     follow: true,
     googleBot: { index: true, follow: true, "max-image-preview": "large" },
   },
-  icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fbfbf9" },
-    { media: "(prefers-color-scheme: dark)", color: "#1a1814" },
-  ],
+  themeColor: "#1a1814",
 };
 
-// Applies the saved (or system) theme before first paint to avoid a flash.
-const themeScript = `(function(){try{var t=localStorage.getItem('helm-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
+// Applies the saved theme before first paint to avoid a flash; defaults to dark.
+const themeScript = `(function(){try{var t=localStorage.getItem('helm-theme');if(t!=='light'&&t!=='dark'){t='dark';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
 
 export default function RootLayout({
   children,

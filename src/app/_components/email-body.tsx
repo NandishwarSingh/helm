@@ -25,7 +25,7 @@ function wrap(html: string): string {
     word-break:break-word;overflow-wrap:anywhere;}
   body{padding:4px 2px;}
   img{max-width:100%;height:auto;}
-  a{color:#185a43;}
+  a{color:#0369a1;}
   table{max-width:100%;}
 </style></head><body>${sanitize(html)}</body></html>`;
 }
