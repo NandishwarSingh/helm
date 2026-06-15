@@ -8,9 +8,8 @@ import { siteConfig } from "@/config/site";
 const ERRORS: Record<string, string> = {
   denied: "Access was declined. Connect again when you're ready.",
   missing_code: "Sign-in didn't complete. Please try again.",
-  oauth_start: "Couldn't start Google sign-in. Please try again.",
+  bad_state: "Your sign-in link expired. Please try again.",
   oauth_callback: "Couldn't finish connecting. Please try again.",
-  unknown_plugin: "Something went wrong. Please try again.",
 };
 
 export function ConnectScreen() {
@@ -34,7 +33,7 @@ export function ConnectScreen() {
         </h1>
         <p className="connect-sub">{siteConfig.description}</p>
 
-        <a className="btn btn-primary connect-cta" href="/api/oauth/start?plugin=gmail">
+        <a className="btn btn-primary connect-cta" href="/api/oauth/start">
           Connect Google
         </a>
 

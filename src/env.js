@@ -12,6 +12,10 @@ export const env = createEnv({
     CORSAIR_KEK: z.string().min(1),
     // Secret used to HMAC-sign the session cookie that scopes each user's tenant.
     AUTH_SECRET: z.string().min(16),
+    // Google OAuth client (Web application) used for the single combined-scope
+    // consent that connects Gmail and Calendar in one flow.
+    GOOGLE_CLIENT_ID: z.string().min(1),
+    GOOGLE_CLIENT_SECRET: z.string().min(1),
     // Fallback tenant for CLI/local use when no session cookie is present.
     TENANT_ID: z.string().min(1).default("dev"),
     NODE_ENV: z
@@ -35,6 +39,8 @@ export const env = createEnv({
     DATABASE_URL: process.env.DATABASE_URL,
     CORSAIR_KEK: process.env.CORSAIR_KEK,
     AUTH_SECRET: process.env.AUTH_SECRET,
+    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     TENANT_ID: process.env.TENANT_ID,
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
