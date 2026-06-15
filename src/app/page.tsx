@@ -14,6 +14,7 @@ import {
   SignOutIcon,
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
 import { viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
@@ -108,6 +109,7 @@ export default function Home() {
             <span className="rail-status">
               {connected ? "Google connected" : "Not connected"}
             </span>
+            <ThemeToggle />
             <form action="/api/auth/logout" method="post">
               <button type="submit" className="icon-btn" title="Sign out">
                 <SignOutIcon size={15} />

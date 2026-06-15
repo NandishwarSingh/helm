@@ -48,6 +48,22 @@ export function extractBodyFromPayload(payload?: GmailPart): string {
   return "";
 }
 
+/** Returns the rich text/html part of a message, if present. */
+export function extractHtmlFromPayload(payload?: GmailPart): string {
+  if (!payload) return "";
+
+  if (payload.mimeType === "text/html" && payload.body?.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+
+  for (const part of payload.parts ?? []) {
+    const html = extractHtmlFromPayload(part);
+    if (html) return html;
+  }
+
+  return "";
+}
+
 export function getHeader(
   headers: { name?: string; value?: string }[] | undefined,
   name: string,

@@ -7,6 +7,7 @@ import {
 import {
   encodeRawEmail,
   extractBodyFromPayload,
+  extractHtmlFromPayload,
   getHeader,
 } from "@/server/lib/email";
 import { getTenant } from "@/server/lib/tenant";
@@ -109,14 +110,17 @@ export const gmailRouter = createTRPCRouter({
         const tenant = await getTenant();
         const cached = await tenant.gmail.db.messages.findByEntityId(input.id);
 
-        if (cached?.data.body || cached?.data.subject) {
+        // Cache-hit only when the full plain-text body is present (list-view
+        // hydration stores headers but no body), so opens always show content.
+        if (cached?.data.body) {
           return {
             id: cached.entity_id,
             threadId: cached.data.threadId ?? "",
             subject: cached.data.subject ?? "",
             from: cached.data.from ?? "",
             to: cached.data.to ?? "",
-            body: cached.data.body ?? cached.data.snippet ?? "",
+            body: cached.data.body,
+            html: "",
             snippet: cached.data.snippet ?? "",
             date: cached.data.internalDate ?? null,
           };
@@ -130,6 +134,7 @@ export const gmailRouter = createTRPCRouter({
         const headers = message.payload?.headers;
         const body =
           extractBodyFromPayload(message.payload) || (message.snippet ?? "");
+        const html = extractHtmlFromPayload(message.payload);
 
         return {
           id: message.id ?? input.id,
@@ -138,6 +143,7 @@ export const gmailRouter = createTRPCRouter({
           from: getHeader(headers, "From"),
           to: getHeader(headers, "To"),
           body,
+          html,
           snippet: message.snippet ?? "",
           date:
             message.internalDate != null ? String(message.internalDate) : null,
@@ -168,12 +174,24 @@ export const gmailRouter = createTRPCRouter({
 
   refreshInbox: publicProcedure.mutation(async () => {
     const tenant = await getTenant();
-    // messages.list hydrates full messages into the cache (subject, from,
-    // snippet, date); threads.list only caches thread stubs.
-    const result = await tenant.gmail.api.messages.list({ maxResults: 50 });
-    return {
-      synced: result.messages?.length ?? 0,
-    };
+    // messages.list only returns id/threadId stubs, so each message is then
+    // hydrated with metadata (from, subject, snippet, date) for the list view.
+    const list = await tenant.gmail.api.messages.list({ maxResults: 40 });
+    const ids = (list.messages ?? [])
+      .map((message) => message.id)
+      .filter((id): id is string => Boolean(id));
+
+    const CONCURRENCY = 8;
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      await Promise.all(
+        ids.slice(i, i + CONCURRENCY).map((id) =>
+          tenant.gmail.api.messages
+            .get({ id, format: "metadata" })
+            .catch(() => null),
+        ),
+      );
+    }
+    return { synced: ids.length };
   }),
 
   createDraft: publicProcedure

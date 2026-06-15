@@ -3,11 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
+import { EmailBody } from "@/app/_components/email-body";
 import { CloseIcon, RefreshIcon } from "@/components/icons";
+import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
 import {
   formatMessageDate,
   formatSender,
-  LinkifiedText,
   parseEmailAddress,
 } from "@/lib/display";
 import { listRow, scrim, slideOver } from "@/lib/motion";
@@ -143,6 +144,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             type="button"
             className="icon-btn"
             title="Refresh from Gmail"
+            data-spinning={refreshInbox.isPending}
             onClick={() => refreshInbox.mutate()}
             disabled={refreshInbox.isPending}
           >
@@ -169,11 +171,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
         )}
 
         <div className="mail-rows">
-          {view === "inbox" && emails.isLoading && (
-            <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-              Loading…
-            </p>
-          )}
+          {view === "inbox" && emails.isLoading && <MailRowsSkeleton />}
           {view === "inbox" && emails.error && (
             <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
               {emails.error.message}
@@ -264,7 +262,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             <p className="tnum">C to compose</p>
           </div>
         ) : selectedEmail.isLoading ? (
-          <p className="muted">Loading…</p>
+          <ReadingSkeleton />
         ) : selectedEmail.error ? (
           <p className="error">{selectedEmail.error.message}</p>
         ) : selectedEmail.data ? (
@@ -280,15 +278,10 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                 </span>
               )}
             </div>
-            <div className="read-body">
-              <LinkifiedText
-                text={
-                  selectedEmail.data.body ||
-                  selectedEmail.data.snippet ||
-                  "(empty)"
-                }
-              />
-            </div>
+            <EmailBody
+              html={selectedEmail.data.html}
+              text={selectedEmail.data.body || selectedEmail.data.snippet}
+            />
           </article>
         ) : null}
       </section>

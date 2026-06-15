@@ -17,20 +17,14 @@ export function formatWeekLabel(start: Date, end: Date) {
   const endDisplay = new Date(end);
   endDisplay.setDate(endDisplay.getDate() - 1);
 
-  const sameMonth = start.getMonth() === endDisplay.getMonth();
-  const sameYear = start.getFullYear() === endDisplay.getFullYear();
+  const month = (d: Date) => d.toLocaleDateString("en-US", { month: "short" });
+  const sameMonth =
+    start.getMonth() === endDisplay.getMonth() &&
+    start.getFullYear() === endDisplay.getFullYear();
+  const year = endDisplay.getFullYear();
 
-  const startPart = start.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    ...(sameYear ? {} : { year: "numeric" }),
-  });
-
-  const endPart = endDisplay.toLocaleDateString(undefined, {
-    month: sameMonth ? undefined : "short",
-    day: "numeric",
-    year: "numeric",
-  });
-
-  return `${startPart} – ${endPart}`;
+  if (sameMonth) {
+    return `${month(start)} ${start.getDate()} – ${endDisplay.getDate()}, ${year}`;
+  }
+  return `${month(start)} ${start.getDate()} – ${month(endDisplay)} ${endDisplay.getDate()}, ${year}`;
 }
