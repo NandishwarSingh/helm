@@ -1,0 +1,522 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Design tokens
+ * Warm ink-on-paper, a single restrained pine accent, hairline rules,
+ * tight radii. No glassmorphism, no glow, no gradients.
+ * ------------------------------------------------------------------ */
+@theme {
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", monospace;
+
+  --color-paper: #fbfbf9;
+  --color-paper-raised: #ffffff;
+  --color-paper-sunken: #f3f3ef;
+
+  --color-ink: #17170f;
+  --color-ink-2: #54544c;
+  --color-ink-3: #8a8a80;
+
+  --color-line: #e6e5de;
+  --color-line-strong: #d4d3ca;
+
+  --color-accent: #1f6f54;
+  --color-accent-strong: #185a43;
+  --color-accent-wash: #ecf3ef;
+
+  --color-danger: #b1361d;
+  --color-danger-wash: #f8ece9;
+
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  --shadow-rest: 0 1px 1px rgba(23, 23, 15, 0.03);
+  --shadow-pop: 0 1px 2px rgba(23, 23, 15, 0.06), 0 8px 24px rgba(23, 23, 15, 0.1);
+
+  --ease-snap: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ------------------------------------------------------------------ *
+ * Base
+ * ------------------------------------------------------------------ */
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--color-ink);
+    background: var(--color-paper);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv05", "ss01";
+  }
+
+  ::selection {
+    background: var(--color-accent-wash);
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Tabular, mono numerals for timestamps and counts. */
+  .tnum {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Primitives
+ * ------------------------------------------------------------------ */
+@layer components {
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.4em;
+    height: 1.5em;
+    padding: 0 0.4em;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1;
+    color: var(--color-ink-2);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-bottom-width: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    height: 30px;
+    padding: 0 0.7rem;
+    color: var(--color-ink);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition:
+      background 0.12s var(--ease-snap),
+      border-color 0.12s var(--ease-snap);
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--color-paper-sunken);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .btn-primary {
+    color: #fff;
+    background: var(--color-accent);
+    border-color: var(--color-accent-strong);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-accent-strong);
+  }
+
+  .field {
+    width: 100%;
+    height: 32px;
+    padding: 0 0.65rem;
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    transition: border-color 0.12s var(--ease-snap);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+  textarea.field {
+    height: auto;
+    padding: 0.55rem 0.65rem;
+    resize: vertical;
+    line-height: 1.55;
+  }
+
+  .label {
+    display: block;
+    margin-bottom: 0.7rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+  .label .field,
+  .label textarea {
+    margin-top: 0.3rem;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    color: var(--color-ink);
+  }
+
+  /* Legacy compatibility — keeps the calendar panel readable until it is
+     fully ported to the new layout primitives. */
+  .link {
+    color: var(--color-accent-strong);
+    text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+  .muted {
+    color: var(--color-ink-3);
+  }
+  .error {
+    color: var(--color-danger);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * App shell
+ * ------------------------------------------------------------------ */
+@layer components {
+  .app {
+    display: grid;
+    grid-template-columns: 232px 1fr;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    padding: 1rem 0.85rem;
+    background: var(--color-paper-sunken);
+    border-right: 1px solid var(--color-line);
+  }
+  .rail-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.2rem 0.5rem 1.1rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .rail-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rail-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    height: 34px;
+    padding: 0 0.55rem;
+    color: var(--color-ink-2);
+    background: none;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s var(--ease-snap);
+  }
+  .rail-item:hover {
+    background: var(--color-paper);
+  }
+  .rail-item[data-active="true"] {
+    color: var(--color-ink);
+    background: var(--color-paper-raised);
+    box-shadow: var(--shadow-rest);
+    font-weight: 550;
+  }
+  .rail-item .kbd {
+    margin-left: auto;
+  }
+  .rail-foot {
+    margin-top: auto;
+    padding: 0.6rem 0.55rem 0;
+    border-top: 1px solid var(--color-line);
+    color: var(--color-ink-3);
+    font-size: 0.78rem;
+  }
+
+  .frame {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-width: 0;
+    height: 100dvh;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: 52px;
+    padding: 0 1.1rem;
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-paper);
+  }
+  .topbar-title {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .topbar-spacer {
+    flex: 1;
+  }
+  .content {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Mail: list + reading pane
+ * ------------------------------------------------------------------ */
+@layer components {
+  .mail {
+    display: grid;
+    grid-template-columns: minmax(300px, 380px) 1fr;
+    height: 100%;
+    min-height: 0;
+  }
+  .mail-list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--color-line);
+  }
+  .mail-list-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .seg {
+    display: inline-flex;
+    padding: 2px;
+    background: var(--color-paper-sunken);
+    border-radius: var(--radius-md);
+  }
+  .seg button {
+    height: 24px;
+    padding: 0 0.6rem;
+    color: var(--color-ink-2);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .seg button[data-active="true"] {
+    color: var(--color-ink);
+    background: var(--color-paper-raised);
+    box-shadow: var(--shadow-rest);
+    font-weight: 550;
+  }
+  .mail-search {
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .mail-rows {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.35rem;
+  }
+  .row {
+    display: block;
+    width: 100%;
+    padding: 0.55rem 0.6rem 0.6rem;
+    border: none;
+    border-left: 2px solid transparent;
+    border-radius: var(--radius-md);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.1s var(--ease-snap);
+  }
+  .row:hover {
+    background: var(--color-paper-sunken);
+  }
+  .row[data-active="true"] {
+    background: var(--color-accent-wash);
+    border-left-color: var(--color-accent);
+  }
+  .row-top {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .row-from {
+    font-weight: 550;
+    color: var(--color-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-date {
+    margin-left: auto;
+    flex: none;
+    color: var(--color-ink-3);
+  }
+  .row-subject {
+    margin-top: 1px;
+    color: var(--color-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-snippet {
+    margin-top: 1px;
+    color: var(--color-ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mail-read {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 1.6rem 2rem;
+  }
+  .read-subject {
+    font-size: 1.3rem;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    margin: 0 0 0.6rem;
+  }
+  .read-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.9rem;
+    padding-bottom: 1rem;
+    margin-bottom: 1.2rem;
+    border-bottom: 1px solid var(--color-line);
+    color: var(--color-ink-2);
+  }
+  .read-body {
+    white-space: pre-wrap;
+    line-height: 1.65;
+    color: var(--color-ink);
+    max-width: 64ch;
+  }
+  .read-body a,
+  .read-meta a {
+    color: var(--color-accent-strong);
+  }
+
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    height: 100%;
+    color: var(--color-ink-3);
+    text-align: center;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Compose slide-over
+ * ------------------------------------------------------------------ */
+@layer components {
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    /* Apple-style liquid glass — the one permitted translucent surface. */
+    background: rgba(23, 23, 15, 0.18);
+    backdrop-filter: saturate(1.1) blur(2px);
+  }
+  .compose {
+    position: fixed;
+    right: 1.1rem;
+    bottom: 1.1rem;
+    z-index: 50;
+    width: min(560px, calc(100vw - 2.2rem));
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+  }
+  .compose-head {
+    display: flex;
+    align-items: center;
+    height: 42px;
+    padding: 0 0.6rem 0 1rem;
+    border-bottom: 1px solid var(--color-line);
+    font-weight: 600;
+  }
+  .compose-body {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .compose-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1rem;
+    border-top: 1px solid var(--color-line);
+    background: var(--color-paper);
+  }
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    color: var(--color-ink-2);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .icon-btn:hover {
+    background: var(--color-paper-sunken);
+    color: var(--color-ink);
+  }
+}
+
+@media (max-width: 860px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+  .rail {
+    display: none;
+  }
+  .mail {
+    grid-template-columns: 1fr;
+  }
+  .mail-read {
+    display: none;
+  }
+}
