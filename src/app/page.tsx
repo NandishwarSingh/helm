@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 
 import { CalendarPanel } from "@/app/_components/calendar-panel";
+import { ConnectScreen } from "@/app/_components/connect-screen";
 import { GmailPanel } from "@/app/_components/gmail-panel";
 import { BrandMark } from "@/components/brand-mark";
 import { CalendarIcon, ComposeIcon, MailIcon } from "@/components/icons";
@@ -20,6 +21,7 @@ export default function Home() {
 
   const status = api.connection.status.useQuery();
   const connected = Boolean(status.data?.gmail ?? status.data?.calendar);
+  const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -52,6 +54,18 @@ export default function Home() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  if (status.isLoading) {
+    return (
+      <div className="splash">
+        <BrandMark size={20} />
+      </div>
+    );
+  }
+
+  if (!showApp) {
+    return <ConnectScreen />;
+  }
 
   return (
     <MotionConfig reducedMotion="user">
@@ -86,11 +100,7 @@ export default function Home() {
           </nav>
 
           <div className="rail-foot">
-            {status.isLoading
-              ? "Checking connection…"
-              : connected
-                ? "Connected · dev"
-                : "Not connected · dev"}
+            {connected ? "Google connected" : "Not connected"}
           </div>
         </aside>
 

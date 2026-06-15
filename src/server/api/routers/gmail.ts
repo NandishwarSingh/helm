@@ -81,10 +81,9 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input }) => {
-      const tenant = getTenant();
-
-      const messages = await listOrEmpty(() =>
-        input.query.trim()
+      const messages = await listOrEmpty(async () => {
+        const tenant = await getTenant();
+        return input.query.trim()
           ? tenant.gmail.db.messages.search({
               data: {
                 snippet: { contains: input.query },
@@ -95,8 +94,8 @@ export const gmailRouter = createTRPCRouter({
           : tenant.gmail.db.messages.list({
               limit: input.limit,
               offset: input.offset,
-            }),
-      );
+            });
+      });
 
       return sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
@@ -106,9 +105,8 @@ export const gmailRouter = createTRPCRouter({
   getMessage: publicProcedure
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
-      const tenant = getTenant();
-
       try {
+        const tenant = await getTenant();
         const cached = await tenant.gmail.db.messages.findByEntityId(input.id);
 
         if (cached?.data.body || cached?.data.subject) {
@@ -153,13 +151,13 @@ export const gmailRouter = createTRPCRouter({
   listDrafts: publicProcedure
     .input(paginationSchema)
     .query(async ({ input }) => {
-      const tenant = getTenant();
-      const drafts = await listOrEmpty(() =>
-        tenant.gmail.db.drafts.list({
+      const drafts = await listOrEmpty(async () => {
+        const tenant = await getTenant();
+        return tenant.gmail.db.drafts.list({
           limit: input.limit,
           offset: input.offset,
-        }),
-      );
+        });
+      });
 
       return dedupeByEntityId(drafts).map((draft) => ({
         id: draft.entity_id,
@@ -169,7 +167,7 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   refreshInbox: publicProcedure.mutation(async () => {
-    const tenant = getTenant();
+    const tenant = await getTenant();
     const result = await tenant.gmail.api.threads.list({ maxResults: 50 });
     return {
       synced: result.threads?.length ?? 0,
@@ -185,7 +183,7 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = getTenant();
+      const tenant = await getTenant();
       const raw = encodeRawEmail(input);
       const draft = await tenant.gmail.api.drafts.create({
         draft: { message: { raw } },
@@ -199,7 +197,7 @@ export const gmailRouter = createTRPCRouter({
   sendDraft: publicProcedure
     .input(z.object({ draftId: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const tenant = getTenant();
+      const tenant = await getTenant();
       const message = await tenant.gmail.api.drafts.send({ id: input.draftId });
       return {
         id: message.id ?? "",
@@ -216,7 +214,7 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = getTenant();
+      const tenant = await getTenant();
       const raw = encodeRawEmail(input);
       const message = await tenant.gmail.api.messages.send({ raw });
       return {

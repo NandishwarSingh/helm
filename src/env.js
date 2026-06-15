@@ -10,7 +10,9 @@ export const env = createEnv({
     DATABASE_URL: z.string().url(),
     // Key-encryption key Corsair uses to envelope-encrypt per-tenant secrets.
     CORSAIR_KEK: z.string().min(1),
-    // Active Corsair tenant. Single-tenant in development; per-user in production.
+    // Secret used to HMAC-sign the session cookie that scopes each user's tenant.
+    AUTH_SECRET: z.string().min(16),
+    // Fallback tenant for CLI/local use when no session cookie is present.
     TENANT_ID: z.string().min(1).default("dev"),
     NODE_ENV: z
       .enum(["development", "test", "production"])
@@ -32,6 +34,7 @@ export const env = createEnv({
   runtimeEnv: {
     DATABASE_URL: process.env.DATABASE_URL,
     CORSAIR_KEK: process.env.CORSAIR_KEK,
+    AUTH_SECRET: process.env.AUTH_SECRET,
     TENANT_ID: process.env.TENANT_ID,
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,

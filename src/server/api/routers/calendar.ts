@@ -95,12 +95,12 @@ export const calendarRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input }) => {
-      const tenant = getTenant();
       const weekStart = new Date(input.weekStart);
       const weekEnd = new Date(input.weekEnd);
 
-      const events = await listOrEmpty(() =>
-        input.query.trim()
+      const events = await listOrEmpty(async () => {
+        const tenant = await getTenant();
+        return input.query.trim()
           ? tenant.googlecalendar.db.events.search({
               data: {
                 summary: { contains: input.query },
@@ -111,8 +111,8 @@ export const calendarRouter = createTRPCRouter({
           : tenant.googlecalendar.db.events.list({
               limit: 200,
               offset: 0,
-            }),
-      );
+            });
+      });
 
       return filterEventsByWeek(
         dedupeByEntityId(events).map(mapEvent),
@@ -129,7 +129,7 @@ export const calendarRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = getTenant();
+      const tenant = await getTenant();
       const result = await tenant.googlecalendar.api.events.getMany({
         calendarId: "primary",
         timeMin: input.weekStart,
@@ -155,7 +155,7 @@ export const calendarRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = getTenant();
+      const tenant = await getTenant();
       const event = await tenant.googlecalendar.api.events.create({
         calendarId: "primary",
         sendUpdates: "none",
@@ -187,7 +187,7 @@ export const calendarRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = getTenant();
+      const tenant = await getTenant();
       const event = await tenant.googlecalendar.api.events.create({
         calendarId: "primary",
         sendUpdates: "all",

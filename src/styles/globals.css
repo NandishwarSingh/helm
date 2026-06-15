@@ -506,6 +506,65 @@
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Connect / sign-in
+ * ------------------------------------------------------------------ */
+@layer components {
+  .splash {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100dvh;
+    opacity: 0.5;
+  }
+
+  .connect {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: 2rem;
+  }
+  .connect-inner {
+    width: 100%;
+    max-width: 30rem;
+  }
+  .connect-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin-bottom: 2.4rem;
+  }
+  .connect-title {
+    font-size: 1.75rem;
+    line-height: 1.18;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.7rem;
+  }
+  .connect-sub {
+    color: var(--color-ink-2);
+    line-height: 1.55;
+    margin: 0 0 1.6rem;
+  }
+  .connect-cta {
+    height: 38px;
+    padding: 0 1.1rem;
+  }
+  .connect-error {
+    margin-top: 1rem;
+    color: var(--color-danger);
+  }
+  .connect-fine {
+    margin-top: 1.4rem;
+    font-size: 0.8rem;
+    color: var(--color-ink-3);
+    line-height: 1.5;
+  }
+}
+
 @media (max-width: 860px) {
   .app {
     grid-template-columns: 1fr;
