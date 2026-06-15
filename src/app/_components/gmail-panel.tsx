@@ -104,6 +104,17 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     };
   }, [composeOpen, onComposeOpenChange]);
 
+  // Warm the inbox once when it loads empty (first connect / cold cache),
+  // so mail appears without the user clicking refresh.
+  const didAutoSync = useRef(false);
+  useEffect(() => {
+    if (didAutoSync.current) return;
+    if (view !== "inbox" || emails.isLoading) return;
+    if ((emails.data?.length ?? 0) > 0) return;
+    didAutoSync.current = true;
+    refreshInbox.mutate();
+  }, [emails.data, emails.isLoading, view, refreshInbox]);
+
   const composeError = createDraft.error ?? sendEmail.error;
   const canSend = Boolean(to && subject && body);
 
@@ -172,7 +183,9 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             emails.data &&
             (emails.data.length === 0 ? (
               <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-                No mail yet. Refresh from Gmail to sync.
+                {refreshInbox.isPending
+                  ? "Syncing your inbox…"
+                  : "No mail yet. Refresh from Gmail to sync."}
               </p>
             ) : (
               emails.data.map((email, i) => (

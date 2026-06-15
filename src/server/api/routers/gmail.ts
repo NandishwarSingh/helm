@@ -168,9 +168,11 @@ export const gmailRouter = createTRPCRouter({
 
   refreshInbox: publicProcedure.mutation(async () => {
     const tenant = await getTenant();
-    const result = await tenant.gmail.api.threads.list({ maxResults: 50 });
+    // messages.list hydrates full messages into the cache (subject, from,
+    // snippet, date); threads.list only caches thread stubs.
+    const result = await tenant.gmail.api.messages.list({ maxResults: 50 });
     return {
-      synced: result.threads?.length ?? 0,
+      synced: result.messages?.length ?? 0,
     };
   }),
 
