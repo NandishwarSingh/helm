@@ -1,4 +1,5 @@
 import { calendarRouter } from "@/server/api/routers/calendar";
+import { connectionRouter } from "@/server/api/routers/connection";
 import { gmailRouter } from "@/server/api/routers/gmail";
 import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
 
@@ -9,6 +10,7 @@ import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
 export const appRouter = createTRPCRouter({
   gmail: gmailRouter,
   calendar: calendarRouter,
+  connection: connectionRouter,
 });
 
 export type AppRouter = typeof appRouter;

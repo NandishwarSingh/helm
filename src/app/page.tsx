@@ -10,12 +10,16 @@ import { CalendarIcon, ComposeIcon, MailIcon } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { siteConfig } from "@/config/site";
 import { viewSwap } from "@/lib/motion";
+import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar";
 
 export default function Home() {
   const [view, setView] = useState<View>("mail");
   const [composeOpen, setComposeOpen] = useState(false);
+
+  const status = api.connection.status.useQuery();
+  const connected = Boolean(status.data?.gmail ?? status.data?.calendar);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -81,7 +85,13 @@ export default function Home() {
             </button>
           </nav>
 
-          <div className="rail-foot">Connected · dev</div>
+          <div className="rail-foot">
+            {status.isLoading
+              ? "Checking connection…"
+              : connected
+                ? "Connected · dev"
+                : "Not connected · dev"}
+          </div>
         </aside>
 
         <div className="frame">

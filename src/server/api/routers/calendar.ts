@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenant } from "@/server/lib/tenant";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 
@@ -98,18 +99,20 @@ export const calendarRouter = createTRPCRouter({
       const weekStart = new Date(input.weekStart);
       const weekEnd = new Date(input.weekEnd);
 
-      const events = input.query.trim()
-        ? await tenant.googlecalendar.db.events.search({
-            data: {
-              summary: { contains: input.query },
-            },
-            limit: 200,
-            offset: 0,
-          })
-        : await tenant.googlecalendar.db.events.list({
-            limit: 200,
-            offset: 0,
-          });
+      const events = await listOrEmpty(() =>
+        input.query.trim()
+          ? tenant.googlecalendar.db.events.search({
+              data: {
+                summary: { contains: input.query },
+              },
+              limit: 200,
+              offset: 0,
+            })
+          : tenant.googlecalendar.db.events.list({
+              limit: 200,
+              offset: 0,
+            }),
+      );
 
       return filterEventsByWeek(
         dedupeByEntityId(events).map(mapEvent),

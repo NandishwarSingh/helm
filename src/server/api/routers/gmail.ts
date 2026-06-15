@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import {
+  isNotConnectedError,
+  listOrEmpty,
+} from "@/server/lib/corsair-errors";
+import {
   encodeRawEmail,
   extractBodyFromPayload,
   getHeader,
@@ -79,18 +83,20 @@ export const gmailRouter = createTRPCRouter({
     .query(async ({ input }) => {
       const tenant = getTenant();
 
-      const messages = input.query.trim()
-        ? await tenant.gmail.db.messages.search({
-            data: {
-              snippet: { contains: input.query },
-            },
-            limit: input.limit,
-            offset: input.offset,
-          })
-        : await tenant.gmail.db.messages.list({
-            limit: input.limit,
-            offset: input.offset,
-          });
+      const messages = await listOrEmpty(() =>
+        input.query.trim()
+          ? tenant.gmail.db.messages.search({
+              data: {
+                snippet: { contains: input.query },
+              },
+              limit: input.limit,
+              offset: input.offset,
+            })
+          : tenant.gmail.db.messages.list({
+              limit: input.limit,
+              offset: input.offset,
+            }),
+      );
 
       return sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
@@ -101,51 +107,59 @@ export const gmailRouter = createTRPCRouter({
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
       const tenant = getTenant();
-      const cached = await tenant.gmail.db.messages.findByEntityId(input.id);
 
-      if (cached?.data.body || cached?.data.subject) {
+      try {
+        const cached = await tenant.gmail.db.messages.findByEntityId(input.id);
+
+        if (cached?.data.body || cached?.data.subject) {
+          return {
+            id: cached.entity_id,
+            threadId: cached.data.threadId ?? "",
+            subject: cached.data.subject ?? "",
+            from: cached.data.from ?? "",
+            to: cached.data.to ?? "",
+            body: cached.data.body ?? cached.data.snippet ?? "",
+            snippet: cached.data.snippet ?? "",
+            date: cached.data.internalDate ?? null,
+          };
+        }
+
+        const message = await tenant.gmail.api.messages.get({
+          id: input.id,
+          format: "full",
+        });
+
+        const headers = message.payload?.headers;
+        const body =
+          extractBodyFromPayload(message.payload) || (message.snippet ?? "");
+
         return {
-          id: cached.entity_id,
-          threadId: cached.data.threadId ?? "",
-          subject: cached.data.subject ?? "",
-          from: cached.data.from ?? "",
-          to: cached.data.to ?? "",
-          body: cached.data.body ?? cached.data.snippet ?? "",
-          snippet: cached.data.snippet ?? "",
-          date: cached.data.internalDate ?? null,
+          id: message.id ?? input.id,
+          threadId: message.threadId ?? "",
+          subject: getHeader(headers, "Subject"),
+          from: getHeader(headers, "From"),
+          to: getHeader(headers, "To"),
+          body,
+          snippet: message.snippet ?? "",
+          date:
+            message.internalDate != null ? String(message.internalDate) : null,
         };
+      } catch (error) {
+        if (isNotConnectedError(error)) return null;
+        throw error;
       }
-
-      const message = await tenant.gmail.api.messages.get({
-        id: input.id,
-        format: "full",
-      });
-
-      const headers = message.payload?.headers;
-      const body =
-        extractBodyFromPayload(message.payload) || (message.snippet ?? "");
-
-      return {
-        id: message.id ?? input.id,
-        threadId: message.threadId ?? "",
-        subject: getHeader(headers, "Subject"),
-        from: getHeader(headers, "From"),
-        to: getHeader(headers, "To"),
-        body,
-        snippet: message.snippet ?? "",
-        date:
-          message.internalDate != null ? String(message.internalDate) : null,
-      };
     }),
 
   listDrafts: publicProcedure
     .input(paginationSchema)
     .query(async ({ input }) => {
       const tenant = getTenant();
-      const drafts = await tenant.gmail.db.drafts.list({
-        limit: input.limit,
-        offset: input.offset,
-      });
+      const drafts = await listOrEmpty(() =>
+        tenant.gmail.db.drafts.list({
+          limit: input.limit,
+          offset: input.offset,
+        }),
+      );
 
       return dedupeByEntityId(drafts).map((draft) => ({
         id: draft.entity_id,
