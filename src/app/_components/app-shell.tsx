@@ -6,6 +6,7 @@ import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import dynamic from "next/dynamic";
 
 import { CalendarPanel } from "@/app/_components/calendar-panel";
+import { FirstSyncVeil } from "@/components/first-sync-veil";
 import { Landing } from "@/app/_components/landing";
 import {
   GmailPanel,
@@ -70,6 +71,23 @@ export function AppShell() {
   const [eventSeed, setEventSeed] = useState<EventSeed | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // The first load straight out of Google consent gets the tearable veil while
+  // the initial sync runs. The ?connected=1 marker is stripped immediately so a
+  // refresh never replays it.
+  const [firstRun, setFirstRun] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connected") === "1") {
+      setFirstRun(true);
+      params.delete("connected");
+      const query = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + (query ? `?${query}` : ""),
+      );
+    }
+  }, []);
 
   // While any overlay is open, panel keyboard handlers stand down.
   useOverlay(composeOpen);
@@ -333,6 +351,7 @@ export function AppShell() {
                     onViewChange={setMailView}
                     composeOpen={composeOpen}
                     onComposeOpenChange={setComposeOpen}
+                    autoSync={!firstRun}
                     onAddToCalendar={(seed) => {
                       setEventSeed(seed);
                       setView("calendar");
@@ -368,6 +387,7 @@ export function AppShell() {
         onHelp={() => setHelpOpen(true)}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
+      {firstRun && <FirstSyncVeil onEnter={() => setFirstRun(false)} />}
       <AnimatePresence>
         {chordPending && (
           <motion.div

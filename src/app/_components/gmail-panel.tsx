@@ -40,6 +40,9 @@ type Props = {
   composeOpen: boolean;
   onComposeOpenChange: (open: boolean) => void;
   onAddToCalendar: (seed: EventSeed) => void;
+  // False while the first-sync veil is driving the initial refresh, so the
+  // panel doesn't fire a duplicate sync underneath it.
+  autoSync?: boolean;
 };
 
 type Folder = "inbox" | "starred" | "archived" | "spam" | "trash";
@@ -198,6 +201,7 @@ export function GmailPanel({
   composeOpen,
   onComposeOpenChange,
   onAddToCalendar,
+  autoSync = true,
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
@@ -979,14 +983,15 @@ export function GmailPanel({
   }, [isPriority, overview.isLoading, pendingTriage, triageRun]);
 
   // Warm the inbox once when it loads empty (first connect / cold cache).
+  // Suppressed while the first-sync veil owns the initial refresh.
   const didAutoSync = useRef(false);
   useEffect(() => {
-    if (didAutoSync.current) return;
+    if (!autoSync || didAutoSync.current) return;
     if (view !== "inbox" || inbox.isLoading) return;
     if (emails.length > 0 || activeSearch.trim()) return;
     didAutoSync.current = true;
     refreshInbox.mutate();
-  }, [emails.length, inbox.isLoading, view, activeSearch, refreshInbox]);
+  }, [autoSync, emails.length, inbox.isLoading, view, activeSearch, refreshInbox]);
 
   // Spam and trash sync on first open when empty.
   const syncedFolders = useRef(new Set<string>());
