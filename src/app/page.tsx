@@ -5,17 +5,26 @@ import { AnimatePresence, motion, MotionConfig } from "motion/react";
 
 import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { ConnectScreen } from "@/app/_components/connect-screen";
-import { GmailPanel, type EventSeed } from "@/app/_components/gmail-panel";
+import {
+  GmailPanel,
+  type EventSeed,
+  type MailView,
+} from "@/app/_components/gmail-panel";
 import { BrandMark } from "@/components/brand-mark";
 import { CommandPalette } from "@/components/command-palette";
 import { HelmLoader } from "@/components/helm-loader";
 import {
+  ArchiveIcon,
   CalendarIcon,
   ComposeIcon,
   HelpIcon,
+  InboxIcon,
   MailIcon,
   PlusIcon,
   SignOutIcon,
+  SpamIcon,
+  StarIcon,
+  TrashIcon,
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
@@ -27,8 +36,18 @@ import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar";
 
+const MAIL_FOLDERS: { id: MailView; label: string; icon: React.ReactNode }[] = [
+  { id: "inbox", label: "Inbox", icon: <InboxIcon size={15} /> },
+  { id: "starred", label: "Starred", icon: <StarIcon size={15} /> },
+  { id: "archived", label: "Archive", icon: <ArchiveIcon size={15} /> },
+  { id: "spam", label: "Spam", icon: <SpamIcon size={15} /> },
+  { id: "trash", label: "Trash", icon: <TrashIcon size={15} /> },
+  { id: "drafts", label: "Drafts", icon: <ComposeIcon size={15} /> },
+];
+
 export default function Home() {
   const [view, setView] = useState<View>("mail");
+  const [mailView, setMailView] = useState<MailView>("inbox");
   const [composeOpen, setComposeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [eventSeed, setEventSeed] = useState<EventSeed | null>(null);
@@ -132,6 +151,26 @@ export default function Home() {
             </button>
           </nav>
 
+          <div className="rail-divider" />
+
+          <nav className="rail-nav rail-folders">
+            {MAIL_FOLDERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                className="rail-item rail-sub"
+                data-active={view === "mail" && mailView === f.id}
+                onClick={() => {
+                  setView("mail");
+                  setMailView(f.id);
+                }}
+              >
+                {f.icon}
+                {f.label}
+              </button>
+            ))}
+          </nav>
+
           <div className="rail-foot">
             <span className="rail-status">
               {connected ? "Google connected" : "Not connected"}
@@ -209,6 +248,8 @@ export default function Home() {
               >
                 {view === "mail" ? (
                   <GmailPanel
+                    view={mailView}
+                    onViewChange={setMailView}
                     composeOpen={composeOpen}
                     onComposeOpenChange={setComposeOpen}
                     onAddToCalendar={(seed) => {

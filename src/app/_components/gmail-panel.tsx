@@ -35,13 +35,15 @@ export type EventSeed = {
 };
 
 type Props = {
+  view: MailView;
+  onViewChange: (view: MailView) => void;
   composeOpen: boolean;
   onComposeOpenChange: (open: boolean) => void;
   onAddToCalendar: (seed: EventSeed) => void;
 };
 
 type Folder = "inbox" | "starred" | "archived" | "spam" | "trash";
-type View = Folder | "drafts";
+export type MailView = Folder | "drafts";
 type LabelOverride = { unread?: boolean; starred?: boolean };
 type MessageAction =
   | "archive"
@@ -56,15 +58,6 @@ type MessageAction =
   | "deleteForever";
 
 type Confirm = { kind: "trash" | "delete"; ids: string[] };
-
-const FOLDERS: { id: View; label: string }[] = [
-  { id: "inbox", label: "Inbox" },
-  { id: "starred", label: "Starred" },
-  { id: "archived", label: "Archive" },
-  { id: "spam", label: "Spam" },
-  { id: "trash", label: "Trash" },
-  { id: "drafts", label: "Drafts" },
-];
 
 // Actions that move a message out of the folder being viewed.
 const LEAVES_FOLDER: Record<Folder, MessageAction[]> = {
@@ -91,13 +84,14 @@ function senderLabel(raw: string) {
 }
 
 export function GmailPanel({
+  view,
+  onViewChange,
   composeOpen,
   onComposeOpenChange,
   onAddToCalendar,
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
-  const [view, setView] = useState<View>("inbox");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canSyncMore, setCanSyncMore] = useState(true);
 
@@ -588,10 +582,10 @@ export function GmailPanel({
           eventFromSelection();
           break;
         case "i":
-          setView("inbox");
+          onViewChange("inbox");
           break;
         case "d":
-          setView("drafts");
+          onViewChange("drafts");
           break;
         default:
           return;
@@ -615,14 +609,15 @@ export function GmailPanel({
     }
   });
 
-  // Folder switches reset transient state.
-  function switchView(next: View) {
-    if (next === view) return;
-    setView(next);
+  // Folder switches (from the rail) reset transient state.
+  const prevView = useRef(view);
+  useEffect(() => {
+    if (prevView.current === view) return;
+    prevView.current = view;
     setSelectedId(null);
     setBulkIds(new Set());
     setConfirmDeleteId(null);
-  }
+  }, [view]);
 
   // Warm the inbox once when it loads empty (first connect / cold cache).
   const didAutoSync = useRef(false);
@@ -695,38 +690,6 @@ export function GmailPanel({
   return (
     <div className="mail">
       <div className="mail-list">
-        <div className="mail-list-head">
-          <div className="seg seg-folders">
-            {FOLDERS.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                data-active={view === f.id}
-                onClick={() => switchView(f.id)}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <span className="topbar-spacer" />
-          <button
-            type="button"
-            className="icon-btn"
-            data-tip="Refresh from Gmail"
-            data-tip-pos="down"
-            aria-label="Refresh from Gmail"
-            data-spinning={refreshInbox.isPending || syncFolder.isPending}
-            onClick={() =>
-              folder === "spam" || folder === "trash"
-                ? syncFolder.mutate({ folder })
-                : refreshInbox.mutate()
-            }
-            disabled={refreshInbox.isPending || syncFolder.isPending}
-          >
-            <RefreshIcon size={15} />
-          </button>
-        </div>
-
         {bulkIds.size > 0 && inMessages ? (
           <div className="bulk-bar">
             <span className="bulk-count tnum">{bulkIds.size} selected</span>
@@ -832,14 +795,14 @@ export function GmailPanel({
             </button>
           </div>
         ) : (
-          inMessages && (
-            <form
-              className="mail-search"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setActiveSearch(search);
-              }}
-            >
+          <form
+            className="mail-search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setActiveSearch(search);
+            }}
+          >
+            {inMessages ? (
               <div className="search-wrap">
                 <input
                   ref={searchRef}
@@ -851,8 +814,26 @@ export function GmailPanel({
                 />
                 <Kbd>/</Kbd>
               </div>
-            </form>
-          )
+            ) : (
+              <span className="mail-search-label">Drafts</span>
+            )}
+            <button
+              type="button"
+              className="icon-btn"
+              data-tip="Refresh from Gmail"
+              data-tip-pos="down"
+              aria-label="Refresh from Gmail"
+              data-spinning={refreshInbox.isPending || syncFolder.isPending}
+              onClick={() =>
+                folder === "spam" || folder === "trash"
+                  ? syncFolder.mutate({ folder })
+                  : refreshInbox.mutate()
+              }
+              disabled={refreshInbox.isPending || syncFolder.isPending}
+            >
+              <RefreshIcon size={15} />
+            </button>
+          </form>
         )}
 
         <div className="mail-rows" data-bulk={bulkIds.size > 0}>
@@ -894,22 +875,24 @@ export function GmailPanel({
                     animate="animate"
                     custom={i}
                   >
-                    <span
-                      className="row-check"
-                      role="checkbox"
-                      aria-checked={bulkIds.has(email.id)}
-                      aria-label="Select message"
-                      data-checked={bulkIds.has(email.id)}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleBulk(email.id);
-                      }}
-                    >
-                      <CheckIcon size={11} />
+                    <span className="row-lead">
+                      {email.unread && <span className="row-dot" />}
+                      <span
+                        className="row-check"
+                        role="checkbox"
+                        aria-checked={bulkIds.has(email.id)}
+                        aria-label="Select message"
+                        data-checked={bulkIds.has(email.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleBulk(email.id);
+                        }}
+                      >
+                        <CheckIcon size={11} />
+                      </span>
                     </span>
                     <span className="row-inner">
                       <span className="row-top">
-                        {email.unread && <span className="row-dot" />}
                         <span className="row-from">
                           {senderLabel(email.from)}
                         </span>

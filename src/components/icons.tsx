@@ -154,6 +154,13 @@ export const CalendarPlusIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const SpamIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2L8.2 3Z" />
+    <path d="M12 7.5V13M12 16.5h.01" />
+  </Svg>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="m4.5 12.5 5 5 10-11" />
