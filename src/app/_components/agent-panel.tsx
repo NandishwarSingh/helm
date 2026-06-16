@@ -6,8 +6,8 @@ import { DefaultChatTransport } from "ai";
 import { motion } from "motion/react";
 
 import { AgentIcon, SendIcon } from "@/components/icons";
-import { HelmLoader } from "@/components/helm-loader";
 import { Kbd } from "@/components/kbd";
+import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
 import { listRow } from "@/lib/motion";
 
@@ -107,6 +107,16 @@ export function AgentPanel() {
 
   const busy = status === "submitted" || status === "streaming";
 
+  // Show a thinking skeleton whenever the agent is busy but no text is
+  // visibly streaming: before the first token, and between tool steps.
+  const last = messages[messages.length - 1];
+  const lastPart = last?.parts[last.parts.length - 1];
+  const thinking =
+    busy &&
+    (!last ||
+      last.role === "user" ||
+      (last.role === "assistant" && lastPart?.type !== "text"));
+
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
@@ -194,12 +204,14 @@ export function AgentPanel() {
             </motion.div>
           ))}
 
-          {busy &&
-            messages[messages.length - 1]?.role === "user" && (
-              <div className="agent-msg" data-role="assistant">
-                <HelmLoader size={22} />
-              </div>
-            )}
+          {thinking && (
+            <div className="agent-msg" data-role="assistant">
+              <span className="agent-thinking" aria-label="Agent is working">
+                <Skeleton width="58%" height={11} />
+                <Skeleton width="36%" height={11} />
+              </span>
+            </div>
+          )}
 
           {error && (
             <p className="error agent-error">
