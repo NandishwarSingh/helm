@@ -102,6 +102,8 @@ export function AgentPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { messages, sendMessage, status, error } = useChat({
+    // A stable id keeps the conversation alive across view switches.
+    id: "helm-agent",
     transport: new DefaultChatTransport({ api: "/api/agent" }),
   });
 

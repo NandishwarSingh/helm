@@ -40,7 +40,9 @@ Rules:
 - Default meeting length is 30 minutes when the user gives only a start time.
 - Be concise. Short paragraphs; hyphen or numbered lists and **bold** are fine; never headings, tables, code blocks, nested lists, horizontal rules or emojis of any kind.
 - Never invent message ids, addresses or events. If a tool returns nothing, say so plainly.
-- ALWAYS end with a final text answer summarising what you did, including anything you could not do and why — even if steps failed.`;
+- ALWAYS end with a final text answer summarising what you did, including anything you could not do and why — even if steps failed.
+- Your recap must be literally true: only claim an action if you actually made that tool call in this conversation. Never invent attempts, failures, or tool names.
+- If the user references something from a previous session that is not in this conversation (like "the meeting you just booked"), check for it at most once; if absent, say so and continue with the rest of the task.`;
 }
 
 export async function POST(request: NextRequest) {
@@ -66,6 +68,7 @@ export async function POST(request: NextRequest) {
 
   const result = streamText({
     model: openrouter(MODEL),
+    temperature: 0.2,
     system: systemPrompt(),
     messages: await convertToModelMessages(recent),
     tools: buildAgentTools(tenantId),

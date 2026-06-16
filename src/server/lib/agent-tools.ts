@@ -13,9 +13,13 @@ import { encodeRawEmail, extractBodyFromPayload, getHeader } from "@/server/lib/
 export function buildAgentTools(tenantId: string) {
   const tenant = corsair.withTenant(tenantId);
 
-  // One request's call history: repeating identical calls wastes the tool
-  // budget, so repeats get the cached result plus a pointed reminder.
+  // One request's call history: identical repeats return the cached result,
+  // and each read tool gets a hard per-request budget so near-duplicate
+  // fishing (same tool, shifting arguments) cannot burn the step budget.
   const memo = new Map<string, unknown>();
+  const counts = new Map<string, number>();
+  const READ_BUDGET = 3;
+  const WRITE_TOOLS = new Set(["sendEmail", "createDraft", "modifyMail", "createEvent"]);
   function once<I, O>(name: string, fn: (input: I) => Promise<O>) {
     return async (input: I) => {
       const key = `${name}:${JSON.stringify(input)}`;
@@ -26,6 +30,13 @@ export function buildAgentTools(tenantId: string) {
           previousResult: memo.get(key),
         };
       }
+      const used = counts.get(name) ?? 0;
+      if (!WRITE_TOOLS.has(name) && used >= READ_BUDGET) {
+        return {
+          error: `You have already called ${name} ${used} times this request. Stop investigating: act on what you have, then write your final answer.`,
+        };
+      }
+      counts.set(name, used + 1);
       try {
         const result = await fn(input);
         memo.set(key, result);
