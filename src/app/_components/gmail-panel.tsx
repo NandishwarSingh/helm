@@ -184,11 +184,13 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
           {view === "inbox" &&
             emails.data &&
             (emails.data.length === 0 ? (
-              <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-                {refreshInbox.isPending
-                  ? "Syncing your inbox…"
-                  : "No mail yet. Refresh from Gmail to sync."}
-              </p>
+              refreshInbox.isPending ? (
+                <MailRowsSkeleton />
+              ) : (
+                <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
+                  No mail yet. Refresh from Gmail to sync.
+                </p>
+              )
             ) : (
               emails.data.map((email, i) => (
                 <motion.button
@@ -221,9 +223,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             ))}
 
           {view === "drafts" && drafts.isLoading && (
-            <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-              Loading…
-            </p>
+            <MailRowsSkeleton count={4} />
           )}
           {view === "drafts" && drafts.error && (
             <p className="error" style={{ padding: "0.5rem 0.6rem" }}>

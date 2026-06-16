@@ -11,6 +11,7 @@ import {
   PlusIcon,
   RefreshIcon,
 } from "@/components/icons";
+import { HelmLoader } from "@/components/helm-loader";
 import {
   formatAttendees,
   formatEventWhen,
@@ -218,7 +219,11 @@ export function CalendarPanel() {
       </form>
 
       <div className="cal-body">
-        {events.isLoading && <p className="muted">Loading…</p>}
+        {events.isLoading && (
+          <div className="empty">
+            <HelmLoader size={40} />
+          </div>
+        )}
         {events.error && <p className="error">{events.error.message}</p>}
         {events.data?.length === 0 && (
           <div className="empty">

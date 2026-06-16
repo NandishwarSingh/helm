@@ -507,6 +507,12 @@
  * Skeleton loaders
  * ------------------------------------------------------------------ */
 @layer components {
+  .helm-loader {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .skeleton {
     display: block;
     position: relative;

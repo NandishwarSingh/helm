@@ -7,6 +7,7 @@ import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { ConnectScreen } from "@/app/_components/connect-screen";
 import { GmailPanel } from "@/app/_components/gmail-panel";
 import { BrandMark } from "@/components/brand-mark";
+import { HelmLoader } from "@/components/helm-loader";
 import {
   CalendarIcon,
   ComposeIcon,
@@ -64,7 +65,7 @@ export default function Home() {
   if (status.isLoading) {
     return (
       <div className="splash">
-        <BrandMark size={20} />
+        <HelmLoader size={44} />
       </div>
     );
   }
