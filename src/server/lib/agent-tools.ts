@@ -3,6 +3,7 @@ import { tool } from "ai";
 import { z } from "zod";
 
 import { corsair } from "@/server/corsair";
+import { createCallGuard } from "@/server/lib/agent-guard";
 import { encodeRawEmail, extractBodyFromPayload, getHeader } from "@/server/lib/email";
 
 /**
@@ -13,40 +14,17 @@ import { encodeRawEmail, extractBodyFromPayload, getHeader } from "@/server/lib/
 export function buildAgentTools(tenantId: string) {
   const tenant = corsair.withTenant(tenantId);
 
-  // One request's call history: identical repeats return the cached result,
-  // and each read tool gets a hard per-request budget so near-duplicate
-  // fishing (same tool, shifting arguments) cannot burn the step budget.
-  const memo = new Map<string, unknown>();
-  const counts = new Map<string, number>();
-  const READ_BUDGET = 3;
+  // One request's call guard: identical repeats return the cached result,
+  // each read tool has a hard per-request budget, and content-creating writes
+  // are de-duplicated by recipient+subject. See createCallGuard.
   const WRITE_TOOLS = new Set(["sendEmail", "createDraft", "modifyMail", "createEvent"]);
-  function once<I, O>(name: string, fn: (input: I) => Promise<O>) {
-    return async (input: I) => {
-      const key = `${name}:${JSON.stringify(input)}`;
-      if (memo.has(key)) {
-        return {
-          repeatedCall: true,
-          note: "You already called this tool with identical arguments. Reuse the earlier result; do not call it again.",
-          previousResult: memo.get(key),
-        };
-      }
-      const used = counts.get(name) ?? 0;
-      if (!WRITE_TOOLS.has(name) && used >= READ_BUDGET) {
-        return {
-          error: `You have already called ${name} ${used} times this request. Stop investigating: act on what you have, then write your final answer.`,
-        };
-      }
-      counts.set(name, used + 1);
-      try {
-        const result = await fn(input);
-        memo.set(key, result);
-        return result;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "failed";
-        memo.set(key, { error: message });
-        return { error: message.slice(0, 200) };
-      }
-    };
+  const guard = createCallGuard({ readBudget: 3, writeTools: WRITE_TOOLS });
+  function once<I, O>(
+    name: string,
+    fn: (input: I) => Promise<O>,
+    signature?: (input: I) => string,
+  ) {
+    return (input: I) => guard(name, input, fn, signature);
   }
 
   const searchMail = tool({
@@ -183,11 +161,15 @@ export function buildAgentTools(tenantId: string) {
       subject: z.string().min(1).max(500),
       body: z.string().min(1).max(20_000),
     }),
-    execute: once("sendEmail", async ({ to, subject, body }) => {
-      const raw = encodeRawEmail({ to, subject, body });
-      const sent = await tenant.gmail.api.messages.send({ raw });
-      return { sent: true, id: sent.id ?? "" };
-    }),
+    execute: once(
+      "sendEmail",
+      async ({ to, subject, body }) => {
+        const raw = encodeRawEmail({ to, subject, body });
+        const sent = await tenant.gmail.api.messages.send({ raw });
+        return { sent: true, id: sent.id ?? "" };
+      },
+      ({ to, subject }) => `sendEmail:${to.toLowerCase()}:${subject.trim().toLowerCase()}`,
+    ),
   });
 
   const createDraft = tool({
@@ -198,13 +180,17 @@ export function buildAgentTools(tenantId: string) {
       subject: z.string().min(1).max(500),
       body: z.string().min(1).max(20_000),
     }),
-    execute: once("createDraft", async ({ to, subject, body }) => {
-      const raw = encodeRawEmail({ to, subject, body });
-      const draft = await tenant.gmail.api.drafts.create({
-        draft: { message: { raw } },
-      });
-      return { drafted: true, id: draft.id ?? "" };
-    }),
+    execute: once(
+      "createDraft",
+      async ({ to, subject, body }) => {
+        const raw = encodeRawEmail({ to, subject, body });
+        const draft = await tenant.gmail.api.drafts.create({
+          draft: { message: { raw } },
+        });
+        return { drafted: true, id: draft.id ?? "" };
+      },
+      ({ to, subject }) => `createDraft:${to.toLowerCase()}:${subject.trim().toLowerCase()}`,
+    ),
   });
 
   const modifyMail = tool({
@@ -276,25 +262,29 @@ export function buildAgentTools(tenantId: string) {
       attendees: z.array(z.string().email().max(320)).max(20).default([]),
       notify: z.boolean().default(true),
     }),
-    execute: once("createEvent", async ({ summary, start, end, description, attendees, notify }) => {
-      const event = await tenant.googlecalendar.api.events.create({
-        calendarId: "primary",
-        sendUpdates: notify && attendees.length > 0 ? "all" : "none",
-        event: {
-          summary,
-          description,
-          start: { dateTime: start },
-          end: { dateTime: end },
-          attendees: attendees.map((email) => ({ email })),
-        },
-      });
-      return {
-        created: true,
-        id: event.id ?? "",
-        link: event.htmlLink ?? "",
-        invitesSent: notify && attendees.length > 0,
-      };
-    }),
+    execute: once(
+      "createEvent",
+      async ({ summary, start, end, description, attendees, notify }) => {
+        const event = await tenant.googlecalendar.api.events.create({
+          calendarId: "primary",
+          sendUpdates: notify && attendees.length > 0 ? "all" : "none",
+          event: {
+            summary,
+            description,
+            start: { dateTime: start },
+            end: { dateTime: end },
+            attendees: attendees.map((email) => ({ email })),
+          },
+        });
+        return {
+          created: true,
+          id: event.id ?? "",
+          link: event.htmlLink ?? "",
+          invitesSent: notify && attendees.length > 0,
+        };
+      },
+      ({ summary, start }) => `createEvent:${summary.trim().toLowerCase()}:${start}`,
+    ),
   });
 
   return {
