@@ -9,16 +9,7 @@ import {
 } from "motion/react";
 
 import { BrandMark } from "@/components/brand-mark";
-import {
-  ArchiveIcon,
-  CalendarIcon,
-  ComposeIcon,
-  InboxIcon,
-  MailIcon,
-  RefreshIcon,
-  ReplyIcon,
-  StarIcon,
-} from "@/components/icons";
+import { ArchiveIcon, ReplyIcon, StarIcon } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { siteConfig } from "@/config/site";
 
@@ -159,7 +150,6 @@ export function Landing() {
           {siteConfig.name}
         </span>
         <div className="lp-nav-links">
-          <a href="#features">Features</a>
           <a href="#how-it-works">How it works</a>
           <a href="#compare">Compare</a>
           <a href="#faq">FAQ</a>
@@ -218,8 +208,8 @@ export function Landing() {
                 />
               </svg>
             </a>
-            <a className="btn lp-cta" href="#features">
-              See what it does
+            <a className="btn lp-cta" href="#how-it-works">
+              See how it works
             </a>
           </motion.div>
           {error && <p className="error lp-error">{error}</p>}
@@ -296,102 +286,6 @@ export function Landing() {
             <Kbd>⌘</Kbd> <Kbd>↵</Kbd> send
           </span>
         </motion.section>
-
-        {/* ---- built on ---- */}
-        <section className="lp-section">
-          <SectionHead
-            label="UNDER THE HOOD"
-            title="Real integrations, not a wrapper"
-            desc="Every message and event flows through production infrastructure you can inspect."
-          />
-          <div className="lp-built">
-            <motion.div className="lp-built-card" {...rise}>
-              <MailIcon size={20} />
-              <h3>Gmail API</h3>
-              <p>Full read, send, label and draft access on your real mailbox.</p>
-              <span className="lp-tag tnum">LIVE WRITES</span>
-            </motion.div>
-            <motion.div className="lp-built-card" {...rise} transition={{ ...rise.transition, delay: 0.05 }}>
-              <CalendarIcon size={20} />
-              <h3>Google Calendar</h3>
-              <p>Events, invites, updates and cancellations that actually notify people.</p>
-              <span className="lp-tag tnum">REAL INVITES</span>
-            </motion.div>
-            <motion.div className="lp-built-card" {...rise} transition={{ ...rise.transition, delay: 0.1 }}>
-              <RefreshIcon size={20} />
-              <h3>Corsair</h3>
-              <p>Handles OAuth, token refresh and rate limits; credentials stay encrypted.</p>
-              <span className="lp-tag tnum">AUTH + SYNC</span>
-            </motion.div>
-            <motion.div className="lp-built-card" {...rise} transition={{ ...rise.transition, delay: 0.15 }}>
-              <InboxIcon size={20} />
-              <h3>Postgres cache</h3>
-              <p>Your mailbox mirrored locally, so lists and search answer instantly.</p>
-              <span className="lp-tag tnum">SUB-SECOND</span>
-            </motion.div>
-          </div>
-        </section>
-
-        {/* ---- features ---- */}
-        <section className="lp-section" id="features">
-          <SectionHead
-            label="WHAT IT DOES"
-            title="Built for the way work actually moves"
-          />
-          <div className="lp-cards">
-            <motion.article className="lp-card" {...rise}>
-              <MailIcon size={18} />
-              <h3>Keyboard triage</h3>
-              <p>
-                Move through mail with J and K, reply with R, archive with E.
-                Folders, starring, bulk select and spam handling — a whole
-                morning without a single click.
-              </p>
-              <span className="lp-card-keys">
-                <Kbd>J</Kbd>
-                <Kbd>K</Kbd>
-                <Kbd>E</Kbd>
-                <Kbd>R</Kbd>
-                <Kbd>X</Kbd>
-              </span>
-            </motion.article>
-            <motion.article
-              className="lp-card"
-              {...rise}
-              transition={{ ...rise.transition, delay: 0.06 }}
-            >
-              <ComposeIcon size={18} />
-              <h3>One palette for everything</h3>
-              <p>
-                Command-K turns every action into a search: compose, schedule,
-                switch views, change theme, sign out. If you can type it, you
-                can do it.
-              </p>
-              <span className="lp-card-keys">
-                <Kbd>⌘</Kbd>
-                <Kbd>K</Kbd>
-              </span>
-            </motion.article>
-            <motion.article
-              className="lp-card"
-              {...rise}
-              transition={{ ...rise.transition, delay: 0.12 }}
-            >
-              <CalendarIcon size={18} />
-              <h3>Calendar without the tab-switch</h3>
-              <p>
-                A week that lives next to your mail. Create events, send real
-                invites, and turn any email into a meeting with one key.
-              </p>
-              <span className="lp-card-keys">
-                <Kbd>T</Kbd>
-                <Kbd>N</Kbd>
-                <Kbd>H</Kbd>
-                <Kbd>L</Kbd>
-              </span>
-            </motion.article>
-          </div>
-        </section>
 
         {/* ---- how it works ---- */}
         <section className="lp-section" id="how-it-works">
@@ -592,7 +486,6 @@ export function Landing() {
           {siteConfig.name}
         </span>
         <div className="lp-foot-links">
-          <a href="#features">Features</a>
           <a href="#compare">Compare</a>
           <a href="#faq">FAQ</a>
         </div>
