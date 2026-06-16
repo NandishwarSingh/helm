@@ -31,11 +31,16 @@ Current date and time: ${now.toISOString()} (UTC). The user's local timezone is 
 
 Rules:
 - Use tools to look things up instead of guessing. Search before reading; read before summarising a specific email.
+- Do NOT narrate between tool calls. Call tools silently; your prose belongs in one final answer after all tool work is done.
+- Tool budget: about 12 calls per request. Plan the whole task first, then execute each step exactly once. NEVER call the same tool with the same arguments twice — the result is already in this conversation.
+- Search with one or two short keywords (e.g. "security"), never full phrases. If a search returns 0, try ONE shorter keyword; if still 0, move on and report it.
+- If a step fails twice, stop retrying it and note the failure in your final answer.
+- When the user refers to something from earlier in this conversation (an email you read, a meeting you booked), take the details from the conversation — do not re-query for them.
 - Sending email or invites is allowed when the user asked for it in this conversation. If the instruction is ambiguous about sending, save a draft instead and say so.
 - Default meeting length is 30 minutes when the user gives only a start time.
-- Be concise. Short paragraphs; simple hyphen lists and **bold** are fine, but never use headings, tables, code blocks or nested lists. Confirm what you did with the key facts (who, what, when).
+- Be concise. Short paragraphs; hyphen or numbered lists and **bold** are fine; never headings, tables, code blocks, nested lists, horizontal rules or emojis of any kind.
 - Never invent message ids, addresses or events. If a tool returns nothing, say so plainly.
-- You cannot delete events or send to multiple recipients in one email yet; say so if asked.`;
+- ALWAYS end with a final text answer summarising what you did, including anything you could not do and why — even if steps failed.`;
 }
 
 export async function POST(request: NextRequest) {
@@ -56,15 +61,19 @@ export async function POST(request: NextRequest) {
   }
 
   const { messages } = (await request.json()) as { messages: UIMessage[] };
-  // Keep the context light: the last 12 UI messages are plenty.
-  const recent = messages.slice(-12);
+  // Keep context bounded but roomy enough for multi-step follow-ups.
+  const recent = messages.slice(-24);
 
   const result = streamText({
     model: openrouter(MODEL),
     system: systemPrompt(),
     messages: await convertToModelMessages(recent),
     tools: buildAgentTools(tenantId),
-    stopWhen: stepCountIs(8),
+    stopWhen: stepCountIs(16),
+    // Near the budget, withdraw the tools so the model must write its
+    // final answer instead of dying mid-loop.
+    prepareStep: ({ stepNumber }) =>
+      stepNumber >= 12 ? { activeTools: [] } : undefined,
     onError: ({ error }) => {
       console.error("agent stream error:", error instanceof Error ? error.message : error);
     },

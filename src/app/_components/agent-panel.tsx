@@ -47,7 +47,7 @@ function AgentText({ text }: { text: string }) {
 
   const lines = text.split("\n");
   lines.forEach((line, i) => {
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    const bullet = /^\s*(?:[-*]|\d+[.)])\s+(.*)$/.exec(line);
     if (bullet) {
       list.push(bullet[1] ?? "");
       return;

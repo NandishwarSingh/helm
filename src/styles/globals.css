@@ -1320,7 +1320,7 @@
 }
 
 /* ------------------------------------------------------------------ *
- * Calendar
+ * Calendar — week time-grid
  * ------------------------------------------------------------------ */
 @layer components {
   .cal {
@@ -1333,7 +1333,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.65rem 1.1rem;
+    padding: 0.6rem 1.1rem;
     border-bottom: 1px solid var(--color-line);
   }
   .cal-weeklabel {
@@ -1342,172 +1342,221 @@
     min-width: 9.5rem;
     text-align: center;
   }
-  /* Seven-day strip under the header */
-  .cal-strip {
+  .cal-head .cal-search {
+    width: 230px;
+    margin-left: 0.5rem;
+  }
+
+  /* ---- grid frame ---- */
+  .calgrid {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    position: relative;
+  }
+  .calgrid-head {
+    position: sticky;
+    top: 0;
+    z-index: 6;
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: 56px repeat(7, 1fr);
+    background: var(--color-paper);
     border-bottom: 1px solid var(--color-line);
   }
-  .cal-strip-day {
+  .calgrid-corner {
+    border-right: 1px solid var(--color-line);
+  }
+  .calgrid-dayhead {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 1px;
-    padding: 0.55rem 0 0.5rem;
+    gap: 2px;
+    padding: 0.5rem 0 0.45rem;
     background: none;
     border: none;
-    border-left: 1px solid var(--color-line);
+    border-right: 1px solid var(--color-line);
     cursor: pointer;
     transition: background 0.12s var(--ease-snap);
   }
-  .cal-strip-day:first-child {
-    border-left: none;
+  .calgrid-dayhead:last-child {
+    border-right: none;
   }
-  .cal-strip-day:hover {
+  .calgrid-dayhead:hover {
     background: var(--color-paper-sunken);
   }
-  .cal-strip-name {
-    font-size: 0.66rem;
+  .calgrid-dayname {
+    font-size: 0.64rem;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--color-ink-3);
   }
-  .cal-strip-num {
-    font-size: 1rem;
+  .calgrid-daynum {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 26px;
+    padding: 0 4px;
+    border-radius: var(--radius-md);
+    font-size: 0.95rem;
     color: var(--color-ink);
   }
-  .cal-strip-day[data-today="true"] .cal-strip-num {
-    color: var(--color-accent);
+  .calgrid-dayhead[data-today="true"] .calgrid-daynum {
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     font-weight: 650;
   }
-  .cal-strip-count {
-    min-height: 14px;
-    font-size: 0.68rem;
-    color: var(--color-accent);
-  }
 
-  .cal-search {
-    padding: 0.7rem 1.1rem;
+  /* ---- all-day lane ---- */
+  .calgrid-allday {
+    display: grid;
+    grid-template-columns: 56px repeat(7, 1fr);
     border-bottom: 1px solid var(--color-line);
-    max-width: 30rem;
+    background: var(--color-paper);
   }
-  .cal-body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+  .calgrid-gutterlabel {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 7px;
+    border-right: 1px solid var(--color-line);
+    font-size: 0.6rem;
+    color: var(--color-ink-3);
+  }
+  .calgrid-alldaycell {
     display: flex;
     flex-direction: column;
-    padding: 1.1rem 1.5rem 3rem;
+    gap: 3px;
+    min-height: 28px;
+    padding: 3px 4px;
+    border-right: 1px solid var(--color-line);
   }
-  .cal-list {
-    width: 100%;
-    max-width: 820px;
-    margin: 0 auto;
+  .calgrid-alldaycell:last-child {
+    border-right: none;
   }
-  .cal-body .empty {
-    flex: 1;
-  }
-  .cal-day {
-    margin-bottom: 1.1rem;
-  }
-  .cal-day-head {
-    display: flex;
-    align-items: center;
-    border-bottom: 1px solid var(--color-line);
-    margin-bottom: 0.4rem;
-  }
-  .cal-day-label {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .calgrid-alldaychip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
     font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--color-ink-3);
-    margin: 0;
-    padding-bottom: 0.35rem;
-  }
-  .cal-day-label[data-today="true"] {
-    color: var(--color-accent);
-  }
-  .cal-today-chip {
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
-    background: var(--color-accent-wash);
-    color: var(--color-accent);
-    font-size: 0.64rem;
-  }
-  .cal-day-add {
-    width: 24px;
-    height: 24px;
-    opacity: 0;
-    transition: opacity 0.12s var(--ease-snap);
-  }
-  .cal-day-head:hover .cal-day-add,
-  .cal-day-add:focus-visible {
-    opacity: 1;
-  }
-  .cal-day-empty {
-    margin: 0 0 0.3rem;
-    padding: 0.2rem 0.5rem 0.45rem;
-    color: var(--color-ink-3);
-    font-size: 0.8rem;
-  }
-  .event-row {
-    display: flex;
-    gap: 0.9rem;
-    padding: 0.55rem 0.5rem;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition: background 0.1s var(--ease-snap);
-  }
-  .event-row:hover {
-    background: var(--color-paper-sunken);
-  }
-  .event-row[data-active="true"] {
-    background: var(--color-accent-wash);
-    box-shadow: inset 2px 0 0 var(--color-accent);
-  }
-  .event-when {
-    flex: none;
-    width: 11rem;
-    color: var(--color-ink-2);
-    padding-top: 1px;
-  }
-  .event-main {
-    min-width: 0;
-  }
-  .event-title {
     font-weight: 550;
     color: var(--color-ink);
+    padding: 2px 6px;
+    background: var(--color-accent-wash);
+    border: none;
+    border-left: 2px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
   }
-  .event-title a {
-    color: var(--color-ink);
-    text-decoration: none;
+  .calgrid-alldaychip[data-active="true"] {
+    outline: 1.5px solid var(--color-accent);
   }
-  .event-title a:hover {
-    color: var(--color-accent-strong);
+
+  /* ---- 24h body ---- */
+  .calgrid-body {
+    display: grid;
+    grid-template-columns: 56px repeat(7, 1fr);
+    height: 1152px; /* 24 x 48px */
   }
-  .event-meta {
+  .calgrid-gutter {
+    position: relative;
+    border-right: 1px solid var(--color-line);
+  }
+  .calgrid-hourlabel {
+    position: absolute;
+    right: 7px;
+    transform: translateY(-50%);
+    font-size: 0.62rem;
+    color: var(--color-ink-3);
+    background: var(--color-paper);
+    padding: 0 2px;
+  }
+  .calgrid-col {
+    position: relative;
+    border-right: 1px solid var(--color-line);
+    cursor: cell;
+  }
+  .calgrid-col:last-child {
+    border-right: none;
+  }
+  .calgrid-col[data-today="true"] {
+    background: color-mix(in srgb, var(--color-accent-wash) 40%, transparent);
+  }
+  .calgrid-hourline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--color-line);
+    opacity: 0.65;
+    pointer-events: none;
+  }
+
+  /* ---- now line ---- */
+  .calgrid-now {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--color-accent);
+    z-index: 3;
+    pointer-events: none;
+  }
+  .calgrid-now-dot {
+    position: absolute;
+    left: -3px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-accent);
+  }
+
+  /* ---- event blocks ---- */
+  .calgrid-event {
+    position: absolute;
+    z-index: 2;
     display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    margin-top: 2px;
-    color: var(--color-ink-3);
-    font-size: 0.82rem;
+    flex-direction: column;
+    gap: 1px;
+    align-items: flex-start;
+    padding: 3px 6px;
+    background: var(--color-accent-wash);
+    border: none;
+    border-left: 2px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s var(--ease-snap);
   }
-  .event-meta a {
-    color: var(--color-ink-3);
+  .calgrid-event:hover {
+    background: color-mix(in srgb, var(--color-accent-wash) 82%, var(--color-accent) 18%);
   }
-  .event-desc {
-    margin-top: 4px;
+  .calgrid-event[data-active="true"] {
+    outline: 1.5px solid var(--color-accent);
+    z-index: 4;
+  }
+  .calgrid-event-title {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-ink);
+  }
+  .calgrid-event-time {
+    font-size: 0.62rem;
     color: var(--color-ink-2);
-    font-size: 0.86rem;
-    line-height: 1.5;
   }
+
+  /* dialog two-column row (start/end fields) */
   .field-row {
     display: flex;
     gap: 0.6rem;

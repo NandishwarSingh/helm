@@ -13,6 +13,31 @@ import { encodeRawEmail, extractBodyFromPayload, getHeader } from "@/server/lib/
 export function buildAgentTools(tenantId: string) {
   const tenant = corsair.withTenant(tenantId);
 
+  // One request's call history: repeating identical calls wastes the tool
+  // budget, so repeats get the cached result plus a pointed reminder.
+  const memo = new Map<string, unknown>();
+  function once<I, O>(name: string, fn: (input: I) => Promise<O>) {
+    return async (input: I) => {
+      const key = `${name}:${JSON.stringify(input)}`;
+      if (memo.has(key)) {
+        return {
+          repeatedCall: true,
+          note: "You already called this tool with identical arguments. Reuse the earlier result; do not call it again.",
+          previousResult: memo.get(key),
+        };
+      }
+      try {
+        const result = await fn(input);
+        memo.set(key, result);
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "failed";
+        memo.set(key, { error: message });
+        return { error: message.slice(0, 200) };
+      }
+    };
+  }
+
   const searchMail = tool({
     description:
       "Search the user's mailbox (cached). Returns id, sender, subject, date and snippet for each match. Use before reading or acting on mail.",
@@ -23,17 +48,35 @@ export function buildAgentTools(tenantId: string) {
         .describe("Words from the subject, sender or body snippet"),
       limit: z.number().min(1).max(15).default(8),
     }),
-    execute: async ({ query, limit }) => {
-      const fields = [
-        { snippet: { contains: query } },
-        { subject: { contains: query } },
-        { from: { contains: query } },
-      ];
-      const results = await Promise.all(
-        fields.map((data) =>
-          tenant.gmail.db.messages.search({ data, limit, offset: 0 }),
-        ),
-      );
+    execute: once("searchMail", async ({ query, limit }) => {
+      // Split into keywords and try sensible case variants — substring
+      // matching is exact, so "Google security" must not zero out.
+      const words = query
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length > 2)
+        .slice(0, 3);
+      const terms = new Set<string>();
+      for (const word of words.length > 0 ? words : [query]) {
+        terms.add(word);
+        terms.add(word.toLowerCase());
+        terms.add(word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+      }
+      const lookups: Promise<
+        Awaited<ReturnType<typeof tenant.gmail.db.messages.search>>
+      >[] = [];
+      for (const term of terms) {
+        for (const data of [
+          { snippet: { contains: term } },
+          { subject: { contains: term } },
+          { from: { contains: term } },
+        ]) {
+          lookups.push(
+            tenant.gmail.db.messages.search({ data, limit, offset: 0 }),
+          );
+        }
+      }
+      const results = await Promise.all(lookups);
       const seen = new Set<string>();
       const items = results
         .flat()
@@ -53,19 +96,20 @@ export function buildAgentTools(tenantId: string) {
           snippet: (m.data.snippet ?? "").slice(0, 140),
         }));
       return { count: items.length, items };
-    },
+    }),
   });
 
   const listRecentMail = tool({
     description:
-      "List the most recent messages in the inbox (cached), newest first.",
+      "List inbox messages (cached). order:'newest' for the latest, order:'oldest' for the oldest — use order:'oldest' with unreadOnly:true to find the oldest unread email in ONE call.",
     inputSchema: z.object({
       limit: z.number().min(1).max(20).default(10),
       unreadOnly: z.boolean().default(false),
+      order: z.enum(["newest", "oldest"]).default("newest"),
     }),
-    execute: async ({ limit, unreadOnly }) => {
+    execute: once("listRecentMail", async ({ limit, unreadOnly, order }) => {
       const rows = await tenant.gmail.db.messages.list({
-        limit: 60,
+        limit: 300,
         offset: 0,
       });
       const seen = new Set<string>();
@@ -78,10 +122,11 @@ export function buildAgentTools(tenantId: string) {
           if (unreadOnly && !labels.includes("UNREAD")) return false;
           return true;
         })
-        .sort(
-          (a, b) =>
-            Number(b.data.internalDate ?? 0) - Number(a.data.internalDate ?? 0),
-        )
+        .sort((a, b) => {
+          const diff =
+            Number(b.data.internalDate ?? 0) - Number(a.data.internalDate ?? 0);
+          return order === "oldest" ? -diff : diff;
+        })
         .slice(0, limit)
         .map((m) => ({
           id: m.entity_id,
@@ -94,14 +139,14 @@ export function buildAgentTools(tenantId: string) {
           snippet: (m.data.snippet ?? "").slice(0, 120),
         }));
       return { count: items.length, items };
-    },
+    }),
   });
 
   const readEmail = tool({
     description:
       "Read one email's full content by id (live fetch). Use the id from searchMail or listRecentMail.",
     inputSchema: z.object({ id: z.string().min(1).max(64) }),
-    execute: async ({ id }) => {
+    execute: once("readEmail", async ({ id }) => {
       const message = await tenant.gmail.api.messages.get({
         id,
         format: "full",
@@ -116,7 +161,7 @@ export function buildAgentTools(tenantId: string) {
         subject: getHeader(headers, "Subject"),
         body: body.slice(0, 4000),
       };
-    },
+    }),
   });
 
   const sendEmail = tool({
@@ -127,11 +172,11 @@ export function buildAgentTools(tenantId: string) {
       subject: z.string().min(1).max(500),
       body: z.string().min(1).max(20_000),
     }),
-    execute: async ({ to, subject, body }) => {
+    execute: once("sendEmail", async ({ to, subject, body }) => {
       const raw = encodeRawEmail({ to, subject, body });
       const sent = await tenant.gmail.api.messages.send({ raw });
       return { sent: true, id: sent.id ?? "" };
-    },
+    }),
   });
 
   const createDraft = tool({
@@ -142,13 +187,13 @@ export function buildAgentTools(tenantId: string) {
       subject: z.string().min(1).max(500),
       body: z.string().min(1).max(20_000),
     }),
-    execute: async ({ to, subject, body }) => {
+    execute: once("createDraft", async ({ to, subject, body }) => {
       const raw = encodeRawEmail({ to, subject, body });
       const draft = await tenant.gmail.api.drafts.create({
         draft: { message: { raw } },
       });
       return { drafted: true, id: draft.id ?? "" };
-    },
+    }),
   });
 
   const modifyMail = tool({
@@ -158,7 +203,7 @@ export function buildAgentTools(tenantId: string) {
       id: z.string().min(1).max(64),
       action: z.enum(["archive", "trash", "star", "unstar", "read", "unread"]),
     }),
-    execute: async ({ id, action }) => {
+    execute: once("modifyMail", async ({ id, action }) => {
       if (action === "trash") {
         await tenant.gmail.api.messages.trash({ id });
         return { done: true, action };
@@ -177,7 +222,7 @@ export function buildAgentTools(tenantId: string) {
         removeLabelIds: remove,
       });
       return { done: true, action };
-    },
+    }),
   });
 
   const listEvents = tool({
@@ -187,7 +232,7 @@ export function buildAgentTools(tenantId: string) {
       timeMin: z.string().datetime({ offset: true }),
       timeMax: z.string().datetime({ offset: true }),
     }),
-    execute: async ({ timeMin, timeMax }) => {
+    execute: once("listEvents", async ({ timeMin, timeMax }) => {
       const result = await tenant.googlecalendar.api.events.getMany({
         calendarId: "primary",
         timeMin,
@@ -206,7 +251,7 @@ export function buildAgentTools(tenantId: string) {
           .filter(Boolean),
       }));
       return { count: items.length, items };
-    },
+    }),
   });
 
   const createEvent = tool({
@@ -220,7 +265,7 @@ export function buildAgentTools(tenantId: string) {
       attendees: z.array(z.string().email().max(320)).max(20).default([]),
       notify: z.boolean().default(true),
     }),
-    execute: async ({ summary, start, end, description, attendees, notify }) => {
+    execute: once("createEvent", async ({ summary, start, end, description, attendees, notify }) => {
       const event = await tenant.googlecalendar.api.events.create({
         calendarId: "primary",
         sendUpdates: notify && attendees.length > 0 ? "all" : "none",
@@ -238,7 +283,7 @@ export function buildAgentTools(tenantId: string) {
         link: event.htmlLink ?? "",
         invitesSent: notify && attendees.length > 0,
       };
-    },
+    }),
   });
 
   return {

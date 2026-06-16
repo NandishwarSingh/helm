@@ -8,20 +8,13 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
-  MapPinIcon,
-  PlusIcon,
   RefreshIcon,
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
 import { Kbd } from "@/components/kbd";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
-import {
-  formatAttendees,
-  formatEventWhen,
-  LinkifiedText,
-  parseEmailAddress,
-} from "@/lib/display";
-import { listRow, scrim, slideOver } from "@/lib/motion";
+import { parseEmailAddress } from "@/lib/display";
+import { scrim, slideOver } from "@/lib/motion";
 import { formatWeekLabel, getWeekBounds } from "@/lib/week";
 import { api } from "@/trpc/react";
 
@@ -43,6 +36,10 @@ type EventItem = {
   htmlLink: string;
 };
 
+/** Geometry of the week grid. */
+const HOUR_PX = 48;
+const DAY_MINUTES = 24 * 60;
+
 function toDatetimeLocalValue(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -53,14 +50,106 @@ function dayKey(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** Next round hour (defaults for the create dialog). */
-function nextHour() {
-  const start = new Date();
-  start.setMinutes(0, 0, 0);
-  start.setHours(start.getHours() + 1);
-  const end = new Date(start);
-  end.setHours(end.getHours() + 1);
-  return { start, end };
+/** Date-only starts ("2026-06-12") are all-day events. */
+function isAllDay(event: EventItem) {
+  return Boolean(event.start) && !event.start.includes("T");
+}
+
+function minutesIntoDay(iso: string) {
+  const d = new Date(iso);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function formatHour(hour: number) {
+  if (hour === 0) return "12 AM";
+  if (hour < 12) return `${hour} AM`;
+  if (hour === 12) return "12 PM";
+  return `${hour - 12} PM`;
+}
+
+function formatTimeRange(event: EventItem) {
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  return `${fmt(event.start)} – ${fmt(event.end)}`;
+}
+
+type Positioned = {
+  event: EventItem;
+  top: number;
+  height: number;
+  lane: number;
+  lanes: number;
+};
+
+/**
+ * Lays out one day's timed events: overlapping events split the column into
+ * equal lanes (greedy first-free-lane assignment per overlap cluster).
+ */
+function layoutDay(events: EventItem[]): Positioned[] {
+  const sorted = [...events].sort(
+    (a, b) => minutesIntoDay(a.start) - minutesIntoDay(b.start),
+  );
+  const out: Positioned[] = [];
+  let cluster: { item: EventItem; start: number; end: number; lane: number }[] =
+    [];
+  let clusterEnd = -1;
+
+  const flush = () => {
+    if (cluster.length === 0) return;
+    const lanes = Math.max(...cluster.map((c) => c.lane)) + 1;
+    for (const c of cluster) {
+      const top = (c.start / DAY_MINUTES) * 24 * HOUR_PX;
+      const height = Math.max(((c.end - c.start) / 60) * HOUR_PX, 22);
+      out.push({ event: c.item, top, height, lane: c.lane, lanes });
+    }
+    cluster = [];
+    clusterEnd = -1;
+  };
+
+  for (const item of sorted) {
+    const start = minutesIntoDay(item.start);
+    const end = Math.max(
+      item.end?.includes("T") ? minutesIntoDay(item.end) : start + 30,
+      start + 20,
+    );
+    if (cluster.length > 0 && start >= clusterEnd) flush();
+    // First lane whose previous occupant has ended.
+    const laneEnds: number[] = [];
+    for (const c of cluster) {
+      laneEnds[c.lane] = Math.max(laneEnds[c.lane] ?? 0, c.end);
+    }
+    let lane = 0;
+    while ((laneEnds[lane] ?? 0) > start) lane += 1;
+    cluster.push({ item, start, end, lane });
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  flush();
+  return out;
+}
+
+/** The accent line marking the current minute in today's column. */
+function NowLine() {
+  const [minutes, setMinutes] = useState(
+    () => new Date().getHours() * 60 + new Date().getMinutes(),
+  );
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const now = new Date();
+      setMinutes(now.getHours() * 60 + now.getMinutes());
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div
+      className="calgrid-now"
+      style={{ top: (minutes / DAY_MINUTES) * 24 * HOUR_PX }}
+    >
+      <span className="calgrid-now-dot" />
+    </div>
+  );
 }
 
 export function CalendarPanel({
@@ -73,6 +162,7 @@ export function CalendarPanel({
   const [activeSearch, setActiveSearch] = useState("");
   const [weekOffset, setWeekOffset] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const week = useMemo(() => getWeekBounds(weekOffset), [weekOffset]);
   const weekLabel = formatWeekLabel(week.start, week.end);
@@ -87,9 +177,16 @@ export function CalendarPanel({
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
-  const defaults = nextHour();
-  const [start, setStart] = useState(toDatetimeLocalValue(defaults.start));
-  const [end, setEnd] = useState(toDatetimeLocalValue(defaults.end));
+  const defaults = (() => {
+    const startAt = new Date();
+    startAt.setMinutes(0, 0, 0);
+    startAt.setHours(startAt.getHours() + 1);
+    const endAt = new Date(startAt);
+    endAt.setHours(endAt.getHours() + 1);
+    return { startAt, endAt };
+  })();
+  const [start, setStart] = useState(toDatetimeLocalValue(defaults.startAt));
+  const [end, setEnd] = useState(toDatetimeLocalValue(defaults.endAt));
   const [attendees, setAttendees] = useState("");
 
   const dialogOpen = createOpen || editingId !== null;
@@ -159,15 +256,18 @@ export function CalendarPanel({
     onSeedConsumed();
   }, [createOpen, seed, onSeedConsumed]);
 
-  // Edit: prefill the dialog from an existing event.
   function openEdit(event: EventItem) {
     setEditingId(event.id);
     setConfirmingDelete(false);
     setSummary(event.summary);
     setDescription(event.description);
     setLocation(event.location);
-    if (event.start) setStart(toDatetimeLocalValue(new Date(event.start)));
-    if (event.end) setEnd(toDatetimeLocalValue(new Date(event.end)));
+    if (event.start.includes("T")) {
+      setStart(toDatetimeLocalValue(new Date(event.start)));
+    }
+    if (event.end.includes("T")) {
+      setEnd(toDatetimeLocalValue(new Date(event.end)));
+    }
     setAttendees(
       event.attendees
         .map((a) => parseEmailAddress(a).email)
@@ -176,12 +276,12 @@ export function CalendarPanel({
     );
   }
 
-  // Quick add: a specific day at 09:00.
-  function openCreateForDay(day: Date) {
+  /** Quick add at a specific day and time (slot click / header click). */
+  function openCreateAt(day: Date, hour = 9, minute = 0) {
     const startAt = new Date(day);
-    startAt.setHours(9, 0, 0, 0);
+    startAt.setHours(hour, minute, 0, 0);
     const endAt = new Date(startAt);
-    endAt.setHours(10);
+    endAt.setMinutes(endAt.getMinutes() + 60);
     setStart(toDatetimeLocalValue(startAt));
     setEnd(toDatetimeLocalValue(endAt));
     onCreateOpenChange(true);
@@ -196,6 +296,12 @@ export function CalendarPanel({
     syncedWeeks.current.add(key);
     refreshEvents.mutate({ weekStart: key, weekEnd: week.end.toISOString() });
   }, [events.data, events.isLoading, week.start, week.end, refreshEvents]);
+
+  // Scroll the grid to the working morning on mount and week change.
+  useEffect(() => {
+    const el = gridRef.current;
+    if (el) el.scrollTop = 7.5 * HOUR_PX;
+  }, [weekOffset, events.isLoading]);
 
   // Close the dialog on Escape.
   useEffect(() => {
@@ -228,7 +334,57 @@ export function CalendarPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmEvent]);
 
-  // Calendar keyboard layer: week navigation and today.
+  // The week, day by day, with timed events positioned.
+  const days = useMemo(() => {
+    const byDay = new Map<string, EventItem[]>();
+    for (const event of events.data ?? []) {
+      if (!event.start) continue;
+      const key = isAllDay(event) ? event.start : dayKey(new Date(event.start));
+      const list = byDay.get(key) ?? [];
+      list.push(event);
+      byDay.set(key, list);
+    }
+    const today = dayKey(new Date());
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(week.start);
+      date.setDate(date.getDate() + i);
+      const key = dayKey(date);
+      const all = byDay.get(key) ?? [];
+      return {
+        date,
+        key,
+        isToday: key === today,
+        allDay: all.filter(isAllDay),
+        timed: layoutDay(all.filter((e) => !isAllDay(e))),
+      };
+    });
+  }, [events.data, week.start]);
+
+  const hasAllDayLane = days.some((d) => d.allDay.length > 0);
+
+  // Events in chronological order for J/K navigation.
+  const orderedEvents = useMemo(
+    () =>
+      days.flatMap((day) => [...day.allDay, ...day.timed.map((p) => p.event)]),
+    [days],
+  );
+
+  function moveEventSelection(step: 1 | -1) {
+    if (orderedEvents.length === 0) return;
+    const index = orderedEvents.findIndex((ev) => ev.id === selectedEventId);
+    const next =
+      index === -1
+        ? 0
+        : Math.min(Math.max(index + step, 0), orderedEvents.length - 1);
+    const target = orderedEvents[next];
+    if (!target) return;
+    setSelectedEventId(target.id);
+    document
+      .querySelector(`[data-event-id="${target.id}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }
+
+  // Calendar keyboard layer.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (isTypingTarget(event.target)) {
@@ -291,7 +447,6 @@ export function CalendarPanel({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Palette / global-shortcut hooks.
   useAction("focus-search", () => {
     searchRef.current?.focus();
     searchRef.current?.select();
@@ -320,8 +475,20 @@ export function CalendarPanel({
     attendees: parseAttendees(),
   };
 
+  const canSubmit = Boolean(summary && start && end);
+  const dialogBusy =
+    createDraft.isPending ||
+    sendInvite.isPending ||
+    updateEvent.isPending ||
+    deleteEvent.isPending;
+  const dialogError =
+    createDraft.error ??
+    sendInvite.error ??
+    updateEvent.error ??
+    deleteEvent.error;
+
   function submitPrimary() {
-    if (!canSubmit) return;
+    if (!canSubmit || dialogBusy) return;
     if (editingId) {
       updateEvent.mutate({
         id: editingId,
@@ -336,59 +503,11 @@ export function CalendarPanel({
     }
   }
 
-  // The week, day by day, with that day's events attached.
-  const days = useMemo(() => {
-    const byDay = new Map<string, EventItem[]>();
-    for (const event of events.data ?? []) {
-      if (!event.start) continue;
-      const key = dayKey(new Date(event.start));
-      const list = byDay.get(key) ?? [];
-      list.push(event);
-      byDay.set(key, list);
-    }
-    const today = dayKey(new Date());
-    return Array.from({ length: 7 }, (_, i) => {
-      const date = new Date(week.start);
-      date.setDate(date.getDate() + i);
-      const key = dayKey(date);
-      return {
-        date,
-        key,
-        isToday: key === today,
-        events: byDay.get(key) ?? [],
-      };
-    });
-  }, [events.data, week.start]);
-
-  // Events in visual order (day by day) for J/K navigation.
-  const orderedEvents = useMemo(() => days.flatMap((day) => day.events), [days]);
-
-  function moveEventSelection(step: 1 | -1) {
-    if (orderedEvents.length === 0) return;
-    const index = orderedEvents.findIndex((ev) => ev.id === selectedEventId);
-    const next =
-      index === -1
-        ? 0
-        : Math.min(Math.max(index + step, 0), orderedEvents.length - 1);
-    const target = orderedEvents[next];
-    if (!target) return;
-    setSelectedEventId(target.id);
-    document
-      .querySelector(`[data-event-id="${target.id}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+  function onSlotClick(day: Date, offsetY: number) {
+    const minutes = Math.floor(((offsetY / HOUR_PX) * 60) / 30) * 30;
+    const clamped = Math.min(Math.max(minutes, 0), DAY_MINUTES - 60);
+    openCreateAt(day, Math.floor(clamped / 60), clamped % 60);
   }
-
-  const dialogError =
-    createDraft.error ??
-    sendInvite.error ??
-    updateEvent.error ??
-    deleteEvent.error;
-  const dialogBusy =
-    createDraft.isPending ||
-    sendInvite.isPending ||
-    updateEvent.isPending ||
-    deleteEvent.isPending;
-  const canSubmit = Boolean(summary && start && end);
 
   return (
     <div className="cal">
@@ -396,7 +515,10 @@ export function CalendarPanel({
         <button
           type="button"
           className="icon-btn"
-          onClick={() => setWeekOffset((w) => w - 1)}
+          onClick={() => {
+            setWeekOffset((w) => w - 1);
+            setSelectedEventId(null);
+          }}
           aria-label="Previous week"
         >
           <ChevronLeftIcon size={16} />
@@ -405,7 +527,10 @@ export function CalendarPanel({
         <button
           type="button"
           className="icon-btn"
-          onClick={() => setWeekOffset((w) => w + 1)}
+          onClick={() => {
+            setWeekOffset((w) => w + 1);
+            setSelectedEventId(null);
+          }}
           aria-label="Next week"
         >
           <ChevronRightIcon size={16} />
@@ -416,6 +541,24 @@ export function CalendarPanel({
             <Kbd>T</Kbd>
           </button>
         )}
+        <div className="cal-search search-wrap">
+          <input
+            ref={searchRef}
+            className="field"
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                setActiveSearch(search);
+                searchRef.current?.blur();
+              }
+            }}
+            placeholder="Search events"
+          />
+          <Kbd>/</Kbd>
+        </div>
         <span className="topbar-spacer" />
         <button
           type="button"
@@ -436,130 +579,127 @@ export function CalendarPanel({
         </button>
       </div>
 
-      <div className="cal-strip">
-        {days.map((day) => (
-          <button
-            key={day.key}
-            type="button"
-            className="cal-strip-day"
-            data-today={day.isToday}
-            data-tip="Add an event on this day"
-            data-tip-pos="down"
-            onClick={() => openCreateForDay(day.date)}
-          >
-            <span className="cal-strip-name">
-              {day.date.toLocaleDateString("en-US", { weekday: "short" })}
-            </span>
-            <span className="cal-strip-num tnum">{day.date.getDate()}</span>
-            <span className="cal-strip-count">
-              {day.events.length > 0 ? day.events.length : ""}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      <form
-        className="cal-search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setActiveSearch(search);
-          searchRef.current?.blur();
-        }}
-      >
-        <div className="search-wrap">
-          <input
-            ref={searchRef}
-            className="field"
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search events"
-          />
-          <Kbd>/</Kbd>
+      {events.isLoading ? (
+        <div className="empty" style={{ flex: 1 }}>
+          <HelmLoader size={40} />
         </div>
-      </form>
-
-      <div className="cal-body">
-        {events.isLoading && (
-          <div className="empty">
-            <HelmLoader size={40} />
-          </div>
-        )}
-        {events.error && <p className="error">{events.error.message}</p>}
-
-        {!events.isLoading && !events.error && (
-          <div className="cal-list">
+      ) : events.error ? (
+        <p className="error" style={{ padding: "1rem 1.2rem" }}>
+          {events.error.message}
+        </p>
+      ) : (
+        <div className="calgrid" ref={gridRef}>
+          <div className="calgrid-head">
+            <span className="calgrid-corner" />
             {days.map((day) => (
-              <section className="cal-day" key={day.key}>
-                <div className="cal-day-head">
-                  <h2 className="cal-day-label" data-today={day.isToday}>
-                    {day.date.toLocaleDateString("en-US", {
-                      weekday: "long",
-                      month: "short",
-                      day: "numeric",
-                    })}
-                    {day.isToday && <span className="cal-today-chip">Today</span>}
-                  </h2>
-                  <button
-                    type="button"
-                    className="icon-btn cal-day-add"
-                    data-tip="Add an event on this day"
-                    aria-label="Add an event on this day"
-                    onClick={() => openCreateForDay(day.date)}
-                  >
-                    <PlusIcon size={14} />
-                  </button>
-                </div>
-                {day.events.length === 0 ? (
-                  <p className="cal-day-empty">No events</p>
-                ) : (
-                  day.events.map((event, i) => (
-                    <motion.article
-                      className="event-row"
+              <button
+                key={day.key}
+                type="button"
+                className="calgrid-dayhead"
+                data-today={day.isToday}
+                data-tip="Add an event on this day"
+                data-tip-pos="down"
+                onClick={() => openCreateAt(day.date)}
+              >
+                <span className="calgrid-dayname">
+                  {day.date.toLocaleDateString("en-US", { weekday: "short" })}
+                </span>
+                <span className="calgrid-daynum tnum">
+                  {day.date.getDate()}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {hasAllDayLane && (
+            <div className="calgrid-allday">
+              <span className="calgrid-gutterlabel tnum">all-day</span>
+              {days.map((day) => (
+                <div className="calgrid-alldaycell" key={day.key}>
+                  {day.allDay.map((event) => (
+                    <button
                       key={event.id}
+                      type="button"
+                      className="calgrid-alldaychip"
                       data-active={selectedEventId === event.id}
                       data-event-id={event.id}
-                      variants={listRow}
-                      initial="initial"
-                      animate="animate"
-                      custom={i}
                       onClick={() => {
                         setSelectedEventId(event.id);
                         openEdit(event);
                       }}
                     >
-                      <div className="event-when tnum">
-                        {formatEventWhen(event.start, event.end)}
-                      </div>
-                      <div className="event-main">
-                        <div className="event-title">
-                          {event.summary || "Untitled event"}
-                        </div>
-                        {event.location && (
-                          <div className="event-meta">
-                            <MapPinIcon size={13} />
-                            {event.location}
-                          </div>
-                        )}
-                        {event.attendees.length > 0 && (
-                          <div className="event-meta">
-                            {formatAttendees(event.attendees)}
-                          </div>
-                        )}
-                        {event.description && (
-                          <div className="event-desc">
-                            <LinkifiedText text={event.description} />
-                          </div>
-                        )}
-                      </div>
-                    </motion.article>
-                  ))
-                )}
-              </section>
+                      {event.summary || "Untitled"}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="calgrid-body">
+            <div className="calgrid-gutter">
+              {Array.from({ length: 24 }, (_, hour) => (
+                <span
+                  key={hour}
+                  className="calgrid-hourlabel tnum"
+                  style={{ top: hour * HOUR_PX }}
+                >
+                  {hour === 0 ? "" : formatHour(hour)}
+                </span>
+              ))}
+            </div>
+            {days.map((day) => (
+              <div
+                key={day.key}
+                className="calgrid-col"
+                data-today={day.isToday}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  onSlotClick(day.date, e.clientY - rect.top);
+                }}
+              >
+                {Array.from({ length: 23 }, (_, i) => (
+                  <span
+                    key={i}
+                    className="calgrid-hourline"
+                    style={{ top: (i + 1) * HOUR_PX }}
+                  />
+                ))}
+                {day.isToday && <NowLine />}
+                {day.timed.map(({ event, top, height, lane, lanes }) => (
+                  <button
+                    key={event.id}
+                    type="button"
+                    className="calgrid-event"
+                    data-active={selectedEventId === event.id}
+                    data-event-id={event.id}
+                    style={{
+                      top,
+                      height,
+                      left: `calc(${(lane / lanes) * 100}% + 2px)`,
+                      width: `calc(${100 / lanes}% - 5px)`,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedEventId(event.id);
+                      openEdit(event);
+                    }}
+                  >
+                    <span className="calgrid-event-title">
+                      {event.summary || "Untitled"}
+                    </span>
+                    {height >= 40 && (
+                      <span className="calgrid-event-time tnum">
+                        {formatTimeRange(event)}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {confirmEvent && (
