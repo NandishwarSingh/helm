@@ -77,6 +77,12 @@ export function AppShell() {
     const timeout = window.setTimeout(() => setChordPending(false), 1600);
     function onChordKey(event: KeyboardEvent) {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Holding G produces key repeats; swallow them without cancelling.
+      if (event.repeat && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       setChordPending(false);
@@ -117,6 +123,7 @@ export function AppShell() {
 
       switch (event.key) {
         case "g":
+          if (event.repeat) break;
           setChordPending(true);
           break;
         case "1":
