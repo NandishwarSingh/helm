@@ -15,6 +15,13 @@
       "when": 1781184785834,
       "tag": "20260611133305_small_ser_duncan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781263604665,
+      "tag": "20260612112644_add_mail_triage",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,13 @@ import {
   extractHtmlFromPayload,
   getHeader,
 } from "@/server/lib/email";
+import {
+  dedupeByEntityId,
+  FOLDER_FILTERS,
+  folderSchema,
+  mapMessage,
+  sortMessagesNewestFirst,
+} from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
 import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
@@ -24,86 +31,21 @@ const paginationSchema = z.object({
   offset: z.number().min(0).default(0),
 });
 
-function messageTimestamp(
-  internalDate?: string | null,
-  createdAt?: Date | null,
-): number {
-  if (internalDate) return Number(internalDate);
-  if (createdAt) return createdAt.getTime();
-  return 0;
-}
-
-function mapMessage(message: {
-  entity_id: string;
-  data: {
-    threadId?: string;
-    snippet?: string;
-    subject?: string;
-    from?: string;
-    to?: string;
-    body?: string;
-    internalDate?: string;
-    createdAt?: Date | null;
-    labelIds?: string[];
-  };
-}) {
-  const labels = message.data.labelIds ?? [];
-  return {
-    id: message.entity_id,
-    threadId: message.data.threadId ?? "",
-    snippet: message.data.snippet ?? "",
-    subject: message.data.subject ?? "",
-    from: message.data.from ?? "",
-    to: message.data.to ?? "",
-    date: message.data.internalDate ?? null,
-    unread: labels.includes("UNREAD"),
-    starred: labels.includes("STARRED"),
-    spam: labels.includes("SPAM"),
-    trashed: labels.includes("TRASH"),
-    archived:
-      labels.length > 0 &&
-      !labels.includes("INBOX") &&
-      !labels.includes("SPAM") &&
-      !labels.includes("TRASH"),
-    timestamp: messageTimestamp(
-      message.data.internalDate,
-      message.data.createdAt,
-    ),
-  };
-}
-
-function sortMessagesNewestFirst<
-  T extends { timestamp: number },
->(messages: T[]): T[] {
-  return [...messages].sort((a, b) => b.timestamp - a.timestamp);
-}
-
-function dedupeByEntityId<
-  T extends { entity_id: string; updated_at: Date },
->(items: T[]): T[] {
-  const byEntityId = new Map<string, T>();
-  for (const item of items) {
-    const existing = byEntityId.get(item.entity_id);
-    if (!existing || item.updated_at > existing.updated_at) {
-      byEntityId.set(item.entity_id, item);
-    }
-  }
-  return Array.from(byEntityId.values());
-}
-
 type Tenant = Awaited<ReturnType<typeof getTenant>>;
 const SYNC_CONCURRENCY = 10;
 const SYNC_PAGE_SIZE = 40;
 
 // Gmail's messages.list returns only id/threadId stubs, so each id is hydrated
-// with metadata (from, subject, snippet, date) for the list view.
+// with metadata (from, subject, snippet, date) for the list view. Each get
+// retries before giving up — an unhydrated stub poisons the cache until the
+// next full refresh.
 async function hydrateMessages(tenant: Tenant, ids: string[]) {
   for (let i = 0; i < ids.length; i += SYNC_CONCURRENCY) {
     await Promise.all(
       ids.slice(i, i + SYNC_CONCURRENCY).map((id) =>
-        tenant.gmail.api.messages
-          .get({ id, format: "metadata" })
-          .catch(() => null),
+        withRetry(() =>
+          tenant.gmail.api.messages.get({ id, format: "metadata" }),
+        ).catch(() => null),
       ),
     );
   }
@@ -125,21 +67,6 @@ async function setSyncCursor(tenantId: string, token: string | null) {
       set: { nextPageToken: token, updatedAt: new Date() },
     });
 }
-
-const folderSchema = z
-  .enum(["inbox", "starred", "archived", "spam", "trash"])
-  .default("inbox");
-
-type Folder = z.infer<typeof folderSchema>;
-type MappedMessage = ReturnType<typeof mapMessage>;
-
-const FOLDER_FILTERS: Record<Folder, (m: MappedMessage) => boolean> = {
-  inbox: (m) => !m.archived && !m.trashed && !m.spam,
-  starred: (m) => m.starred && !m.trashed && !m.spam,
-  archived: (m) => m.archived,
-  spam: (m) => m.spam,
-  trash: (m) => m.trashed,
-};
 
 export const gmailRouter = createTRPCRouter({
   searchEmails: authedProcedure
@@ -185,6 +112,7 @@ export const gmailRouter = createTRPCRouter({
       const items = sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
       )
+        .filter((message) => message.hydrated)
         .filter(FOLDER_FILTERS[input.folder])
         .slice(0, input.limit);
       // A full page from any source implies more cached rows to page through.

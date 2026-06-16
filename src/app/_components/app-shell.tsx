@@ -20,6 +20,7 @@ import {
   ArchiveIcon,
   CalendarIcon,
   ComposeIcon,
+  FlagIcon,
   HelpIcon,
   InboxIcon,
   MailIcon,
@@ -52,6 +53,7 @@ const MAIL_FOLDERS: {
   icon: React.ReactNode;
 }[] = [
   { id: "inbox", label: "Inbox", chord: "I", icon: <InboxIcon size={15} /> },
+  { id: "priority", label: "Priority", chord: "U", icon: <FlagIcon size={15} /> },
   { id: "starred", label: "Starred", chord: "S", icon: <StarIcon size={15} /> },
   { id: "archived", label: "Archive", chord: "A", icon: <ArchiveIcon size={15} /> },
   { id: "spam", label: "Spam", chord: "P", icon: <SpamIcon size={15} /> },
@@ -101,6 +103,7 @@ export function AppShell() {
       };
       switch (event.key.toLowerCase()) {
         case "i": go("inbox"); break;
+        case "u": go("priority"); break;
         case "s": go("starred"); break;
         case "a": go("archived"); break;
         case "p": go("spam"); break;
@@ -379,6 +382,7 @@ export function AppShell() {
               <Kbd>G</Kbd>
               <span className="chord-then">then</span>
               <span><Kbd>I</Kbd> inbox</span>
+              <span><Kbd>U</Kbd> priority</span>
               <span><Kbd>S</Kbd> starred</span>
               <span><Kbd>A</Kbd> archive</span>
               <span><Kbd>P</Kbd> spam</span>

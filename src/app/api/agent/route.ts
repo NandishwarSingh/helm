@@ -1,4 +1,3 @@
-import { createOpenAI } from "@ai-sdk/openai";
 import {
   convertToModelMessages,
   stepCountIs,
@@ -7,21 +6,12 @@ import {
 } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { env } from "@/env";
 import { buildAgentTools } from "@/server/lib/agent-tools";
+import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { getTenantId } from "@/server/lib/session";
 
 export const maxDuration = 60;
-
-// OpenRouter speaks the OpenAI protocol; DeepSeek does the thinking.
-const openrouter = createOpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: env.OPENROUTER_API_KEY,
-  headers: { "X-Title": "Helm" },
-});
-
-const MODEL = "deepseek/deepseek-v4-flash";
 
 function systemPrompt() {
   const now = new Date();
@@ -67,7 +57,7 @@ export async function POST(request: NextRequest) {
   const recent = messages.slice(-24);
 
   const result = streamText({
-    model: openrouter(MODEL),
+    model: openrouter(AGENT_MODEL),
     temperature: 0.2,
     system: systemPrompt(),
     messages: await convertToModelMessages(recent),

@@ -193,3 +193,10 @@ export const MailOpenIcon = (p: IconProps) => (
     <path d="m3.4 9.6 8.6 5.9 8.6-5.9" />
   </Svg>
 );
+
+export const FlagIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 21V4" />
+    <path d="M5 4.5c4.5-2.2 9.5 2.2 14 0V14c-4.5 2.2-9.5-2.2-14 0" />
+  </Svg>
+);

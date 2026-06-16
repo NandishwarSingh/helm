@@ -1,4 +1,4 @@
-import { pgTable, text, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, primaryKey, text, jsonb, timestamp } from 'drizzle-orm/pg-core';
 
 export const corsairIntegrations = pgTable('corsair_integrations', {
     id: text('id').primaryKey(),
@@ -46,3 +46,15 @@ export const mailSync = pgTable('mail_sync', {
     nextPageToken: text('next_page_token'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// LLM triage verdicts. One row per message, written once — the permanent
+// cache that keeps re-opening the Priority view free.
+export const mailTriage = pgTable('mail_triage', {
+    tenantId: text('tenant_id').notNull(),
+    messageId: text('message_id').notNull(),
+    priority: text('priority').notNull(),
+    reason: text('reason').notNull().default(''),
+    classifiedAt: timestamp('classified_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+    primaryKey({ columns: [table.tenantId, table.messageId] }),
+]);

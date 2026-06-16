@@ -43,7 +43,8 @@ type Props = {
 };
 
 type Folder = "inbox" | "starred" | "archived" | "spam" | "trash";
-export type MailView = Folder | "drafts";
+export type MailView = Folder | "drafts" | "priority";
+type PriorityKey = "urgent" | "reply" | "fyi" | "low";
 type LabelOverride = { unread?: boolean; starred?: boolean };
 type MessageAction =
   | "archive"
@@ -83,6 +84,19 @@ const EMPTY_COPY: Record<Folder, string> = {
   archived: "Nothing archived yet. Press E on a message to archive it.",
   spam: "No spam. Long may it last.",
   trash: "Trash is empty.",
+};
+
+// The Priority view groups the inbox by LLM verdict, most pressing first.
+const PRIORITY_ORDER: PriorityKey[] = ["urgent", "reply", "fyi", "low"];
+const PRIORITY_LABELS: Record<PriorityKey, string> = {
+  urgent: "Urgent",
+  reply: "Needs reply",
+  fyi: "Worth a look",
+  low: "Everything else",
+};
+const PRIORITY_CHIPS: Partial<Record<PriorityKey, string>> = {
+  urgent: "Urgent",
+  reply: "Reply",
 };
 
 function senderLabel(raw: string) {
@@ -133,24 +147,69 @@ export function GmailPanel({
 
   const utils = api.useUtils();
 
-  const folder: Folder = view === "drafts" ? "inbox" : view;
+  const isPriority = view === "priority";
+  const folder: Folder =
+    view === "drafts" || view === "priority" ? "inbox" : view;
   const inMessages = view !== "drafts";
 
   const inbox = api.gmail.searchEmails.useInfiniteQuery(
     { query: activeSearch, folder },
     {
-      enabled: inMessages,
+      enabled: inMessages && !isPriority,
       initialCursor: 0,
       getNextPageParam: (last) => last.nextCursor ?? undefined,
     },
   );
 
+  // LLM triage verdicts: drive the Priority view, and badge the inbox.
+  const overview = api.triage.overview.useQuery(undefined, {
+    enabled: view === "inbox" || isPriority,
+    refetchOnWindowFocus: false,
+  });
+  const overviewGroups = overview.data?.groups;
+  const pendingTriage = overview.data?.pendingCount ?? 0;
+
+  const priorityById = useMemo(() => {
+    const map = new Map<string, PriorityKey>();
+    if (!overviewGroups) return map;
+    for (const priority of PRIORITY_ORDER) {
+      for (const message of overviewGroups[priority]) {
+        map.set(message.id, priority);
+      }
+    }
+    return map;
+  }, [overviewGroups]);
+
   // Flatten pages, dedupe across page boundaries, then apply local state.
+  // In the Priority view the source is the triage groups, most urgent first.
   const pages = inbox.data?.pages;
   const emails = useMemo(() => {
+    const source: {
+      id: string;
+      from: string;
+      subject: string;
+      snippet: string;
+      date: string | null;
+      unread: boolean;
+      starred: boolean;
+      reason: string;
+      priority: PriorityKey | undefined;
+    }[] = isPriority
+      ? PRIORITY_ORDER.flatMap((priority) =>
+          (overviewGroups?.[priority] ?? []).map((item) => ({
+            ...item,
+            priority,
+          })),
+        )
+      : (pages ?? [])
+          .flatMap((page) => page.items)
+          .map((item) => ({
+            ...item,
+            reason: "",
+            priority: priorityById.get(item.id),
+          }));
     const seen = new Set<string>();
-    return (pages ?? [])
-      .flatMap((page) => page.items)
+    return source
       .filter((item) => {
         if (seen.has(item.id) || removedIds.has(item.id)) return false;
         seen.add(item.id);
@@ -160,7 +219,7 @@ export function GmailPanel({
         const override = overrides.get(item.id);
         return override ? { ...item, ...override } : item;
       });
-  }, [pages, removedIds, overrides]);
+  }, [isPriority, overviewGroups, pages, priorityById, removedIds, overrides]);
 
   // Debounced read target: the highlight moves instantly; the (slow, live)
   // message fetch fires only once the selection settles.
@@ -192,13 +251,28 @@ export function GmailPanel({
     { enabled: view === "drafts" },
   );
 
+  // Triage runs classify untriaged inbox mail in capped slices; the loop
+  // continues until the backlog is clear (bounded per visit).
+  const triageRuns = useRef(0);
+  const triageRun = api.triage.run.useMutation({
+    onSuccess: async (result) => {
+      await utils.triage.overview.invalidate();
+      if (result.remaining > 0 && triageRuns.current < 5) {
+        triageRuns.current += 1;
+        triageRun.mutate();
+      }
+    },
+  });
+
   const refreshInbox = api.gmail.refreshInbox.useMutation({
     onSuccess: async () => {
       setCanSyncMore(true);
       setRemovedIds(new Set());
       setOverrides(new Map());
+      triageRuns.current = 0;
       await utils.gmail.searchEmails.invalidate();
       await utils.gmail.listDrafts.invalidate();
+      await utils.triage.overview.invalidate();
     },
   });
 
@@ -692,7 +766,17 @@ export function GmailPanel({
     setBulkIds(new Set());
     setConfirmDeleteId(null);
     setSelectedDraftId(null);
+    if (view === "priority") triageRuns.current = 0;
   }, [view]);
+
+  // Opening Priority kicks off classification of whatever is untriaged.
+  useEffect(() => {
+    if (!isPriority || overview.isLoading) return;
+    if (pendingTriage > 0 && !triageRun.isPending && triageRuns.current === 0) {
+      triageRuns.current = 1;
+      triageRun.mutate();
+    }
+  }, [isPriority, overview.isLoading, pendingTriage, triageRun]);
 
   // Warm the inbox once when it loads empty (first connect / cold cache).
   const didAutoSync = useRef(false);
@@ -761,6 +845,74 @@ export function GmailPanel({
     sendDraft.isPending;
   const listBusy = inbox.isLoading || (syncFolder.isPending && emails.length === 0);
   const bulkList = [...bulkIds];
+
+  // One row, shared by the folder lists and the grouped Priority view. In
+  // Priority the snippet line carries the model's reason instead.
+  const renderRow = (email: (typeof emails)[number], i: number) => {
+    const chip = email.priority ? PRIORITY_CHIPS[email.priority] : undefined;
+    const sub = isPriority && email.reason ? email.reason : email.snippet;
+    return (
+      <motion.div
+        key={email.id}
+        className="row"
+        role="button"
+        tabIndex={0}
+        data-active={selectedId === email.id}
+        data-unread={email.unread}
+        data-checked={bulkIds.has(email.id)}
+        data-mail-id={email.id}
+        onClick={() => setSelectedId(email.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") setSelectedId(email.id);
+        }}
+        variants={listRow}
+        initial="initial"
+        animate="animate"
+        custom={i}
+      >
+        <span className="row-lead">
+          <span
+            className="row-check"
+            role="checkbox"
+            aria-checked={bulkIds.has(email.id)}
+            aria-label="Select message"
+            data-checked={bulkIds.has(email.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleBulk(email.id);
+            }}
+          >
+            <CheckIcon size={11} />
+          </span>
+        </span>
+        <span className="row-inner">
+          <span className="row-top">
+            {email.unread && <span className="row-dot" />}
+            <span className="row-from">{senderLabel(email.from)}</span>
+            {chip && (
+              <span className="row-pri" data-pri={email.priority}>
+                {chip}
+              </span>
+            )}
+            {email.starred && (
+              <span className="row-star">
+                <StarIcon size={11} filled />
+              </span>
+            )}
+            {email.date && (
+              <span className="row-date tnum">
+                {formatMessageDate(email.date)}
+              </span>
+            )}
+          </span>
+          {email.subject && (
+            <span className="row-subject">{email.subject}</span>
+          )}
+          {sub && <span className="row-snippet">{sub}</span>}
+        </span>
+      </motion.div>
+    );
+  };
 
   return (
     <div className="mail">
@@ -878,7 +1030,7 @@ export function GmailPanel({
               searchRef.current?.blur();
             }}
           >
-            {inMessages ? (
+            {inMessages && !isPriority ? (
               <div className="search-wrap">
                 <input
                   ref={searchRef}
@@ -891,7 +1043,9 @@ export function GmailPanel({
                 <Kbd>/</Kbd>
               </div>
             ) : (
-              <span className="mail-search-label">Drafts</span>
+              <span className="mail-search-label">
+                {isPriority ? "Priority" : "Drafts"}
+              </span>
             )}
             <button
               type="button"
@@ -913,13 +1067,14 @@ export function GmailPanel({
         )}
 
         <div className="mail-rows" data-bulk={bulkIds.size > 0}>
-          {inMessages && listBusy && <MailRowsSkeleton />}
-          {inMessages && inbox.error && (
+          {inMessages && !isPriority && listBusy && <MailRowsSkeleton />}
+          {inMessages && !isPriority && inbox.error && (
             <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
               {inbox.error.message}
             </p>
           )}
           {inMessages &&
+            !isPriority &&
             !listBusy &&
             !inbox.error &&
             (emails.length === 0 ? (
@@ -932,72 +1087,72 @@ export function GmailPanel({
               )
             ) : (
               <>
-                {emails.map((email, i) => (
-                  <motion.div
-                    key={email.id}
-                    className="row"
-                    role="button"
-                    tabIndex={0}
-                    data-active={selectedId === email.id}
-                    data-unread={email.unread}
-                    data-checked={bulkIds.has(email.id)}
-                    data-mail-id={email.id}
-                    onClick={() => setSelectedId(email.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") setSelectedId(email.id);
-                    }}
-                    variants={listRow}
-                    initial="initial"
-                    animate="animate"
-                    custom={i}
-                  >
-                    <span className="row-lead">
-                      <span
-                        className="row-check"
-                        role="checkbox"
-                        aria-checked={bulkIds.has(email.id)}
-                        aria-label="Select message"
-                        data-checked={bulkIds.has(email.id)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBulk(email.id);
-                        }}
-                      >
-                        <CheckIcon size={11} />
-                      </span>
-                    </span>
-                    <span className="row-inner">
-                      <span className="row-top">
-                        {email.unread && <span className="row-dot" />}
-                        <span className="row-from">
-                          {senderLabel(email.from)}
-                        </span>
-                        {email.starred && (
-                          <span className="row-star">
-                            <StarIcon size={11} filled />
-                          </span>
-                        )}
-                        {email.date && (
-                          <span className="row-date tnum">
-                            {formatMessageDate(email.date)}
-                          </span>
-                        )}
-                      </span>
-                      {email.subject && (
-                        <span className="row-subject">{email.subject}</span>
-                      )}
-                      {email.snippet && (
-                        <span className="row-snippet">{email.snippet}</span>
-                      )}
-                    </span>
-                  </motion.div>
-                ))}
+                {emails.map(renderRow)}
                 {(inbox.isFetchingNextPage || syncMore.isPending) && (
                   <MailRowsSkeleton count={3} />
                 )}
                 <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
               </>
             ))}
+
+          {isPriority && (
+            <>
+              {(triageRun.isPending || refreshInbox.isPending) && (
+                <p className="pri-banner tnum" role="status">
+                  {refreshInbox.isPending
+                    ? "Refreshing from Gmail…"
+                    : `Classifying ${pendingTriage > 0 ? pendingTriage : "new"} messages…`}
+                </p>
+              )}
+              {overview.isLoading && <MailRowsSkeleton />}
+              {overview.error && (
+                <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
+                  {overview.error.message}
+                </p>
+              )}
+              {triageRun.error && (
+                <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
+                  {triageRun.error.message}
+                </p>
+              )}
+              {!overview.isLoading &&
+                !overview.error &&
+                (emails.length === 0 ? (
+                  triageRun.isPending ? (
+                    <MailRowsSkeleton />
+                  ) : (
+                    <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
+                      Nothing to triage. Inbox mail is classified automatically
+                      when you open Priority.
+                    </p>
+                  )
+                ) : (
+                  (() => {
+                    let index = -1;
+                    return PRIORITY_ORDER.map((priority) => {
+                      const group = emails.filter(
+                        (email) => email.priority === priority,
+                      );
+                      if (group.length === 0) return null;
+                      return (
+                        <div className="pri-group" key={priority}>
+                          <div className="pri-head" data-pri={priority}>
+                            {PRIORITY_LABELS[priority]}
+                            <span className="pri-count tnum">
+                              {group.length}
+                            </span>
+                          </div>
+                          {group.map((email) => {
+                            index += 1;
+                            return renderRow(email, index);
+                          })}
+                        </div>
+                      );
+                    });
+                  })()
+                ))}
+            </>
+          )}
 
           {view === "drafts" && drafts.isLoading && (
             <MailRowsSkeleton count={4} />

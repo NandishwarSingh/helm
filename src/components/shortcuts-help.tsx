@@ -22,7 +22,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { keys: ["1"], label: "Go to Mail" },
       { keys: ["2"], label: "Go to Calendar" },
       { keys: ["3"], label: "Go to the Agent" },
-      { keys: ["G"], label: "Then I S A P T D — jump to a folder" },
+      { keys: ["G"], label: "Then I U S A P T D — jump to a folder" },
       { keys: ["G", "C"], label: "Jump to Calendar" },
       { keys: ["/"], label: "Search current view" },
       { keys: ["?"], label: "Keyboard shortcuts" },
