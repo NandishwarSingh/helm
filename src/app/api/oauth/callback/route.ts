@@ -33,7 +33,11 @@ export async function GET(request: NextRequest) {
     const tokens = await exchangeCode(code, redirectUri);
     await storeGoogleTokens(tenantId, tokens);
     return NextResponse.redirect(new URL("/?connected=1", request.url));
-  } catch {
+  } catch (error) {
+    console.error(
+      "oauth callback failed:",
+      error instanceof Error ? error.message : error,
+    );
     return NextResponse.redirect(new URL("/?error=oauth_callback", request.url));
   }
 }

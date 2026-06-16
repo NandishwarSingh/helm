@@ -14,7 +14,14 @@ import { corsairAccounts, corsairIntegrations } from "@/server/db/schema";
  * token under both plugin accounts via Corsair's key API.
  */
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+// Google serves token exchange on several hosts; routes to any one of them
+// can flap, so the exchange fails over with tight per-attempt timeouts.
+const TOKEN_ENDPOINTS = [
+  "https://oauth2.googleapis.com/token",
+  "https://www.googleapis.com/oauth2/v4/token",
+  "https://accounts.google.com/o/oauth2/token",
+];
+const TOKEN_TIMEOUT_MS = 8000;
 const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 const SCOPES = [
@@ -74,22 +81,48 @@ export async function exchangeCode(
   code: string,
   redirectUri: string,
 ): Promise<TokenSet> {
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code",
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`token exchange failed: ${res.status}`);
+  const body = new URLSearchParams({
+    code,
+    client_id: env.GOOGLE_CLIENT_ID,
+    client_secret: env.GOOGLE_CLIENT_SECRET,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  }).toString();
+
+  let lastError: unknown;
+  // Two passes over the endpoint list: survives one host being unreachable
+  // and a transient drop on the others.
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const endpoint of TOKEN_ENDPOINTS) {
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body,
+          signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
+        });
+        if (res.ok) return (await res.json()) as TokenSet;
+        // A definitive OAuth rejection (bad/expired/consumed code) is the
+        // same on every host — do not fail over, surface it.
+        if (res.status >= 400 && res.status < 500) {
+          const detail = await res.text().catch(() => "");
+          throw new DefinitiveOAuthError(
+            `token exchange rejected (${res.status}): ${detail.slice(0, 200)}`,
+          );
+        }
+        lastError = new Error(`token endpoint ${endpoint} -> ${res.status}`);
+      } catch (error) {
+        if (error instanceof DefinitiveOAuthError) throw error;
+        lastError = error;
+      }
+    }
   }
-  return (await res.json()) as TokenSet;
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("token exchange failed on all endpoints");
 }
+
+class DefinitiveOAuthError extends Error {}
 
 /** Ensures an account row exists for the tenant + plugin; returns whether it already had a DEK. */
 async function ensureAccount(
