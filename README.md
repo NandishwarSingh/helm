@@ -29,8 +29,8 @@ Requires Node 20+, pnpm and a Postgres instance.
 
 ```bash
 pnpm install
-cp .env.example .env        # then fill in DATABASE_URL and CORSAIR_KEK
-pnpm db:push                # apply the schema
+cp .env.example .env        # then fill in the values
+pnpm db:migrate             # apply the schema migrations
 pnpm dev
 ```
 
@@ -55,4 +55,5 @@ that URL during webhook setup.
 - `pnpm dev` — start the dev server
 - `pnpm build` — production build
 - `pnpm typecheck` — types only
-- `pnpm db:push` / `pnpm db:studio` — schema sync and inspection
+- `pnpm db:generate` / `pnpm db:migrate` — create and apply timestamped migrations
+- `pnpm db:studio` — inspect the database

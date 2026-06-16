@@ -1,5 +1,5 @@
 {
-  "name": "google-demo",
+  "name": "helm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -60,9 +60,6 @@
     "tailwindcss": "^4.0.15",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.27.0"
-  },
-  "ct3aMetadata": {
-    "initVersion": "7.40.0"
   },
   "packageManager": "pnpm@10.11.1"
 }
