@@ -8,10 +8,11 @@ import {
   ChevronRightIcon,
   CloseIcon,
   MapPinIcon,
-  PlusIcon,
   RefreshIcon,
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
+import { Kbd } from "@/components/kbd";
+import { hasOverlay, isTypingTarget, useAction } from "@/lib/actions";
 import {
   formatAttendees,
   formatEventWhen,
@@ -20,6 +21,11 @@ import {
 import { listRow, scrim, slideOver } from "@/lib/motion";
 import { formatWeekLabel, getWeekBounds } from "@/lib/week";
 import { api } from "@/trpc/react";
+
+type Props = {
+  createOpen: boolean;
+  onCreateOpenChange: (open: boolean) => void;
+};
 
 function toDatetimeLocalValue(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -36,11 +42,11 @@ function dayLabel(value: string) {
   });
 }
 
-export function CalendarPanel() {
+export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [weekOffset, setWeekOffset] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const week = useMemo(() => getWeekBounds(weekOffset), [weekOffset]);
   const weekLabel = formatWeekLabel(week.start, week.end);
@@ -84,7 +90,7 @@ export function CalendarPanel() {
     onSuccess: async () => {
       await utils.calendar.searchEvents.invalidate();
       resetForm();
-      setCreateOpen(false);
+      onCreateOpenChange(false);
     },
   });
 
@@ -92,7 +98,7 @@ export function CalendarPanel() {
     onSuccess: async () => {
       await utils.calendar.searchEvents.invalidate();
       resetForm();
-      setCreateOpen(false);
+      onCreateOpenChange(false);
     },
   });
 
@@ -110,11 +116,59 @@ export function CalendarPanel() {
   useEffect(() => {
     if (!createOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setCreateOpen(false);
+      if (e.key === "Escape") onCreateOpenChange(false);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [createOpen]);
+  }, [createOpen, onCreateOpenChange]);
+
+  // Calendar keyboard layer: week navigation and today.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (isTypingTarget(event.target)) {
+        if (event.key === "Escape" && event.target === searchRef.current) {
+          setSearch(activeSearch);
+          searchRef.current?.blur();
+        }
+        return;
+      }
+      if (hasOverlay()) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      switch (event.key) {
+        case "h":
+        case "ArrowLeft":
+          setWeekOffset((w) => w - 1);
+          break;
+        case "l":
+        case "ArrowRight":
+          setWeekOffset((w) => w + 1);
+          break;
+        case "t":
+          setWeekOffset(0);
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeSearch]);
+
+  // Palette / global-shortcut hooks.
+  useAction("focus-search", () => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  });
+  useAction("refresh", () => {
+    if (refreshEvents.isPending) return;
+    refreshEvents.mutate({
+      weekStart: week.start.toISOString(),
+      weekEnd: week.end.toISOString(),
+    });
+  });
 
   function parseAttendees() {
     return attendees
@@ -192,14 +246,6 @@ export function CalendarPanel() {
         >
           <RefreshIcon size={15} />
         </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setCreateOpen(true)}
-        >
-          <PlusIcon size={15} />
-          New event
-        </button>
       </div>
 
       <form
@@ -209,13 +255,17 @@ export function CalendarPanel() {
           setActiveSearch(search);
         }}
       >
-        <input
-          className="field"
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search events"
-        />
+        <div className="search-wrap">
+          <input
+            ref={searchRef}
+            className="field"
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search events"
+          />
+          <Kbd>/</Kbd>
+        </div>
       </form>
 
       <div className="cal-body">
@@ -228,7 +278,7 @@ export function CalendarPanel() {
         {events.data?.length === 0 && (
           <div className="empty">
             <p>No events this week.</p>
-            <p className="tnum">New event to schedule one</p>
+            <p className="tnum">N to schedule one · H / L to change week</p>
           </div>
         )}
 
@@ -297,7 +347,7 @@ export function CalendarPanel() {
               initial="initial"
               animate="animate"
               exit="exit"
-              onClick={() => setCreateOpen(false)}
+              onClick={() => onCreateOpenChange(false)}
             />
             <motion.div
               className="compose"
@@ -307,6 +357,16 @@ export function CalendarPanel() {
               exit="exit"
               role="dialog"
               aria-label="New event"
+              onKeyDown={(event) => {
+                if (!(event.metaKey || event.ctrlKey)) return;
+                if (event.key !== "Enter" || !canCreate) return;
+                event.preventDefault();
+                if (parseAttendees().length > 0 && !sendInvite.isPending) {
+                  sendInvite.mutate(eventInput);
+                } else if (!createDraft.isPending) {
+                  createDraft.mutate(eventInput);
+                }
+              }}
             >
               <div className="compose-head">
                 New event
@@ -314,7 +374,7 @@ export function CalendarPanel() {
                 <button
                   type="button"
                   className="icon-btn"
-                  onClick={() => setCreateOpen(false)}
+                  onClick={() => onCreateOpenChange(false)}
                   aria-label="Close"
                 >
                   <CloseIcon size={16} />

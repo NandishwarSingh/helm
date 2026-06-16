@@ -38,3 +38,11 @@ export const scrim: Variants = {
   animate: { opacity: 1, transition: snapFast },
   exit: { opacity: 0, transition: snapFast },
 };
+
+// Command palette: anchored near the top, drops in. x carries the -50%
+// horizontal centering (the element is pinned at left: 50%).
+export const paletteDrop: Variants = {
+  initial: { opacity: 0, x: "-50%", y: 10, scale: 0.985 },
+  animate: { opacity: 1, x: "-50%", y: 0, scale: 1, transition: snap },
+  exit: { opacity: 0, x: "-50%", y: 8, scale: 0.985, transition: snapFast },
+};

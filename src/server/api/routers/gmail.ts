@@ -13,6 +13,7 @@ import {
   extractHtmlFromPayload,
   getHeader,
 } from "@/server/lib/email";
+import { withRetry } from "@/server/lib/retry";
 import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
@@ -155,10 +156,9 @@ export const gmailRouter = createTRPCRouter({
         const tenant = await getTenant();
         // Always fetch the full message so the open view consistently has both
         // the rich HTML and a plain-text fallback (the list cache holds neither).
-        const message = await tenant.gmail.api.messages.get({
-          id: input.id,
-          format: "full",
-        });
+        const message = await withRetry(() =>
+          tenant.gmail.api.messages.get({ id: input.id, format: "full" }),
+        );
 
         const headers = message.payload?.headers;
         const body =

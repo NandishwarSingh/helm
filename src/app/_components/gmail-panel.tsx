@@ -5,7 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { EmailBody } from "@/app/_components/email-body";
 import { CloseIcon, RefreshIcon } from "@/components/icons";
+import { Kbd } from "@/components/kbd";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
+import { hasOverlay, isTypingTarget, useAction } from "@/lib/actions";
 import {
   formatMessageDate,
   formatSender,
@@ -38,6 +40,8 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
   const [body, setBody] = useState("");
 
   const toRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const utils = api.useUtils();
 
@@ -124,10 +128,14 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     },
   });
 
-  // Focus the first field when compose opens; close it on Escape.
+  // Focus the right field when compose opens (body when replying, since the
+  // recipient is prefilled); close on Escape.
   useEffect(() => {
     if (!composeOpen) return;
-    const id = window.setTimeout(() => toRef.current?.focus(), 60);
+    const id = window.setTimeout(() => {
+      if (toRef.current?.value) bodyRef.current?.focus();
+      else toRef.current?.focus();
+    }, 60);
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") onComposeOpenChange(false);
     }
@@ -137,6 +145,107 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
       window.removeEventListener("keydown", onKey);
     };
   }, [composeOpen, onComposeOpenChange]);
+
+  // Reply: prefill the recipient and subject from the open message.
+  function replyToSelection() {
+    const message = selectedEmail.data;
+    if (!message) return;
+    const sender = parseEmailAddress(
+      (message.from || "").split(",")[0] ?? "",
+    );
+    if (!sender.email) return;
+    setTo(sender.email);
+    setSubject(
+      message.subject && !/^re:/i.test(message.subject)
+        ? `Re: ${message.subject}`
+        : (message.subject ?? ""),
+    );
+    onComposeOpenChange(true);
+  }
+
+  // Roving selection: J/K move through the list and the reading pane follows.
+  function moveSelection(step: 1 | -1) {
+    if (emails.length === 0) return;
+    const index = emails.findIndex((email) => email.id === selectedId);
+    const next =
+      index === -1
+        ? 0
+        : Math.min(Math.max(index + step, 0), emails.length - 1);
+    const target = emails[next];
+    if (!target) return;
+    setSelectedId(target.id);
+    document
+      .querySelector(`[data-mail-id="${target.id}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+    // Nearing the end of the loaded list: pull the next page in early.
+    if (next >= emails.length - 3 && hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }
+
+  // Mail keyboard layer. Suspended while typing or while an overlay is open.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (isTypingTarget(event.target)) {
+        // Esc inside search: revert the draft text and return to the list.
+        if (event.key === "Escape" && event.target === searchRef.current) {
+          setSearch(activeSearch);
+          searchRef.current?.blur();
+        }
+        return;
+      }
+      if (hasOverlay()) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      switch (event.key) {
+        case "j":
+        case "ArrowDown":
+          if (view !== "inbox") return;
+          moveSelection(1);
+          break;
+        case "k":
+        case "ArrowUp":
+          if (view !== "inbox") return;
+          moveSelection(-1);
+          break;
+        case "Enter":
+        case "o":
+          if (view !== "inbox" || emails.length === 0) return;
+          if (!selectedId) setSelectedId(emails[0]?.id ?? null);
+          break;
+        case "u":
+        case "Escape":
+          if (!selectedId) return;
+          setSelectedId(null);
+          break;
+        case "r":
+          if (!selectedId) return;
+          replyToSelection();
+          break;
+        case "i":
+          setView("inbox");
+          break;
+        case "d":
+          setView("drafts");
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // Palette / global-shortcut hooks.
+  useAction("focus-search", () => {
+    searchRef.current?.focus();
+    searchRef.current?.select();
+  });
+  useAction("refresh", () => {
+    if (!refreshInbox.isPending) refreshInbox.mutate();
+  });
 
   // Warm the inbox once when it loads empty (first connect / cold cache),
   // so mail appears without the user clicking refresh.
@@ -229,13 +338,17 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
               setActiveSearch(search);
             }}
           >
-            <input
-              className="field"
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search mail"
-            />
+            <div className="search-wrap">
+              <input
+                ref={searchRef}
+                className="field"
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search mail"
+              />
+              <Kbd>/</Kbd>
+            </div>
           </form>
         )}
 
@@ -265,6 +378,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                     type="button"
                     className="row"
                     data-active={selectedId === email.id}
+                    data-mail-id={email.id}
                     onClick={() => setSelectedId(email.id)}
                     variants={listRow}
                     initial="initial"
@@ -341,12 +455,21 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
         {!selectedId ? (
           <div className="empty">
             <p>Select a conversation to read it.</p>
-            <p className="tnum">C to compose</p>
+            <p className="tnum">J / K to browse · C to compose · ? for keys</p>
           </div>
         ) : selectedEmail.isLoading ? (
           <ReadingSkeleton />
         ) : selectedEmail.error ? (
-          <p className="error">{selectedEmail.error.message}</p>
+          <div className="empty">
+            <p className="error">This message could not be loaded.</p>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void selectedEmail.refetch()}
+            >
+              Try again
+            </button>
+          </div>
         ) : selectedEmail.data ? (
           <article>
             <h1 className="read-subject">
@@ -387,6 +510,20 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
               exit="exit"
               role="dialog"
               aria-label="Compose message"
+              onKeyDown={(event) => {
+                if (!(event.metaKey || event.ctrlKey)) return;
+                if (event.key === "Enter" && canSend && !sendEmail.isPending) {
+                  event.preventDefault();
+                  sendEmail.mutate({ to, subject, body });
+                } else if (
+                  event.key.toLowerCase() === "s" &&
+                  canSend &&
+                  !createDraft.isPending
+                ) {
+                  event.preventDefault();
+                  createDraft.mutate({ to, subject, body });
+                }
+              }}
             >
               <div className="compose-head">
                 New message
@@ -417,6 +554,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                   placeholder="Subject"
                 />
                 <textarea
+                  ref={bodyRef}
                   className="field"
                   rows={8}
                   value={body}
@@ -433,6 +571,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                   disabled={sendEmail.isPending || !canSend}
                 >
                   {sendEmail.isPending ? "Sending…" : "Send"}
+                  <Kbd>⌘↵</Kbd>
                 </button>
                 <button
                   type="button"

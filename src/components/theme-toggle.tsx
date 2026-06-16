@@ -3,6 +3,8 @@
 import { useEffect, useId, useState } from "react";
 import { motion } from "motion/react";
 
+import { useAction } from "@/lib/actions";
+
 type Theme = "light" | "dark";
 
 const RAYS = [
@@ -42,6 +44,9 @@ export function ThemeToggle() {
       // ignore storage failures (private mode)
     }
   }
+
+  // Lets the command palette flip the theme.
+  useAction("toggle-theme", toggle);
 
   const isDark = theme === "dark";
 

@@ -84,3 +84,18 @@ export const MapPinIcon = (p: IconProps) => (
     <circle cx="12" cy="10" r="2.5" />
   </Svg>
 );
+
+export const HelpIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9.6 9.4a2.4 2.4 0 1 1 3.5 2.7c-.7.4-1.1.9-1.1 1.7v.4" />
+    <path d="M12 17h.01" />
+  </Svg>
+);
+
+export const ContrastIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 3v18M12 7a5 5 0 0 1 0 10" />
+  </Svg>
+);

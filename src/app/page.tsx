@@ -7,16 +7,21 @@ import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { ConnectScreen } from "@/app/_components/connect-screen";
 import { GmailPanel } from "@/app/_components/gmail-panel";
 import { BrandMark } from "@/components/brand-mark";
+import { CommandPalette } from "@/components/command-palette";
 import { HelmLoader } from "@/components/helm-loader";
 import {
   CalendarIcon,
   ComposeIcon,
+  HelpIcon,
   MailIcon,
+  PlusIcon,
   SignOutIcon,
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
+import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
+import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
 import { viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
@@ -25,6 +30,15 @@ type View = "mail" | "calendar";
 export default function Home() {
   const [view, setView] = useState<View>("mail");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // While any overlay is open, panel keyboard handlers stand down.
+  useOverlay(composeOpen);
+  useOverlay(createOpen);
+  useOverlay(paletteOpen);
+  useOverlay(helpOpen);
 
   const status = api.connection.status.useQuery();
   const connected = Boolean(status.data?.gmail ?? status.data?.calendar);
@@ -32,13 +46,14 @@ export default function Home() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      const isTyping =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.isContentEditable;
+      // The palette toggle works everywhere, including inside inputs.
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
 
-      if (isTyping) return;
+      if (isTypingTarget(event.target) || hasOverlay()) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       switch (event.key) {
@@ -51,6 +66,16 @@ export default function Home() {
         case "c":
           setView("mail");
           setComposeOpen(true);
+          break;
+        case "n":
+          setView("calendar");
+          setCreateOpen(true);
+          break;
+        case "/":
+          dispatchAction("focus-search");
+          break;
+        case "?":
+          setHelpOpen(true);
           break;
         default:
           return;
@@ -125,7 +150,23 @@ export default function Home() {
               {view === "mail" ? "Mail" : "Calendar"}
             </span>
             <span className="topbar-spacer" />
-            {view === "mail" && (
+            <button
+              type="button"
+              className="icon-btn"
+              title="Keyboard shortcuts ( ? )"
+              onClick={() => setHelpOpen(true)}
+            >
+              <HelpIcon size={15} />
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setPaletteOpen(true)}
+            >
+              Commands
+              <Kbd>⌘K</Kbd>
+            </button>
+            {view === "mail" ? (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -134,6 +175,16 @@ export default function Home() {
                 <ComposeIcon size={15} />
                 Compose
                 <Kbd>C</Kbd>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setCreateOpen(true)}
+              >
+                <PlusIcon size={15} />
+                New event
+                <Kbd>N</Kbd>
               </button>
             )}
           </header>
@@ -154,13 +205,32 @@ export default function Home() {
                     onComposeOpenChange={setComposeOpen}
                   />
                 ) : (
-                  <CalendarPanel />
+                  <CalendarPanel
+                    createOpen={createOpen}
+                    onCreateOpenChange={setCreateOpen}
+                  />
                 )}
               </motion.div>
             </AnimatePresence>
           </main>
         </div>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onNavigate={setView}
+        onCompose={() => {
+          setView("mail");
+          setComposeOpen(true);
+        }}
+        onNewEvent={() => {
+          setView("calendar");
+          setCreateOpen(true);
+        }}
+        onHelp={() => setHelpOpen(true)}
+      />
+      <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
     </MotionConfig>
   );
 }
