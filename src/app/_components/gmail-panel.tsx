@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 
 import { EmailBody } from "@/app/_components/email-body";
@@ -69,12 +70,28 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
 
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // Debounced read target: while J/K flies through the list, the highlight
+  // moves instantly but the (slow, live) message fetch fires only once the
+  // selection settles, so a fast scroll doesn't stack dozens of Google calls.
+  const [readId, setReadId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedId) {
+      setReadId(null);
+      return;
+    }
+    const id = window.setTimeout(() => setReadId(selectedId), 200);
+    return () => window.clearTimeout(id);
+  }, [selectedId]);
+
   const selectedEmail = api.gmail.getMessage.useQuery(
-    { id: selectedId! },
+    { id: readId! },
     {
-      enabled: !!selectedId,
+      enabled: !!readId,
       refetchOnWindowFocus: false,
       staleTime: 5 * 60 * 1000,
+      retry: 1,
+      // Keep the previous message visible while the next one loads.
+      placeholderData: keepPreviousData,
     },
   );
 
@@ -471,7 +488,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             </button>
           </div>
         ) : selectedEmail.data ? (
-          <article>
+          <article data-stale={selectedEmail.isFetching}>
             <h1 className="read-subject">
               {selectedEmail.data.subject || "(no subject)"}
             </h1>
