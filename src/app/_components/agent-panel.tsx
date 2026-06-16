@@ -30,7 +30,7 @@ function inlineCode(text: string, keyBase: string): React.ReactNode[] {
 function renderInline(text: string): React.ReactNode[] {
   return text
     .split(/\*\*([^*]+)\*\*/g)
-    .flatMap((chunk, i) =>
+    .flatMap((chunk, i): React.ReactNode[] =>
       i % 2 === 1
         ? [<strong key={`b${i}`}>{inlineCode(chunk, `b${i}`)}</strong>]
         : inlineCode(chunk, `t${i}`),
