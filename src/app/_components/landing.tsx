@@ -379,28 +379,6 @@ export function Landing() {
           </motion.div>
         </section>
 
-        {/* ---- pricing ---- */}
-        <section className="lp-section" id="pricing">
-          <SectionHead label="PRICING" title="Simple while we build" />
-          <motion.div className="lp-price" {...rise}>
-            <p className="lp-price-tier tnum">BETA</p>
-            <p className="lp-price-amount">Free</p>
-            <p className="lp-price-desc">
-              Everything, for every connected account, while {siteConfig.name}
-              {" "}is in beta.
-            </p>
-            <ul className="lp-price-list">
-              <li>Full Gmail workflow — folders, bulk triage, drafts, spam</li>
-              <li>Calendar with real invites, edits and cancellations</li>
-              <li>Command palette and the complete keyboard map</li>
-              <li>Encrypted per-user cache, revoke any time</li>
-            </ul>
-            <a className="btn btn-primary lp-cta" href="/api/oauth/start">
-              Connect Google
-            </a>
-          </motion.div>
-        </section>
-
         {/* ---- trust ---- */}
         <section className="lp-section" id="trust">
           <SectionHead label="YOUR DATA" title="Your account stays yours" />
