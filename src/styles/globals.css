@@ -430,12 +430,7 @@
     margin-left: auto;
   }
 
-  /* Fixed lead gutter: unread dot at rest, checkbox on hover or in
-     bulk mode. No layout shift. */
-  .row {
-    display: flex;
-    gap: 0.45rem;
-  }
+  /* Fixed lead gutter for the multiselect checkbox. No layout shift. */
   .row-lead {
     flex: none;
     width: 15px;
@@ -452,7 +447,7 @@
     justify-content: center;
     border: 1px solid var(--color-line-strong);
     border-radius: var(--radius-sm);
-    background: var(--color-paper-sunken);
+    background: var(--color-paper-raised);
     color: transparent;
     cursor: pointer;
     opacity: 0;
@@ -473,10 +468,6 @@
     background: var(--color-accent);
     border-color: var(--color-accent);
     color: var(--color-on-accent);
-  }
-  .row:hover .row-dot,
-  .mail-rows[data-bulk="true"] .row-dot {
-    opacity: 0;
   }
   .row-inner {
     flex: 1;
@@ -509,9 +500,10 @@
   }
   .row {
     position: relative;
-    display: block;
+    display: flex;
+    gap: 0.45rem;
     width: 100%;
-    padding: 0.6rem 0.9rem 0.65rem;
+    padding: 0.6rem 0.9rem 0.65rem 0.6rem;
     border: none;
     border-bottom: 1px solid var(--color-line);
     background: none;
@@ -548,14 +540,12 @@
   }
   /* Unread state: dot + brighter sender; read rows recede slightly. */
   .row-dot {
-    position: absolute;
-    left: 4px;
-    top: 7px;
+    flex: none;
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: var(--color-accent);
-    transition: opacity 0.1s var(--ease-snap);
+    align-self: center;
   }
   .row[data-unread="false"] .row-from {
     color: var(--color-ink-2);
@@ -1295,7 +1285,7 @@
 }
 
 /* ------------------------------------------------------------------ *
- * Connect / sign-in
+ * Splash
  * ------------------------------------------------------------------ */
 @layer components {
   .splash {
@@ -1305,51 +1295,443 @@
     height: 100dvh;
     opacity: 0.5;
   }
+}
 
-  .connect {
+/* ------------------------------------------------------------------ *
+ * Landing page
+ * ------------------------------------------------------------------ */
+@layer components {
+  .lp {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+  .lp main {
+    flex: 1;
+  }
+  .lp-bar {
     display: flex;
     align-items: center;
-    justify-content: center;
-    min-height: 100dvh;
-    padding: 2rem;
-  }
-  .connect-inner {
+    gap: 0.6rem;
+    max-width: 1120px;
     width: 100%;
-    max-width: 30rem;
+    margin: 0 auto;
+    padding: 1.1rem 2rem;
   }
-  .connect-brand {
-    display: flex;
+  .lp-brand {
+    display: inline-flex;
     align-items: center;
     gap: 0.55rem;
     font-weight: 650;
     letter-spacing: -0.01em;
-    margin-bottom: 2.4rem;
   }
-  .connect-title {
-    font-size: 1.75rem;
-    line-height: 1.18;
+  .lp-bar .btn {
+    text-decoration: none;
+  }
+
+  .lp-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 3.5rem;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 4.5rem 2rem 1rem;
+  }
+  .lp-hero h1 {
+    margin: 0 0 1rem;
+    font-size: clamp(2.1rem, 4.2vw, 3.3rem);
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+  }
+  .lp-sub {
+    margin: 0 0 1.7rem;
+    max-width: 34rem;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
+  }
+  .lp-cta-row {
+    display: flex;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+  }
+  .lp-cta {
+    height: 38px;
+    padding: 0 1.15rem;
+    text-decoration: none;
+  }
+  .lp-error {
+    margin: 1rem 0 0;
+  }
+  .lp-fine {
+    margin: 1.5rem 0 0;
+    max-width: 30rem;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--color-ink-3);
+  }
+
+  /* ---- hero product mock ---- */
+  .lp-mock {
+    display: grid;
+    grid-template-columns: 42px 188px 1fr;
+    height: 380px;
+    background: var(--color-paper);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+  }
+  .lp-mock-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    padding: 10px 7px;
+    background: var(--color-paper-sunken);
+    border-right: 1px solid var(--color-line);
+  }
+  .lp-mock-brand {
+    display: flex;
+    justify-content: center;
+    padding: 2px 0 6px;
+  }
+  .lp-mock-railitem {
+    height: 18px;
+    border-radius: var(--radius-sm);
+    background: var(--color-line);
+  }
+  .lp-mock-railitem[data-on="true"] {
+    background: var(--color-accent-wash);
+    border: 1px solid var(--color-accent);
+  }
+  .lp-mock-railitem.sub {
+    height: 12px;
+    margin: 0 3px;
+    opacity: 0.7;
+  }
+  .lp-mock-divider {
+    height: 1px;
+    background: var(--color-line);
+    margin: 2px 1px;
+  }
+  .lp-mock-list {
+    position: relative;
+    border-right: 1px solid var(--color-line);
+    display: flex;
+    flex-direction: column;
+  }
+  .lp-mock-search {
+    height: 24px;
+    margin: 10px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-paper-raised);
+  }
+  .lp-mock-rows {
+    position: relative;
+    flex: 1;
+  }
+  .lp-mock-row {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 9px 12px 10px;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .lp-mock-from {
+    font-size: 10.5px;
+    font-weight: 650;
+    color: var(--color-ink);
+    line-height: 1;
+  }
+  .lp-mock-subject {
+    font-size: 10px;
+    color: var(--color-ink-2);
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lp-mock-snippet {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--color-line);
+  }
+  /* The roving selection: steps through the rows on a loop. */
+  .lp-mock-cursor {
+    position: absolute;
+    z-index: 0;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 56px;
+    background: var(--color-accent-wash);
+    border-left: 2px solid var(--color-accent);
+    animation: mockstep 9s var(--ease-snap) infinite;
+  }
+  @keyframes mockstep {
+    0%, 16% { transform: translateY(0); }
+    22%, 38% { transform: translateY(56px); }
+    44%, 60% { transform: translateY(112px); }
+    66%, 80% { transform: translateY(168px); }
+    86%, 100% { transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lp-mock-cursor { animation: none; }
+  }
+  .lp-mock-read {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .lp-mock-actions {
+    display: flex;
+    gap: 10px;
+    color: var(--color-ink-3);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .lp-mock-subjectline {
+    width: 64%;
+    height: 13px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-ink) 82%, transparent);
+  }
+  .lp-mock-meta {
+    width: 38%;
+    height: 7px;
+    border-radius: 3px;
+    background: var(--color-line-strong);
+  }
+  .lp-mock-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 6px;
+  }
+  .lp-mock-body span {
+    display: block;
+    height: 7px;
+    border-radius: 3px;
+    background: var(--color-line);
+  }
+
+  /* ---- proof strip ---- */
+  .lp-strip {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 1.4rem 2.2rem;
+    max-width: 1120px;
+    margin: 3.5rem auto 0;
+    padding: 1rem 2rem;
+    border-top: 1px solid var(--color-line);
+    border-bottom: 1px solid var(--color-line);
+    color: var(--color-ink-2);
+    font-size: 0.86rem;
+  }
+  .lp-strip span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  /* ---- sections ---- */
+  .lp-section {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 4.5rem 2rem 0;
+  }
+  .lp-section h2 {
+    margin: 0 0 1.6rem;
+    font-size: 1.6rem;
     font-weight: 650;
     letter-spacing: -0.02em;
-    margin: 0 0 0.7rem;
   }
-  .connect-sub {
+
+  .lp-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+  .lp-card {
+    padding: 1.3rem 1.3rem 1.4rem;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+    background: var(--color-paper-raised);
+  }
+  .lp-card svg {
+    color: var(--color-accent);
+  }
+  .lp-card h3 {
+    margin: 0.8rem 0 0.45rem;
+    font-size: 1rem;
+    font-weight: 650;
+  }
+  .lp-card p {
+    margin: 0;
+    font-size: 0.89rem;
+    line-height: 1.6;
     color: var(--color-ink-2);
-    line-height: 1.55;
-    margin: 0 0 1.6rem;
   }
-  .connect-cta {
-    height: 38px;
-    padding: 0 1.1rem;
+
+  /* ---- speed receipt ---- */
+  .lp-receipt {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
   }
-  .connect-error {
-    margin-top: 1rem;
-    color: var(--color-danger);
+  .lp-receipt-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 2.4rem 1rem 2.2rem;
+    background: var(--color-paper-raised);
   }
-  .connect-fine {
-    margin-top: 1.4rem;
-    font-size: 0.8rem;
+  .lp-receipt-col[data-accent="true"] {
+    background: var(--color-accent-wash);
+    border-left: 1px solid var(--color-line-strong);
+  }
+  .lp-receipt-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
     color: var(--color-ink-3);
-    line-height: 1.5;
+  }
+  .lp-receipt-num {
+    font-size: 2.3rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+  }
+  .lp-receipt-col[data-accent="true"] .lp-receipt-num {
+    color: var(--color-accent);
+  }
+  .lp-receipt-sub {
+    font-size: 0.84rem;
+    color: var(--color-ink-2);
+  }
+
+  /* ---- trust rows ---- */
+  .lp-trust-row {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 1.5rem;
+    padding: 1.1rem 0;
+    border-top: 1px solid var(--color-line);
+  }
+  .lp-trust-row:last-child {
+    border-bottom: 1px solid var(--color-line);
+  }
+  .lp-trust-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    color: var(--color-ink-3);
+    padding-top: 0.2rem;
+  }
+  .lp-trust-row p {
+    margin: 0;
+    max-width: 44rem;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
+  }
+
+  /* ---- FAQ ---- */
+  .lp-faq details {
+    border-bottom: 1px solid var(--color-line);
+  }
+  .lp-faq details:first-child {
+    border-top: 1px solid var(--color-line);
+  }
+  .lp-faq summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    padding: 0.95rem 0.2rem;
+    font-weight: 550;
+    font-size: 0.95rem;
+  }
+  .lp-faq summary::-webkit-details-marker {
+    display: none;
+  }
+  .lp-faq summary::after {
+    content: "+";
+    margin-left: auto;
+    color: var(--color-ink-3);
+    font-weight: 450;
+    transition: transform 0.15s var(--ease-snap);
+  }
+  .lp-faq details[open] summary::after {
+    transform: rotate(45deg);
+  }
+  .lp-faq details p {
+    margin: 0;
+    padding: 0 2rem 1.1rem 0.2rem;
+    max-width: 46rem;
+    font-size: 0.9rem;
+    line-height: 1.65;
+    color: var(--color-ink-2);
+  }
+
+  /* ---- final CTA + footer ---- */
+  .lp-final {
+    text-align: center;
+    padding: 5.5rem 2rem 5rem;
+  }
+  .lp-final h2 {
+    margin: 1rem 0 1.5rem;
+    font-size: 1.9rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+  .lp-final .lp-cta {
+    display: inline-flex;
+  }
+  .lp-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 1120px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1.2rem 2rem 1.6rem;
+    border-top: 1px solid var(--color-line);
+  }
+  .lp-foot-note {
+    color: var(--color-ink-3);
+    font-size: 0.74rem;
+  }
+
+  @media (max-width: 960px) {
+    .lp-hero {
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+      padding-top: 3rem;
+    }
+    .lp-cards {
+      grid-template-columns: 1fr;
+    }
+    .lp-trust-row {
+      grid-template-columns: 1fr;
+      gap: 0.4rem;
+    }
+    .lp-receipt {
+      grid-template-columns: 1fr;
+    }
+    .lp-receipt-col[data-accent="true"] {
+      border-left: none;
+      border-top: 1px solid var(--color-line-strong);
+    }
   }
 }
 

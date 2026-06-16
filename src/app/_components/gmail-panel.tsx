@@ -876,7 +876,6 @@ export function GmailPanel({
                     custom={i}
                   >
                     <span className="row-lead">
-                      {email.unread && <span className="row-dot" />}
                       <span
                         className="row-check"
                         role="checkbox"
@@ -893,6 +892,7 @@ export function GmailPanel({
                     </span>
                     <span className="row-inner">
                       <span className="row-top">
+                        {email.unread && <span className="row-dot" />}
                         <span className="row-from">
                           {senderLabel(email.from)}
                         </span>
