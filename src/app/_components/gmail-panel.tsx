@@ -25,7 +25,7 @@ import {
   formatSender,
   parseEmailAddress,
 } from "@/lib/display";
-import { listRow, scrim, slideOver } from "@/lib/motion";
+import { chordBar, listRow, scrim, slideOver } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
 export type EventSeed = {
@@ -59,6 +59,23 @@ type MessageAction =
   | "deleteForever";
 
 type Confirm = { kind: "trash" | "delete" | "draft"; ids: string[] };
+
+// Mutations that can be taken back from the toast, with their reversals.
+type UndoableAction = "archive" | "unarchive" | "trash";
+type Undo = { ids: string[]; action: UndoableAction };
+const UNDO_REVERSE = {
+  archive: "unarchive",
+  unarchive: "archive",
+  trash: "untrash",
+} as const satisfies Record<UndoableAction, MessageAction>;
+
+function undoLabel(undo: Undo) {
+  const count = undo.ids.length;
+  const what = count === 1 ? "message" : `${count} messages`;
+  if (undo.action === "archive") return `Archived ${what}`;
+  if (undo.action === "unarchive") return `Moved ${what} to inbox`;
+  return `Moved ${what} to trash`;
+}
 
 // Actions that move a message out of the folder being viewed.
 const LEAVES_FOLDER: Record<Folder, MessageAction[]> = {
@@ -123,6 +140,22 @@ export function GmailPanel({
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   useOverlay(confirm !== null);
 
+  // One undo at a time, Superhuman-style: the latest archive/trash can be
+  // taken back for a few seconds (Z or the toast button).
+  const [undo, setUndo] = useState<Undo | null>(null);
+  const undoTimer = useRef<number | null>(null);
+  function pushUndo(next: Undo) {
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setUndo(next);
+    undoTimer.current = window.setTimeout(() => setUndo(null), 7000);
+  }
+  useEffect(
+    () => () => {
+      if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    },
+    [],
+  );
+
   // Optimistic local state: rows removed from the current folder, and label
   // flips the next refetch will confirm.
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -158,13 +191,19 @@ export function GmailPanel({
       enabled: inMessages && !isPriority,
       initialCursor: 0,
       getNextPageParam: (last) => last.nextCursor ?? undefined,
+      // Reads hit the local cache, so polling is cheap — folders stay live
+      // without a manual refresh.
+      staleTime: 10_000,
+      refetchInterval: 45_000,
+      refetchOnWindowFocus: true,
     },
   );
 
   // LLM triage verdicts: drive the Priority view, and badge the inbox.
   const overview = api.triage.overview.useQuery(undefined, {
     enabled: view === "inbox" || isPriority,
-    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    refetchInterval: 60_000,
   });
   const overviewGroups = overview.data?.groups;
   const pendingTriage = overview.data?.pendingCount ?? 0;
@@ -192,6 +231,7 @@ export function GmailPanel({
       date: string | null;
       unread: boolean;
       starred: boolean;
+      timestamp: number;
       reason: string;
       priority: PriorityKey | undefined;
     }[] = isPriority
@@ -209,7 +249,7 @@ export function GmailPanel({
             priority: priorityById.get(item.id),
           }));
     const seen = new Set<string>();
-    return source
+    const merged = source
       .filter((item) => {
         if (seen.has(item.id) || removedIds.has(item.id)) return false;
         seen.add(item.id);
@@ -219,6 +259,11 @@ export function GmailPanel({
         const override = overrides.get(item.id);
         return override ? { ...item, ...override } : item;
       });
+    // Pages from the server can interleave in time; the priority view keeps
+    // its verdict-group order instead.
+    return isPriority
+      ? merged
+      : merged.sort((a, b) => b.timestamp - a.timestamp);
   }, [isPriority, overviewGroups, pages, priorityById, removedIds, overrides]);
 
   // Debounced read target: the highlight moves instantly; the (slow, live)
@@ -248,7 +293,7 @@ export function GmailPanel({
 
   const drafts = api.gmail.listDrafts.useQuery(
     { limit: 50, offset: 0 },
-    { enabled: view === "drafts" },
+    { enabled: view === "drafts", staleTime: 10_000, refetchInterval: 60_000 },
   );
 
   // Triage runs classify untriaged inbox mail in capped slices; the loop
@@ -290,30 +335,69 @@ export function GmailPanel({
     },
   });
 
+  // Any action that changes folder membership refreshes every mail view, so
+  // the message is already in its destination when the user looks there.
+  async function refreshMailViews() {
+    await Promise.all([
+      utils.gmail.searchEmails.invalidate(),
+      utils.triage.overview.invalidate(),
+    ]);
+  }
+
   const modifyMessage = api.gmail.modifyMessage.useMutation({
+    onSuccess: async (_data, vars) => {
+      // Read-state flips happen on every J/K; they never move a message, so
+      // skip the refetch for those.
+      if (vars.action !== "read" && vars.action !== "unread") {
+        await refreshMailViews();
+      }
+    },
     onError: async () => {
       setRemovedIds(new Set());
       setOverrides(new Map());
-      await utils.gmail.searchEmails.invalidate();
+      await refreshMailViews();
     },
   });
 
   const bulkModify = api.gmail.bulkModify.useMutation({
     onSuccess: async () => {
-      await utils.gmail.searchEmails.invalidate();
+      await refreshMailViews();
     },
     onError: async () => {
       setRemovedIds(new Set());
       setOverrides(new Map());
-      await utils.gmail.searchEmails.invalidate();
+      await refreshMailViews();
     },
   });
 
   const bulkDelete = api.gmail.bulkDelete.useMutation({
     onSuccess: async () => {
-      await utils.gmail.searchEmails.invalidate();
+      await refreshMailViews();
     },
   });
+
+  // Top-up poll: pull newly arrived Gmail ids every minute (and on focus)
+  // so new mail lands without touching the refresh button. Webhooks take
+  // over once the app has a public URL.
+  const syncNew = api.gmail.syncNew.useMutation({
+    onSuccess: async (result) => {
+      if (result.found > 0) await refreshMailViews();
+    },
+  });
+  const syncNewRef = useRef<() => void>(() => undefined);
+  syncNewRef.current = () => {
+    if (document.visibilityState !== "visible") return;
+    if (!syncNew.isPending && !refreshInbox.isPending) syncNew.mutate();
+  };
+  useEffect(() => {
+    const tick = () => syncNewRef.current();
+    const id = window.setInterval(tick, 60_000);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", tick);
+    };
+  }, []);
 
   function closeCompose() {
     setTo("");
@@ -406,6 +490,28 @@ export function GmailPanel({
       bulkModify.mutate({ ids, action });
     }
     setBulkIds(new Set());
+
+    if (action === "archive" || action === "unarchive" || action === "trash") {
+      pushUndo({ ids, action });
+    }
+  }
+
+  // Reverses the last archive/trash: rows come back instantly, Gmail follows.
+  function performUndo() {
+    if (!undo) return;
+    const reverse = UNDO_REVERSE[undo.action];
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of undo.ids) next.delete(id);
+      return next;
+    });
+    if (undo.ids.length === 1) {
+      modifyMessage.mutate({ id: undo.ids[0]!, action: reverse });
+    } else {
+      bulkModify.mutate({ ids: undo.ids, action: reverse });
+    }
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    setUndo(null);
   }
 
   // Trash and permanent delete always pass through a confirmation.
@@ -696,6 +802,10 @@ export function GmailPanel({
         case "e":
           if (!inMessages || targets.length === 0) return;
           performAction(targets, E_ACTION[folder]);
+          break;
+        case "z":
+          if (!undo) return;
+          performUndo();
           break;
         case "#":
           if (inMessages) {
@@ -1459,6 +1569,25 @@ export function GmailPanel({
               </div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {undo && (
+          <motion.div
+            className="undo-toast"
+            variants={chordBar}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            role="status"
+          >
+            <span className="tnum">{undoLabel(undo)}</span>
+            <button type="button" className="btn" onClick={performUndo}>
+              Undo
+              <Kbd>Z</Kbd>
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
 

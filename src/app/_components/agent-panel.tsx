@@ -10,6 +10,7 @@ import { Kbd } from "@/components/kbd";
 import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
 import { listRow } from "@/lib/motion";
+import { api } from "@/trpc/react";
 
 const SUGGESTIONS = [
   "Summarize my unread mail",
@@ -172,6 +173,20 @@ export function AgentPanel() {
   });
 
   const busy = status === "submitted" || status === "streaming";
+
+  // The agent acts on real mail and events server-side; when a run ends,
+  // refetch every data view so its work is visible immediately.
+  const utils = api.useUtils();
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !busy) {
+      void utils.gmail.searchEmails.invalidate();
+      void utils.gmail.listDrafts.invalidate();
+      void utils.triage.overview.invalidate();
+      void utils.calendar.searchEvents.invalidate();
+    }
+    wasBusy.current = busy;
+  }, [busy, utils]);
 
   // Show a thinking skeleton whenever the agent is busy but no text is
   // visibly streaming: before the first token, and between tool steps.

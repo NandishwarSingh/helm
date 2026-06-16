@@ -39,6 +39,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { keys: ["⌘", "A"], label: "Select all loaded" },
       { keys: ["E"], label: "Archive / restore (acts on selection)" },
       { keys: ["#"], label: "Trash or delete (acts on selection)" },
+      { keys: ["Z"], label: "Undo the last archive / trash" },
       { keys: ["S"], label: "Star / unstar" },
       { keys: ["⇧", "U"], label: "Mark unread / read" },
       { keys: ["R"], label: "Reply" },

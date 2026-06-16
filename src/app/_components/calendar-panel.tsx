@@ -204,19 +204,49 @@ export function CalendarPanel({
 
   const utils = api.useUtils();
 
-  const events = api.calendar.searchEvents.useQuery({
-    query: activeSearch,
-    weekStart: week.start.toISOString(),
-    weekEnd: week.end.toISOString(),
-    limit: 50,
-    offset: 0,
-  });
+  const events = api.calendar.searchEvents.useQuery(
+    {
+      query: activeSearch,
+      weekStart: week.start.toISOString(),
+      weekEnd: week.end.toISOString(),
+      limit: 50,
+      offset: 0,
+    },
+    // Reads hit the local cache; polling keeps the grid live.
+    { staleTime: 10_000, refetchInterval: 45_000, refetchOnWindowFocus: true },
+  );
 
   const refreshEvents = api.calendar.refreshEvents.useMutation({
     onSuccess: async () => {
       await utils.calendar.searchEvents.invalidate();
     },
   });
+
+  // Silent background pull from Google for the visible week (separate from
+  // refreshEvents so the refresh button's spinner stays quiet).
+  const backgroundPull = api.calendar.refreshEvents.useMutation({
+    onSuccess: async () => {
+      await utils.calendar.searchEvents.invalidate();
+    },
+  });
+  const pullRef = useRef<() => void>(() => undefined);
+  pullRef.current = () => {
+    if (document.visibilityState !== "visible") return;
+    if (backgroundPull.isPending || refreshEvents.isPending) return;
+    backgroundPull.mutate({
+      weekStart: week.start.toISOString(),
+      weekEnd: week.end.toISOString(),
+    });
+  };
+  useEffect(() => {
+    const tick = () => pullRef.current();
+    const id = window.setInterval(tick, 90_000);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("focus", tick);
+    };
+  }, []);
 
   function closeDialog() {
     setSummary("");

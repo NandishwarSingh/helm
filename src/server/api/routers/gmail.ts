@@ -137,9 +137,11 @@ export const gmailRouter = createTRPCRouter({
       }
 
       // The whole final hop is returned (never trimmed): the cursor has
-      // already moved past its rows, so trimming would lose messages.
+      // already moved past its rows, so trimming would lose messages. The
+      // cache pages by update recency, not message date, so order the page
+      // before it ships.
       const nextCursor = cacheHasMore ? cursor : null;
-      return { items: collected, nextCursor };
+      return { items: sortMessagesNewestFirst(collected), nextCursor };
     }),
 
   getMessage: authedProcedure
@@ -216,6 +218,28 @@ export const gmailRouter = createTRPCRouter({
 
     await setSyncCursor(tenantId, pageToken ?? null);
     return { synced: total };
+  }),
+
+  // Cheap top-up poll: one list call for the newest page, then hydrate only
+  // ids the cache has never seen properly (also self-heals any stub rows a
+  // failed sync left in the newest window).
+  syncNew: authedProcedure.mutation(async () => {
+    const tenant = await getTenant();
+    const cached = await listOrEmpty(async () =>
+      tenant.gmail.db.messages.list({ limit: 300, offset: 0 }),
+    );
+    const hydratedIds = new Set(
+      dedupeByEntityId(cached)
+        .map(mapMessage)
+        .filter((message) => message.hydrated)
+        .map((message) => message.id),
+    );
+    const result = await tenant.gmail.api.messages.list({
+      maxResults: SYNC_PAGE_SIZE,
+    });
+    const fresh = messageIds(result).filter((id) => !hydratedIds.has(id));
+    await hydrateMessages(tenant, fresh);
+    return { found: fresh.length };
   }),
 
   // Pages deeper into Gmail when the cached list is exhausted (infinite scroll).
