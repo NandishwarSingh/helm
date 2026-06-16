@@ -1,5 +1,8 @@
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { db } from "@/server/db";
+import { mailSync } from "@/server/db/schema";
 import {
   isNotConnectedError,
   listOrEmpty,
@@ -10,6 +13,7 @@ import {
   extractHtmlFromPayload,
   getHeader,
 } from "@/server/lib/email";
+import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 
@@ -74,11 +78,48 @@ function dedupeByEntityId<
   return Array.from(byEntityId.values());
 }
 
+type Tenant = Awaited<ReturnType<typeof getTenant>>;
+const SYNC_CONCURRENCY = 10;
+const SYNC_PAGE_SIZE = 40;
+
+// Gmail's messages.list returns only id/threadId stubs, so each id is hydrated
+// with metadata (from, subject, snippet, date) for the list view.
+async function hydrateMessages(tenant: Tenant, ids: string[]) {
+  for (let i = 0; i < ids.length; i += SYNC_CONCURRENCY) {
+    await Promise.all(
+      ids.slice(i, i + SYNC_CONCURRENCY).map((id) =>
+        tenant.gmail.api.messages
+          .get({ id, format: "metadata" })
+          .catch(() => null),
+      ),
+    );
+  }
+}
+
+function messageIds(result: { messages?: { id?: string | null }[] }): string[] {
+  return (result.messages ?? [])
+    .map((message) => message.id)
+    .filter((id): id is string => Boolean(id));
+}
+
+// Persists the Gmail page cursor so syncMore can page deeper than the cache.
+async function setSyncCursor(tenantId: string, token: string | null) {
+  await db
+    .insert(mailSync)
+    .values({ tenantId, nextPageToken: token })
+    .onConflictDoUpdate({
+      target: mailSync.tenantId,
+      set: { nextPageToken: token, updatedAt: new Date() },
+    });
+}
+
 export const gmailRouter = createTRPCRouter({
   searchEmails: publicProcedure
     .input(
-      paginationSchema.extend({
+      z.object({
         query: z.string(),
+        cursor: z.number().min(0).default(0),
+        limit: z.number().min(1).max(50).default(25),
       }),
     )
     .query(async ({ input }) => {
@@ -90,17 +131,21 @@ export const gmailRouter = createTRPCRouter({
                 snippet: { contains: input.query },
               },
               limit: input.limit,
-              offset: input.offset,
+              offset: input.cursor,
             })
           : tenant.gmail.db.messages.list({
               limit: input.limit,
-              offset: input.offset,
+              offset: input.cursor,
             });
       });
 
-      return sortMessagesNewestFirst(
+      const items = sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
       );
+      // A full page implies there may be more cached rows to page through.
+      const nextCursor =
+        messages.length === input.limit ? input.cursor + input.limit : null;
+      return { items, nextCursor };
     }),
 
   getMessage: publicProcedure
@@ -156,26 +201,54 @@ export const gmailRouter = createTRPCRouter({
       }));
     }),
 
+  // Fresh sync: walk Gmail pages up to a cap, hydrate, and reset the cursor.
   refreshInbox: publicProcedure.mutation(async () => {
     const tenant = await getTenant();
-    // messages.list only returns id/threadId stubs, so each message is then
-    // hydrated with metadata (from, subject, snippet, date) for the list view.
-    const list = await tenant.gmail.api.messages.list({ maxResults: 40 });
-    const ids = (list.messages ?? [])
-      .map((message) => message.id)
-      .filter((id): id is string => Boolean(id));
+    const tenantId = await getTenantId();
+    if (!tenantId) return { synced: 0 };
 
-    const CONCURRENCY = 8;
-    for (let i = 0; i < ids.length; i += CONCURRENCY) {
-      await Promise.all(
-        ids.slice(i, i + CONCURRENCY).map((id) =>
-          tenant.gmail.api.messages
-            .get({ id, format: "metadata" })
-            .catch(() => null),
-        ),
-      );
-    }
-    return { synced: ids.length };
+    const CAP = 120;
+    let pageToken: string | undefined;
+    let total = 0;
+    do {
+      const result = await tenant.gmail.api.messages.list({
+        maxResults: SYNC_PAGE_SIZE,
+        pageToken,
+      });
+      const ids = messageIds(result);
+      await hydrateMessages(tenant, ids);
+      total += ids.length;
+      pageToken = result.nextPageToken ?? undefined;
+    } while (pageToken && total < CAP);
+
+    await setSyncCursor(tenantId, pageToken ?? null);
+    return { synced: total };
+  }),
+
+  // Pages deeper into Gmail when the cached list is exhausted (infinite scroll).
+  syncMore: publicProcedure.mutation(async () => {
+    const tenant = await getTenant();
+    const tenantId = await getTenantId();
+    if (!tenantId) return { synced: 0, hasMore: false };
+
+    const [state] = await db
+      .select()
+      .from(mailSync)
+      .where(eq(mailSync.tenantId, tenantId));
+    const token = state?.nextPageToken;
+    if (!token) return { synced: 0, hasMore: false };
+
+    const result = await tenant.gmail.api.messages.list({
+      maxResults: SYNC_PAGE_SIZE,
+      pageToken: token,
+    });
+    await hydrateMessages(tenant, messageIds(result));
+    await setSyncCursor(tenantId, result.nextPageToken ?? null);
+
+    return {
+      synced: messageIds(result).length,
+      hasMore: Boolean(result.nextPageToken),
+    };
   }),
 
   createDraft: publicProcedure

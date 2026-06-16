@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { EmailBody } from "@/app/_components/email-body";
@@ -31,6 +31,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
   const [activeSearch, setActiveSearch] = useState("");
   const [view, setView] = useState<"inbox" | "drafts">("inbox");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [canSyncMore, setCanSyncMore] = useState(true);
 
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
@@ -40,10 +41,29 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
 
   const utils = api.useUtils();
 
-  const emails = api.gmail.searchEmails.useQuery(
-    { query: activeSearch, limit: 50, offset: 0 },
-    { enabled: view === "inbox" },
+  const inbox = api.gmail.searchEmails.useInfiniteQuery(
+    { query: activeSearch },
+    {
+      enabled: view === "inbox",
+      initialCursor: 0,
+      getNextPageParam: (last) => last.nextCursor ?? undefined,
+    },
   );
+
+  // Flatten pages and drop any duplicates that straddle page boundaries.
+  const pages = inbox.data?.pages;
+  const emails = useMemo(() => {
+    const seen = new Set<string>();
+    return (pages ?? [])
+      .flatMap((page) => page.items)
+      .filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+  }, [pages]);
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const selectedEmail = api.gmail.getMessage.useQuery(
     { id: selectedId! },
@@ -61,8 +81,17 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
 
   const refreshInbox = api.gmail.refreshInbox.useMutation({
     onSuccess: async () => {
+      setCanSyncMore(true);
       await utils.gmail.searchEmails.invalidate();
       await utils.gmail.listDrafts.invalidate();
+    },
+  });
+
+  // Pulls older mail from Gmail when the cached list runs out (infinite scroll).
+  const syncMore = api.gmail.syncMore.useMutation({
+    onSuccess: async (result) => {
+      setCanSyncMore(result.hasMore);
+      if (result.synced > 0) await utils.gmail.searchEmails.invalidate();
     },
   });
 
@@ -114,11 +143,47 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
   const didAutoSync = useRef(false);
   useEffect(() => {
     if (didAutoSync.current) return;
-    if (view !== "inbox" || emails.isLoading) return;
-    if ((emails.data?.length ?? 0) > 0) return;
+    if (view !== "inbox" || inbox.isLoading) return;
+    if (emails.length > 0 || activeSearch.trim()) return;
     didAutoSync.current = true;
     refreshInbox.mutate();
-  }, [emails.data, emails.isLoading, view, refreshInbox]);
+  }, [emails.length, inbox.isLoading, view, activeSearch, refreshInbox]);
+
+  // Infinite scroll: load the next cached page, or page deeper into Gmail when
+  // the cache is exhausted.
+  const { hasNextPage, isFetchingNextPage, isFetching, fetchNextPage } = inbox;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || view !== "inbox") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        if (hasNextPage && !isFetchingNextPage) {
+          void fetchNextPage();
+        } else if (
+          !hasNextPage &&
+          !isFetching &&
+          !activeSearch.trim() &&
+          canSyncMore &&
+          !syncMore.isPending
+        ) {
+          syncMore.mutate();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [
+    view,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetching,
+    fetchNextPage,
+    activeSearch,
+    canSyncMore,
+    syncMore,
+  ]);
 
   const composeError = createDraft.error ?? sendEmail.error;
   const canSend = Boolean(to && subject && body);
@@ -175,15 +240,16 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
         )}
 
         <div className="mail-rows">
-          {view === "inbox" && emails.isLoading && <MailRowsSkeleton />}
-          {view === "inbox" && emails.error && (
+          {view === "inbox" && inbox.isLoading && <MailRowsSkeleton />}
+          {view === "inbox" && inbox.error && (
             <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
-              {emails.error.message}
+              {inbox.error.message}
             </p>
           )}
           {view === "inbox" &&
-            emails.data &&
-            (emails.data.length === 0 ? (
+            !inbox.isLoading &&
+            !inbox.error &&
+            (emails.length === 0 ? (
               refreshInbox.isPending ? (
                 <MailRowsSkeleton />
               ) : (
@@ -192,34 +258,46 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                 </p>
               )
             ) : (
-              emails.data.map((email, i) => (
-                <motion.button
-                  key={email.id}
-                  type="button"
-                  className="row"
-                  data-active={selectedId === email.id}
-                  onClick={() => setSelectedId(email.id)}
-                  variants={listRow}
-                  initial="initial"
-                  animate="animate"
-                  custom={i}
-                >
-                  <span className="row-top">
-                    <span className="row-from">{senderLabel(email.from)}</span>
-                    {email.date && (
-                      <span className="row-date tnum">
-                        {formatMessageDate(email.date)}
+              <>
+                {emails.map((email, i) => (
+                  <motion.button
+                    key={email.id}
+                    type="button"
+                    className="row"
+                    data-active={selectedId === email.id}
+                    onClick={() => setSelectedId(email.id)}
+                    variants={listRow}
+                    initial="initial"
+                    animate="animate"
+                    custom={i}
+                  >
+                    <span className="row-top">
+                      <span className="row-from">
+                        {senderLabel(email.from)}
                       </span>
+                      {email.date && (
+                        <span className="row-date tnum">
+                          {formatMessageDate(email.date)}
+                        </span>
+                      )}
+                    </span>
+                    {email.subject && (
+                      <span className="row-subject">{email.subject}</span>
                     )}
-                  </span>
-                  {email.subject && (
-                    <span className="row-subject">{email.subject}</span>
-                  )}
-                  {email.snippet && (
-                    <span className="row-snippet">{email.snippet}</span>
-                  )}
-                </motion.button>
-              ))
+                    {email.snippet && (
+                      <span className="row-snippet">{email.snippet}</span>
+                    )}
+                  </motion.button>
+                ))}
+                {(inbox.isFetchingNextPage || syncMore.isPending) && (
+                  <MailRowsSkeleton count={3} />
+                )}
+                <div
+                  ref={sentinelRef}
+                  aria-hidden="true"
+                  style={{ height: 1 }}
+                />
+              </>
             ))}
 
           {view === "drafts" && drafts.isLoading && (

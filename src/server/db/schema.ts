@@ -39,3 +39,10 @@ export const corsairEvents = pgTable('corsair_events', {
     payload: jsonb('payload').notNull().default({}),
     status: text('status'),
 });
+
+// Per-tenant cursor for paging deeper into Gmail when the cache is exhausted.
+export const mailSync = pgTable('mail_sync', {
+    tenantId: text('tenant_id').primaryKey(),
+    nextPageToken: text('next_page_token'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

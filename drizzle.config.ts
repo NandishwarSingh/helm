@@ -12,5 +12,5 @@ export default {
   migrations: {
     prefix: "timestamp",
   },
-  tablesFilter: ["corsair_*"],
+  tablesFilter: ["corsair_*", "mail_sync"],
 } satisfies Config;
