@@ -26,6 +26,7 @@ import {
   InboxIcon,
   MailIcon,
   PlusIcon,
+  SendIcon,
   SignOutIcon,
   SpamIcon,
   StarIcon,
@@ -44,7 +45,15 @@ type View = "mail" | "calendar" | "agent";
 // The agent (and its chat runtime) loads only when the view is opened.
 const AgentPanel = dynamic(
   () => import("@/app/_components/agent-panel").then((m) => m.AgentPanel),
-  { ssr: false, loading: () => null },
+  {
+    ssr: false,
+    // Same branded loader the calendar view shows while its chunk/data loads.
+    loading: () => (
+      <div className="empty" style={{ flex: 1 }}>
+        <HelmLoader size={40} />
+      </div>
+    ),
+  },
 );
 
 const MAIL_FOLDERS: {
@@ -59,6 +68,7 @@ const MAIL_FOLDERS: {
   { id: "archived", label: "Archive", chord: "A", icon: <ArchiveIcon size={15} /> },
   { id: "spam", label: "Spam", chord: "P", icon: <SpamIcon size={15} /> },
   { id: "trash", label: "Trash", chord: "T", icon: <TrashIcon size={15} /> },
+  { id: "sent", label: "Sent", chord: "E", icon: <SendIcon size={15} /> },
   { id: "drafts", label: "Drafts", chord: "D", icon: <ComposeIcon size={15} /> },
 ];
 
@@ -126,6 +136,7 @@ export function AppShell() {
         case "a": go("archived"); break;
         case "p": go("spam"); break;
         case "t": go("trash"); break;
+        case "e": go("sent"); break;
         case "d": go("drafts"); break;
         case "m": setView("mail"); break;
         case "c": setView("calendar"); break;

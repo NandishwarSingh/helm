@@ -50,11 +50,17 @@ export function mapMessage(message: {
     starred: labels.includes("STARRED"),
     spam: labels.includes("SPAM"),
     trashed: labels.includes("TRASH"),
+    sent: labels.includes("SENT"),
+    // Archived = received mail pulled out of the inbox. Sent/draft/chat lack
+    // INBOX too, so exclude them or they'd masquerade as archived.
     archived:
       labels.length > 0 &&
       !labels.includes("INBOX") &&
       !labels.includes("SPAM") &&
-      !labels.includes("TRASH"),
+      !labels.includes("TRASH") &&
+      !labels.includes("SENT") &&
+      !labels.includes("DRAFT") &&
+      !labels.includes("CHAT"),
     timestamp: messageTimestamp(
       message.data.internalDate,
       message.data.createdAt,
@@ -65,9 +71,16 @@ export function mapMessage(message: {
 export type MappedMessage = ReturnType<typeof mapMessage>;
 
 export function sortMessagesNewestFirst<
-  T extends { timestamp: number },
+  T extends { timestamp: number; id: string },
 >(messages: T[]): T[] {
-  return [...messages].sort((a, b) => b.timestamp - a.timestamp);
+  // Tiebreak equal timestamps on id so the order is identical across refetches.
+  // Without it, same-second messages can swap places between polls and the list
+  // visibly reshuffles / rows pop in and out.
+  return [...messages].sort(
+    (a, b) =>
+      b.timestamp - a.timestamp ||
+      (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+  );
 }
 
 export function dedupeByEntityId<
@@ -84,15 +97,16 @@ export function dedupeByEntityId<
 }
 
 export const folderSchema = z
-  .enum(["inbox", "starred", "archived", "spam", "trash"])
+  .enum(["inbox", "starred", "archived", "spam", "trash", "sent"])
   .default("inbox");
 
 export type Folder = z.infer<typeof folderSchema>;
 
 export const FOLDER_FILTERS: Record<Folder, (m: MappedMessage) => boolean> = {
-  inbox: (m) => !m.archived && !m.trashed && !m.spam,
+  inbox: (m) => !m.archived && !m.trashed && !m.spam && !m.sent,
   starred: (m) => m.starred && !m.trashed && !m.spam,
   archived: (m) => m.archived,
   spam: (m) => m.spam,
   trash: (m) => m.trashed,
+  sent: (m) => m.sent && !m.trashed,
 };

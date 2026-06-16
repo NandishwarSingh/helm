@@ -22,6 +22,11 @@ import {
   sortMessagesNewestFirst,
 } from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
+import {
+  embedText,
+  semanticSearchIds,
+  upsertMessageEmbeddings,
+} from "@/server/lib/semantic-search";
 import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
 import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
@@ -61,23 +66,31 @@ type Tenant = Awaited<ReturnType<typeof getTenant>>;
 const SYNC_CONCURRENCY = 10;
 const SYNC_PAGE_SIZE = 40;
 // The recency window the list view reads before sorting by date. Matches the
-// other cache reads (triage, syncNew) so every view sees the same messages.
+// other cache reads (triage's CACHE_WINDOW, syncNew) so every view sees the
+// same messages. Mirrored as MAIL_WINDOW in gmail-panel.tsx (the client can't
+// import this server-only module); the two must stay equal.
 const MAIL_WINDOW = 300;
+// Wider read used only to hydrate semantic-search hits (which can reach beyond
+// the list window) back into full rows. Submit-driven, so the cost is rare.
+const SEARCH_WINDOW = 2000;
 
 // Gmail's messages.list returns only id/threadId stubs, so each id is hydrated
 // with metadata (from, subject, snippet, date) for the list view. Each get
 // retries before giving up — an unhydrated stub poisons the cache until the
-// next full refresh.
-async function hydrateMessages(tenant: Tenant, ids: string[]) {
+// next full refresh. Returns how many ids hydrated successfully.
+async function hydrateMessages(tenant: Tenant, ids: string[]): Promise<number> {
+  let hydrated = 0;
   for (let i = 0; i < ids.length; i += SYNC_CONCURRENCY) {
-    await Promise.all(
+    const results = await Promise.all(
       ids.slice(i, i + SYNC_CONCURRENCY).map((id) =>
         withRetry(() =>
           tenant.gmail.api.messages.get({ id, format: "metadata" }),
         ).catch(() => null),
       ),
     );
+    hydrated += results.filter((result) => result !== null).length;
   }
+  return hydrated;
 }
 
 function messageIds(result: { messages?: { id?: string | null }[] }): string[] {
@@ -149,6 +162,67 @@ export const gmailRouter = createTRPCRouter({
       };
     }),
 
+  // Warm the semantic index: embed any cached messages that are new or changed
+  // since last call. Hash-deduped, so steady state embeds nothing — cheap to
+  // call after every sync. The client runs this in the background.
+  reindexSearch: authedProcedure.mutation(async () => {
+    const tenantId = await getTenantId();
+    if (!tenantId) return { indexed: 0 };
+    const window = await listOrEmpty(async () => {
+      const tenant = await getTenant();
+      return tenant.gmail.db.messages.list({ limit: SEARCH_WINDOW, offset: 0 });
+    });
+    const items = dedupeByEntityId(window)
+      .map(mapMessage)
+      .filter((message) => message.hydrated)
+      .map((message) => ({
+        messageId: message.id,
+        text: embedText({
+          subject: message.subject,
+          from: message.from,
+          snippet: message.snippet,
+        }),
+      }));
+    const indexed = await upsertMessageEmbeddings(tenantId, items);
+    return { indexed };
+  }),
+
+  // Semantic search: embed the query, cosine-KNN over this tenant's embedded
+  // mail, then hydrate the hits from the cache in similarity order.
+  semanticSearch: authedProcedure
+    .input(
+      z.object({
+        query: z.string().min(1).max(256),
+        limit: z.number().min(1).max(100).default(40),
+      }),
+    )
+    .query(async ({ input }) => {
+      const tenantId = await getTenantId();
+      if (!tenantId) return { items: [] };
+      const hits = await semanticSearchIds(
+        tenantId,
+        input.query.trim(),
+        input.limit,
+      );
+      if (hits.length === 0) return { items: [] };
+      const window = await listOrEmpty(async () => {
+        const tenant = await getTenant();
+        return tenant.gmail.db.messages.list({ limit: SEARCH_WINDOW, offset: 0 });
+      });
+      const byId = new Map(
+        dedupeByEntityId(window)
+          .map(mapMessage)
+          .filter((message) => message.hydrated)
+          .map((message) => [message.id, message] as const),
+      );
+      const items = hits
+        .map((hit) => byId.get(hit.messageId))
+        .filter((message): message is NonNullable<typeof message> =>
+          Boolean(message),
+        );
+      return { items };
+    }),
+
   getMessage: authedProcedure
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
@@ -209,20 +283,22 @@ export const gmailRouter = createTRPCRouter({
 
     const CAP = 120;
     let pageToken: string | undefined;
-    let total = 0;
+    let seen = 0;
+    let synced = 0;
     do {
       const result = await tenant.gmail.api.messages.list({
         maxResults: SYNC_PAGE_SIZE,
         pageToken,
       });
       const ids = messageIds(result);
-      await hydrateMessages(tenant, ids);
-      total += ids.length;
+      synced += await hydrateMessages(tenant, ids);
+      seen += ids.length;
       pageToken = result.nextPageToken ?? undefined;
-    } while (pageToken && total < CAP);
+    } while (pageToken && seen < CAP);
 
     await setSyncCursor(tenantId, pageToken ?? null);
-    return { synced: total };
+    // `synced` counts rows that actually hydrated, not ids merely fetched.
+    return { synced };
   }),
 
   // Cheap top-up poll: one list call for the newest page, then hydrate only
@@ -230,8 +306,15 @@ export const gmailRouter = createTRPCRouter({
   // failed sync left in the newest window).
   syncNew: authedProcedure.mutation(async () => {
     const tenant = await getTenant();
+    // List the newest page FIRST. messages.list upserts bare id stubs; reading
+    // the cache afterwards means any row the list call reset to a stub shows as
+    // unhydrated and gets re-hydrated below — so a message is never left as a
+    // stub the next list skips (which would silently drop it from the view).
+    const result = await tenant.gmail.api.messages.list({
+      maxResults: SYNC_PAGE_SIZE,
+    });
     const cached = await listOrEmpty(async () =>
-      tenant.gmail.db.messages.list({ limit: 300, offset: 0 }),
+      tenant.gmail.db.messages.list({ limit: MAIL_WINDOW, offset: 0 }),
     );
     const hydratedIds = new Set(
       dedupeByEntityId(cached)
@@ -239,9 +322,6 @@ export const gmailRouter = createTRPCRouter({
         .filter((message) => message.hydrated)
         .map((message) => message.id),
     );
-    const result = await tenant.gmail.api.messages.list({
-      maxResults: SYNC_PAGE_SIZE,
-    });
     const fresh = messageIds(result).filter((id) => !hydratedIds.has(id));
     await hydrateMessages(tenant, fresh);
     return { found: fresh.length };
@@ -394,17 +474,22 @@ export const gmailRouter = createTRPCRouter({
       return { ok: true, count: input.ids.length };
     }),
 
-  // Spam and trash are excluded from the normal sync; pull them on demand
-  // when those folders are opened.
+  // Spam, trash and sent aren't the focus of the normal inbox sync; pull them
+  // on demand when those folders are opened.
   syncFolder: authedProcedure
-    .input(z.object({ folder: z.enum(["spam", "trash"]) }))
+    .input(z.object({ folder: z.enum(["spam", "trash", "sent"]) }))
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
-      const label = input.folder === "spam" ? "SPAM" : "TRASH";
+      const label =
+        input.folder === "spam"
+          ? "SPAM"
+          : input.folder === "trash"
+            ? "TRASH"
+            : "SENT";
       const result = await tenant.gmail.api.messages.list({
         maxResults: 30,
         labelIds: [label],
-        includeSpamTrash: true,
+        includeSpamTrash: input.folder !== "sent",
       });
       const ids = messageIds(result);
       await hydrateMessages(tenant, ids);

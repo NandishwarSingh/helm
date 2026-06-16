@@ -20,6 +20,9 @@ const securityHeaders = [
 
 /** @type {import("next").NextConfig} */
 const config = {
+  // Minimal self-contained server (server.js + traced deps) for a small Docker
+  // image — built in CI, never on the RAM-tight VPS.
+  output: "standalone",
   // Lets a production build target a separate output dir (NEXT_DIST_DIR) so it
   // never clobbers the turbopack dev cache in .next.
   distDir: process.env.NEXT_DIST_DIR || ".next",

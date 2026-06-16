@@ -1,0 +1,16 @@
+node_modules
+.next
+.next-build
+.git
+.github
+.env
+.env*.local
+*.log
+.DS_Store
+.vscode
+.idea
+.claude
+.cursor
+AGENT_PROMPT.md
+CLAUDE.md
+coverage

@@ -44,7 +44,8 @@
 /* ------------------------------------------------------------------ *
  * Dark theme — warm, low-glare. Set by an inline no-flash script.
  * ------------------------------------------------------------------ */
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+.veil-root {
   --color-paper: #1a1814;
   --color-paper-raised: #221f1a;
   --color-paper-sunken: #131210;
@@ -697,45 +698,6 @@
     background: var(--color-line-strong);
   }
 
-  /* Tearable triage pane: the cloth fills the reading area below a slim bar. */
-  .tear-pane {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    gap: 0.7rem;
-  }
-  .tear-bar {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding-bottom: 0.7rem;
-    border-bottom: 1px solid var(--color-line);
-  }
-  .tear-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-right: auto;
-    padding: 3px 9px;
-    font-size: 0.7rem;
-    color: var(--color-accent-strong);
-    background: var(--color-accent-wash);
-    border-radius: var(--radius-sm);
-  }
-  .tear-reader {
-    flex: 1;
-    min-height: 0;
-    position: relative;
-    border-radius: var(--radius-md);
-    overflow: hidden;
-  }
-  .tear-host {
-    position: absolute;
-    inset: 0;
-    display: block;
-  }
 
   .read-subject {
     font-size: 1.3rem;
@@ -1399,6 +1361,41 @@
     justify-content: center;
   }
 
+  .morph-loader {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* "Syncing" loading state: the morph mark + a status line above shimmering
+     skeleton rows that mirror the list layout. */
+  .syncing {
+    display: flex;
+    flex-direction: column;
+  }
+  .syncing-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .syncing-text {
+    font-size: 0.75rem;
+    color: var(--color-ink-3);
+    letter-spacing: 0.01em;
+  }
+  /* Slim inline indicator while a sync runs over already-visible rows. */
+  .syncing-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.45rem 0.9rem;
+    border-bottom: 1px solid var(--color-line);
+    font-size: 0.72rem;
+    color: var(--color-ink-3);
+  }
+
   .skeleton {
     display: block;
     position: relative;
@@ -1837,7 +1834,6 @@
     align-items: center;
     justify-content: center;
     height: 100dvh;
-    opacity: 0.5;
   }
 }
 

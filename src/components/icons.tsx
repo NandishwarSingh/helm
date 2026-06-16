@@ -194,16 +194,6 @@ export const MailOpenIcon = (p: IconProps) => (
   </Svg>
 );
 
-export const ScissorsIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <circle cx="6" cy="6" r="3" />
-    <circle cx="6" cy="18" r="3" />
-    <path d="M8.12 8.12 20 20" />
-    <path d="M14.8 14.8 20 4" />
-    <path d="M8.12 15.88 12 12" />
-  </Svg>
-);
-
 export const ReplyAllIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M7 17 2 12l5-5" />

@@ -59,6 +59,18 @@ describe("FOLDER_FILTERS", () => {
     expect(FOLDER_FILTERS.trash(trash)).toBe(true);
     expect(FOLDER_FILTERS.spam(inbox)).toBe(false);
   });
+  it("files sent mail under Sent only — never Inbox or Archive", () => {
+    const sent = mapMessage(row("se", ["SENT"]));
+    expect(sent.sent).toBe(true);
+    expect(FOLDER_FILTERS.sent(sent)).toBe(true);
+    expect(FOLDER_FILTERS.inbox(sent)).toBe(false);
+    expect(FOLDER_FILTERS.archived(sent)).toBe(false);
+  });
+  it("a trashed sent message leaves Sent for Trash", () => {
+    const sentTrashed = mapMessage(row("st", ["SENT", "TRASH"]));
+    expect(FOLDER_FILTERS.sent(sentTrashed)).toBe(false);
+    expect(FOLDER_FILTERS.trash(sentTrashed)).toBe(true);
+  });
 });
 
 describe("dedupeByEntityId", () => {
@@ -74,10 +86,24 @@ describe("dedupeByEntityId", () => {
 describe("sortMessagesNewestFirst", () => {
   it("orders by descending timestamp", () => {
     const out = sortMessagesNewestFirst([
-      { timestamp: 100 },
-      { timestamp: 300 },
-      { timestamp: 200 },
+      { timestamp: 100, id: "a" },
+      { timestamp: 300, id: "b" },
+      { timestamp: 200, id: "c" },
     ]);
     expect(out.map((m) => m.timestamp)).toEqual([300, 200, 100]);
+  });
+
+  it("breaks timestamp ties deterministically by id (stable across calls)", () => {
+    const rows = [
+      { timestamp: 100, id: "m1" },
+      { timestamp: 100, id: "m3" },
+      { timestamp: 100, id: "m2" },
+    ];
+    const first = sortMessagesNewestFirst(rows).map((m) => m.id);
+    // Same input in a different order must yield the same ordering.
+    const shuffled = sortMessagesNewestFirst([rows[2]!, rows[0]!, rows[1]!]).map(
+      (m) => m.id,
+    );
+    expect(first).toEqual(shuffled);
   });
 });

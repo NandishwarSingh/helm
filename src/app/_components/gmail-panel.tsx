@@ -5,8 +5,16 @@ import { keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 
 // One page worth of rows revealed at a time, up to the server's window cap.
+// MAIL_WINDOW MUST equal MAIL_WINDOW in src/server/api/routers/gmail.ts — the
+// reading view can't import that server-only module, so the value is mirrored.
+// If they drift the list dead-ends: the client caps the limit below what the
+// server still reports as hasMore, and deep-sync never fires.
 const MAIL_PAGE = 40;
 const MAIL_WINDOW = 300;
+
+// One full Gmail sync per page load. Module-scoped so it survives the panel
+// remounting on view switches, but resets on a real page reload (a new visit).
+let visitSynced = false;
 
 import { EmailBody } from "@/app/_components/email-body";
 import {
@@ -20,12 +28,11 @@ import {
   RefreshIcon,
   ReplyAllIcon,
   ReplyIcon,
-  ScissorsIcon,
   StarIcon,
   TrashIcon,
 } from "@/components/icons";
-import { TearableReader } from "@/app/_components/tearable-reader";
 import { Kbd } from "@/components/kbd";
+import { SyncingState } from "@/components/morph-loader";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import {
@@ -53,7 +60,9 @@ type Props = {
   autoSync?: boolean;
 };
 
-type Folder = "inbox" | "starred" | "archived" | "spam" | "trash";
+// Mirrors folderSchema's enum in src/server/lib/mail-view.ts (server-only, so
+// it can't be imported here); keep the two in sync.
+type Folder = "inbox" | "starred" | "archived" | "spam" | "trash" | "sent";
 export type MailView = Folder | "drafts" | "priority";
 type PriorityKey = "urgent" | "reply" | "fyi" | "low";
 type MessageAction =
@@ -91,12 +100,14 @@ type LabelState = {
   archived: boolean;
   trashed: boolean;
   spam: boolean;
+  sent: boolean;
   deleted: boolean;
 };
 
 type EmailRow = {
   id: string;
   from: string;
+  to: string;
   subject: string;
   snippet: string;
   date: string | null;
@@ -105,6 +116,7 @@ type EmailRow = {
   archived: boolean;
   trashed: boolean;
   spam: boolean;
+  sent: boolean;
   timestamp: number;
   reason: string;
   priority: PriorityKey | undefined;
@@ -119,6 +131,7 @@ function stateFromRow(row: EmailRow): LabelState {
     archived: row.archived,
     trashed: row.trashed,
     spam: row.spam,
+    sent: row.sent,
     deleted: false,
   };
 }
@@ -141,11 +154,12 @@ function applyAction(state: LabelState, action: MessageAction): LabelState {
 function inFolder(state: LabelState, folder: Folder): boolean {
   if (state.deleted) return false;
   switch (folder) {
-    case "inbox": return !state.archived && !state.trashed && !state.spam;
+    case "inbox": return !state.archived && !state.trashed && !state.spam && !state.sent;
     case "starred": return state.starred && !state.trashed && !state.spam;
     case "archived": return state.archived && !state.trashed && !state.spam;
     case "spam": return state.spam && !state.trashed;
     case "trash": return state.trashed;
+    case "sent": return state.sent && !state.trashed;
   }
 }
 
@@ -164,6 +178,7 @@ const LEAVES_FOLDER: Record<Folder, MessageAction[]> = {
   archived: ["unarchive", "trash", "deleteForever"],
   spam: ["notSpam", "trash", "deleteForever"],
   trash: ["untrash", "deleteForever"],
+  sent: ["trash", "deleteForever"],
 };
 
 // E always means "move it where it belongs" for the folder being viewed.
@@ -173,6 +188,8 @@ const E_ACTION: Record<Folder, MessageAction> = {
   archived: "unarchive",
   spam: "notSpam",
   trash: "untrash",
+  // Sent mail has no INBOX label, so archive is a harmless no-op (as in Gmail).
+  sent: "archive",
 };
 
 const EMPTY_COPY: Record<Folder, string> = {
@@ -181,6 +198,7 @@ const EMPTY_COPY: Record<Folder, string> = {
   archived: "Nothing archived yet. Press E on a message to archive it.",
   spam: "No spam. Long may it last.",
   trash: "Trash is empty.",
+  sent: "No sent mail yet.",
 };
 
 // The Priority view groups the inbox by LLM verdict, most pressing first.
@@ -215,8 +233,6 @@ export function GmailPanel({
   const [activeSearch, setActiveSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canSyncMore, setCanSyncMore] = useState(true);
-  // Tearable triage: the open mail is a physics cloth you tear to trash.
-  const [tearMode, setTearMode] = useState(false);
 
   // Multiselect + destructive-action confirmation.
   const [bulkIds, setBulkIds] = useState<Set<string>>(new Set());
@@ -290,20 +306,47 @@ export function GmailPanel({
     setLimit(MAIL_PAGE);
   }, [folder, activeSearch]);
 
+  // Browsing a folder uses searchEmails with an empty query; a real search
+  // query routes to semantic (vector) search instead of substring matching.
+  const searching = inMessages && !isPriority && activeSearch.trim().length > 0;
   const inbox = api.gmail.searchEmails.useQuery(
-    { query: activeSearch, folder, limit },
+    { query: "", folder, limit },
     {
       enabled: inMessages && !isPriority,
       placeholderData: keepPreviousData,
       // Reads hit the local cache, so polling is cheap — folders stay live
       // without a manual refresh. Pause while a label mutation is in flight
       // so a refetch can never land between the optimistic update and its
-      // confirmation.
+      // confirmation. Focus freshness rides on syncNew (it invalidates this
+      // query when it finds mail), so a separate focus refetch only double-fetches.
       staleTime: 10_000,
       refetchInterval: () => (inFlight.current > 0 ? false : 45_000),
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: false,
     },
   );
+
+  // Semantic search: a query embeds + cosine-KNNs the mailbox (sub-second,
+  // local). keepPreviousData so results don't blank while the next query runs.
+  const semantic = api.gmail.semanticSearch.useQuery(
+    { query: activeSearch, limit: 50 },
+    { enabled: searching, placeholderData: keepPreviousData, staleTime: 30_000 },
+  );
+
+  // Keep the semantic index warm in the background — embeds only new/changed
+  // mail (hash-deduped server-side), so it's cheap to run on a timer.
+  const reindex = api.gmail.reindexSearch.useMutation();
+  const reindexRef = useRef<() => void>(() => undefined);
+  reindexRef.current = () => {
+    if (!reindex.isPending) reindex.mutate();
+  };
+  useEffect(() => {
+    const first = window.setTimeout(() => reindexRef.current(), 4_000);
+    const id = window.setInterval(() => reindexRef.current(), 120_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(id);
+    };
+  }, []);
 
   // LLM triage verdicts: drive the Priority view, and badge the inbox.
   const overview = api.triage.overview.useQuery(undefined, {
@@ -329,7 +372,23 @@ export function GmailPanel({
   // here, surface rows that just moved in, and overlay unread/star flips. In
   // the Priority view the source is the triage groups, most urgent first.
   const items = inbox.data?.items;
+  const searchItems = semantic.data?.items;
   const emails = useMemo(() => {
+    // A search query → semantic results, ranked by relevance and cross-folder.
+    // Overlay local unread/star edits but keep similarity order (no folder drop).
+    if (searching) {
+      return (searchItems ?? []).map((item) => {
+        const base: EmailRow = {
+          ...item,
+          reason: "",
+          priority: priorityById.get(item.id),
+        };
+        const edit = localEdits.get(item.id);
+        return edit
+          ? { ...base, unread: edit.state.unread, starred: edit.state.starred }
+          : base;
+      });
+    }
     const source: EmailRow[] = isPriority
       ? PRIORITY_ORDER.flatMap((priority) =>
           (overviewGroups?.[priority] ?? []).map((item) => ({
@@ -376,11 +435,25 @@ export function GmailPanel({
     }
 
     // The server list is already date-sorted; the priority view keeps its
-    // verdict-group order instead.
+    // verdict-group order instead. Tiebreak equal timestamps on id so locally
+    // surfaced rows slot in deterministically (no reshuffle between renders).
     return isPriority
       ? merged
-      : merged.sort((a, b) => b.timestamp - a.timestamp);
-  }, [isPriority, overviewGroups, items, priorityById, localEdits, folder]);
+      : merged.sort(
+          (a, b) =>
+            b.timestamp - a.timestamp ||
+            (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+        );
+  }, [
+    searching,
+    searchItems,
+    isPriority,
+    overviewGroups,
+    items,
+    priorityById,
+    localEdits,
+    folder,
+  ]);
 
   // Debounced read target: the highlight moves instantly; the (slow, live)
   // message fetch fires only once the selection settles.
@@ -512,9 +585,13 @@ export function GmailPanel({
     },
   });
 
-  // Top-up poll: pull newly arrived Gmail ids every minute (and on focus)
-  // so new mail lands without touching the refresh button. Webhooks take
-  // over once the app has a public URL.
+  // Top-up poll: pull newly arrived Gmail ids so new mail lands on its own.
+  // Polls every few seconds while the tab is visible (and instantly the moment
+  // it regains focus / becomes visible), so mail shows within seconds without a
+  // manual refresh. Stands down entirely when the tab is hidden — the ref guard
+  // makes those ticks no-ops. Gmail push (watch → webhook → SSE) would make this
+  // truly instant once the app is deployed behind a public URL.
+  const NEW_MAIL_POLL_MS = 10_000;
   const syncNew = api.gmail.syncNew.useMutation({
     onSuccess: async (result) => {
       if (result.found > 0) await refreshMailViews();
@@ -527,13 +604,16 @@ export function GmailPanel({
   };
   useEffect(() => {
     const tick = () => syncNewRef.current();
-    const first = window.setTimeout(tick, 2_500);
-    const id = window.setInterval(tick, 30_000);
+    const first = window.setTimeout(tick, 2_000);
+    const id = window.setInterval(tick, NEW_MAIL_POLL_MS);
+    // Both fire when returning to the tab — an immediate catch-up sync.
     window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(id);
       window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
     };
   }, []);
 
@@ -732,12 +812,6 @@ export function GmailPanel({
     if (!selectedId) return;
     performAction([selectedId], selectedMeta?.starred ? "unstar" : "star");
   }
-  // Tearing IS the confirmation, so trash straight away (with the usual undo)
-  // and the optimistic move advances the selection to the next message.
-  function tearToTrash() {
-    if (!selectedId) return;
-    performAction([selectedId], folder === "trash" ? "deleteForever" : "trash");
-  }
   function toggleUnread() {
     if (!selectedId) return;
     performAction([selectedId], selectedMeta?.unread ? "read" : "unread");
@@ -933,8 +1007,10 @@ export function GmailPanel({
         setLimit((l) => Math.min(l + MAIL_PAGE, MAIL_WINDOW));
       }
     } else if (
-      // Whole window shown: deep-sync Gmail for older mail (inbox only).
-      folder === "inbox" &&
+      // Whole window shown: deep-sync Gmail for older mail. syncMore pages the
+      // general message stream, which backfills inbox, archive and starred
+      // alike. (Spam/Trash sync on open; search has no deep-sync path.)
+      (folder === "inbox" || folder === "archived" || folder === "starred") &&
       !activeSearch.trim() &&
       canSyncMore &&
       !syncMore.isPending
@@ -1083,7 +1159,7 @@ export function GmailPanel({
     searchRef.current?.select();
   });
   useAction("refresh", () => {
-    if (folder === "spam" || folder === "trash") {
+    if (folder === "spam" || folder === "trash" || folder === "sent") {
       if (!syncFolder.isPending) syncFolder.mutate({ folder });
     } else if (!refreshInbox.isPending) {
       refreshInbox.mutate();
@@ -1111,25 +1187,42 @@ export function GmailPanel({
     }
   }, [isPriority, overview.isLoading, pendingTriage, triageRun]);
 
-  // Warm the inbox once when it loads empty (first connect / cold cache).
-  // Suppressed while the first-sync veil owns the initial refresh.
-  const didAutoSync = useRef(false);
+  // Full sync cadence: once per page visit, then every 24 hours while the page
+  // stays open. First connect is handled by the sync veil, so this stands down
+  // during firstRun (autoSync is false then). The module-level `visitSynced`
+  // flag means a mere view-switch remount doesn't re-sync — only a real page
+  // load resets it. Between full syncs, syncNew's lightweight poll keeps new
+  // mail flowing in.
+  const fullSyncRef = useRef<() => void>(() => undefined);
+  fullSyncRef.current = () => {
+    if (autoSync && !refreshInbox.isPending) refreshInbox.mutate();
+  };
   useEffect(() => {
-    if (!autoSync || didAutoSync.current) return;
-    if (view !== "inbox" || inbox.isLoading) return;
-    if (emails.length > 0 || activeSearch.trim()) return;
-    didAutoSync.current = true;
-    refreshInbox.mutate();
-  }, [autoSync, emails.length, inbox.isLoading, view, activeSearch, refreshInbox]);
+    if (!autoSync) return;
+    if (!visitSynced) {
+      visitSynced = true;
+      fullSyncRef.current();
+    }
+    const id = window.setInterval(
+      () => fullSyncRef.current(),
+      24 * 60 * 60 * 1000,
+    );
+    return () => window.clearInterval(id);
+  }, [autoSync]);
 
-  // Spam and trash sync on first open when empty.
+  // Spam, trash and sent sync on first open when empty.
   const syncedFolders = useRef(new Set<string>());
   useEffect(() => {
-    if (folder !== "spam" && folder !== "trash") return;
+    if (folder !== "spam" && folder !== "trash" && folder !== "sent") return;
     if (inbox.isLoading || emails.length > 0) return;
     if (syncedFolders.current.has(folder)) return;
-    syncedFolders.current.add(folder);
-    syncFolder.mutate({ folder });
+    const target = folder;
+    syncedFolders.current.add(target);
+    // Drop the guard on failure so the folder re-syncs on its next open.
+    syncFolder.mutate(
+      { folder: target },
+      { onError: () => syncedFolders.current.delete(target) },
+    );
   }, [folder, inbox.isLoading, emails.length, syncFolder]);
 
   // Infinite scroll: reveal more of the stable list as the sentinel nears,
@@ -1160,7 +1253,9 @@ export function GmailPanel({
     createDraft.isPending ||
     updateDraft.isPending ||
     sendDraft.isPending;
-  const listBusy = inbox.isLoading || (syncFolder.isPending && emails.length === 0);
+  const listBusy = searching
+    ? semantic.isLoading
+    : inbox.isLoading || (syncFolder.isPending && emails.length === 0);
   const bulkList = [...bulkIds];
 
   // One row, shared by the folder lists and the grouped Priority view. In
@@ -1205,7 +1300,11 @@ export function GmailPanel({
         <span className="row-inner">
           <span className="row-top">
             {email.unread && <span className="row-dot" />}
-            <span className="row-from">{senderLabel(email.from)}</span>
+            <span className="row-from">
+              {folder === "sent"
+                ? senderLabel(email.to)
+                : senderLabel(email.from)}
+            </span>
             {chip && (
               <span className="row-pri" data-pri={email.priority}>
                 {chip}
@@ -1372,7 +1471,7 @@ export function GmailPanel({
               aria-label="Refresh from Gmail"
               data-spinning={refreshInbox.isPending || syncFolder.isPending}
               onClick={() =>
-                folder === "spam" || folder === "trash"
+                folder === "spam" || folder === "trash" || folder === "sent"
                   ? syncFolder.mutate({ folder })
                   : refreshInbox.mutate()
               }
@@ -1384,7 +1483,19 @@ export function GmailPanel({
         )}
 
         <div className="mail-rows" data-bulk={bulkIds.size > 0}>
-          {inMessages && !isPriority && listBusy && <MailRowsSkeleton />}
+          {inMessages && !isPriority && listBusy && (
+            <SyncingState label="Syncing…" />
+          )}
+          {inMessages &&
+            !isPriority &&
+            !listBusy &&
+            !inbox.error &&
+            refreshInbox.isPending &&
+            emails.length > 0 && (
+              <div className="syncing-bar tnum" role="status">
+                Syncing…
+              </div>
+            )}
           {inMessages && !isPriority && inbox.error && (
             <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
               {inbox.error.message}
@@ -1395,7 +1506,11 @@ export function GmailPanel({
             !listBusy &&
             !inbox.error &&
             (emails.length === 0 ? (
-              refreshInbox.isPending ? (
+              searching ? (
+                <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
+                  No matches for “{activeSearch.trim()}”.
+                </p>
+              ) : refreshInbox.isPending ? (
                 <MailRowsSkeleton />
               ) : (
                 <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
@@ -1415,37 +1530,42 @@ export function GmailPanel({
 
           {isPriority && (
             <>
-              {(triageRun.isPending || refreshInbox.isPending) && (
-                <p className="pri-banner tnum" role="status">
-                  {refreshInbox.isPending
-                    ? "Refreshing from Gmail…"
-                    : `Classifying ${pendingTriage > 0 ? pendingTriage : "new"} messages…`}
-                </p>
-              )}
-              {overview.isLoading && <MailRowsSkeleton />}
-              {overview.error && (
+              {/* Slim banner only when rows already show beneath it. */}
+              {(triageRun.isPending || refreshInbox.isPending) &&
+                emails.length > 0 && (
+                  <p className="pri-banner tnum" role="status">
+                    {refreshInbox.isPending
+                      ? "Refreshing from Gmail…"
+                      : `Classifying ${pendingTriage > 0 ? pendingTriage : "new"} messages…`}
+                  </p>
+                )}
+              {overview.error ? (
                 <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
                   {overview.error.message}
                 </p>
-              )}
-              {triageRun.error && (
+              ) : triageRun.error ? (
                 <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
                   {triageRun.error.message}
                 </p>
-              )}
-              {!overview.isLoading &&
-                !overview.error &&
-                (emails.length === 0 ? (
-                  triageRun.isPending ? (
-                    <MailRowsSkeleton />
-                  ) : (
-                    <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-                      Nothing to triage. Inbox mail is classified automatically
-                      when you open Priority.
-                    </p>
-                  )
-                ) : (
-                  (() => {
+              ) : overview.isLoading ||
+                (emails.length === 0 &&
+                  (triageRun.isPending || refreshInbox.isPending)) ? (
+                <SyncingState
+                  label={
+                    refreshInbox.isPending
+                      ? "Syncing…"
+                      : overview.isLoading
+                        ? "Syncing…"
+                        : `Classifying ${pendingTriage > 0 ? pendingTriage : "new"} messages…`
+                  }
+                />
+              ) : emails.length === 0 ? (
+                <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
+                  Nothing to triage. Inbox mail is classified automatically when
+                  you open Priority.
+                </p>
+              ) : (
+                (() => {
                     let index = -1;
                     return PRIORITY_ORDER.map((priority) => {
                       const group = emails.filter(
@@ -1468,7 +1588,7 @@ export function GmailPanel({
                       );
                     });
                   })()
-                ))}
+                )}
             </>
           )}
 
@@ -1562,54 +1682,9 @@ export function GmailPanel({
               Try again
             </button>
           </div>
-        ) : selectedEmail.data && tearMode ? (
-          <div className="tear-pane">
-            <div className="tear-bar">
-              <span className="tear-chip tnum">
-                <ScissorsIcon size={12} />
-                Tearable mode · drag to tear, tear to trash
-              </span>
-              <button
-                type="button"
-                className="icon-btn"
-                data-on="true"
-                data-tip="Exit tearable mode"
-                data-tip-pos="down"
-                aria-label="Exit tearable mode"
-                onClick={() => setTearMode(false)}
-              >
-                <ScissorsIcon size={15} />
-              </button>
-            </div>
-            <TearableReader
-              key={selectedEmail.data.id}
-              email={selectedEmail.data}
-              starred={Boolean(selectedMeta?.starred)}
-              onTear={tearToTrash}
-              onReply={() => startReply(false)}
-              onArchive={() =>
-                selectedId && performAction([selectedId], "archive")
-              }
-              onStar={(next) =>
-                selectedId &&
-                performAction([selectedId], next ? "star" : "unstar")
-              }
-            />
-          </div>
         ) : selectedEmail.data ? (
           <article>
             <div className="read-actions">
-              <button
-                type="button"
-                className="icon-btn"
-                data-tip="Tearable mode"
-                data-tip-pos="down"
-                aria-label="Tearable mode"
-                onClick={() => setTearMode(true)}
-              >
-                <ScissorsIcon size={16} />
-              </button>
-              <span className="read-actions-divider" />
               {(folder === "inbox" || folder === "starred") && (
                 <button
                   type="button"
