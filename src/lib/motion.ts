@@ -25,10 +25,12 @@ export const listRow: Variants = {
   }),
 };
 
+// Centered modal: x/y carry the -50% centering offset (the element is pinned
+// to the viewport centre via left/top: 50%), so motion owns the full transform.
 export const slideOver: Variants = {
-  initial: { opacity: 0, y: 18, scale: 0.985 },
-  animate: { opacity: 1, y: 0, scale: 1, transition: snap },
-  exit: { opacity: 0, y: 18, scale: 0.985, transition: snapFast },
+  initial: { opacity: 0, x: "-50%", y: "-46%", scale: 0.98 },
+  animate: { opacity: 1, x: "-50%", y: "-50%", scale: 1, transition: snap },
+  exit: { opacity: 0, x: "-50%", y: "-46%", scale: 0.98, transition: snapFast },
 };
 
 export const scrim: Variants = {
