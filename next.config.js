@@ -20,6 +20,9 @@ const securityHeaders = [
 
 /** @type {import("next").NextConfig} */
 const config = {
+  // Lets a production build target a separate output dir (NEXT_DIST_DIR) so it
+  // never clobbers the turbopack dev cache in .next.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

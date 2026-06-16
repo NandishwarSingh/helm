@@ -798,7 +798,6 @@ export function GmailPanel({
     });
     onComposeOpenChange(true);
   }
-  const replyToSelection = () => startReply(false);
 
   function forwardSelection() {
     const message = selectedEmail.data;

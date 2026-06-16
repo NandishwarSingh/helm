@@ -47,8 +47,7 @@ function loadVeilElement(): Promise<void> {
 
 export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const elRef = useRef<(HTMLElement & { reveal?: () => void }) | null>(null);
-  const enterBtnRef = useRef<HTMLButtonElement | null>(null);
+  const elRef = useRef<HTMLElement | null>(null);
   const [phase, setPhase] = useState<Phase>("syncing");
   const entered = useRef(false);
 
@@ -92,7 +91,6 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
   useEffect(() => {
     const fallback = window.setTimeout(arm, SYNC_FALLBACK_MS);
     return () => window.clearTimeout(fallback);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Mount and configure the cloth element imperatively (React never owns the
@@ -122,21 +120,6 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
           window.setTimeout(enter, FALL_MS);
         });
         el.addEventListener("veil-error", enter);
-
-        // A real way in for people who'd rather not tear: a button that rides
-        // the cloth (the engine warps slot="veil-ui" children with the fabric)
-        // and drops the veil on click. Hidden until the cloth is armed. It must
-        // be a child before the element mounts so the engine adopts it.
-        const enterBtn = document.createElement("button");
-        enterBtn.type = "button";
-        enterBtn.setAttribute("slot", "veil-ui");
-        enterBtn.className = "veil-enter";
-        enterBtn.textContent = "Enter Helm";
-        enterBtn.style.display = "none";
-        enterBtn.addEventListener("click", () => elRef.current?.reveal?.());
-        el.appendChild(enterBtn);
-        enterBtnRef.current = enterBtn;
-
         hostRef.current.appendChild(el);
         elRef.current = el;
       })
@@ -154,15 +137,13 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Arm the cloth: unlock tearing, hand the cursor to the grabbing hand, and
-  // reveal the "Enter Helm" button.
+  // Arm the cloth: unlock tearing and hand the cursor to the grabbing hand.
   useEffect(() => {
     const el = elRef.current;
     if (!el || phase !== "armed") return;
     el.setAttribute("interaction", "both");
     el.setAttribute("tearable", "true");
     el.style.setProperty("--veil-cursor", "none");
-    if (enterBtnRef.current) enterBtnRef.current.style.display = "";
   }, [phase]);
 
   return (

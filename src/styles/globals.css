@@ -2587,31 +2587,8 @@
      only the hand shows. !important beats SDL's inline canvas cursor. */
   .veil-root[data-phase="armed"],
   .veil-root[data-phase="armed"] .veil-host,
-  .veil-root[data-phase="armed"] canvas,
-  .veil-root[data-phase="armed"] .veil-enter {
+  .veil-root[data-phase="armed"] canvas {
     cursor: none !important;
-  }
-  /* The "Enter Helm" button rides the cloth and offers a non-tear way in. */
-  .veil-enter {
-    position: absolute;
-    left: 50%;
-    top: 61%;
-    transform: translateX(-50%);
-    padding: 0.5rem 1.1rem;
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: var(--color-on-accent);
-    background: var(--color-accent);
-    border: none;
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-pop);
-    white-space: nowrap;
-  }
-  .veil-enter::after {
-    content: " →";
-  }
-  .veil-enter:hover {
-    background: var(--color-accent-strong);
   }
   .veil-root[data-phase="revealed"] .veil-chrome {
     opacity: 0;
