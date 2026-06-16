@@ -31,7 +31,7 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
 import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
-import { chordBar, chordInner, viewSwap } from "@/lib/motion";
+import { chordBar, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar";
@@ -348,10 +348,9 @@ export function AppShell() {
             initial="initial"
             animate="animate"
             exit="exit"
-            style={{ transformOrigin: "50% 100%" }}
             role="status"
           >
-            <motion.span className="chord-inner" variants={chordInner}>
+            <span className="chord-inner">
               <Kbd>G</Kbd>
               <span className="chord-then">then</span>
               <span><Kbd>I</Kbd> inbox</span>
@@ -361,7 +360,7 @@ export function AppShell() {
               <span><Kbd>T</Kbd> trash</span>
               <span><Kbd>D</Kbd> drafts</span>
               <span><Kbd>C</Kbd> calendar</span>
-            </motion.span>
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
