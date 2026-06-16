@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
+import { purgeCachedEntity } from "@/server/lib/cache";
 import {
   isNotConnectedError,
   listOrEmpty,
@@ -43,8 +44,10 @@ function mapMessage(message: {
     body?: string;
     internalDate?: string;
     createdAt?: Date | null;
+    labelIds?: string[];
   };
 }) {
+  const labels = message.data.labelIds ?? [];
   return {
     id: message.entity_id,
     threadId: message.data.threadId ?? "",
@@ -53,6 +56,10 @@ function mapMessage(message: {
     from: message.data.from ?? "",
     to: message.data.to ?? "",
     date: message.data.internalDate ?? null,
+    unread: labels.includes("UNREAD"),
+    starred: labels.includes("STARRED"),
+    archived: labels.length > 0 && !labels.includes("INBOX"),
+    trashed: labels.includes("TRASH"),
     timestamp: messageTimestamp(
       message.data.internalDate,
       message.data.createdAt,
@@ -140,9 +147,12 @@ export const gmailRouter = createTRPCRouter({
             });
       });
 
+      // The inbox shows inbox mail only — archived and trashed messages
+      // remain cached (Corsair updates labels from modify responses) but
+      // are filtered out of the list.
       const items = sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
-      );
+      ).filter((message) => !message.archived && !message.trashed);
       // A full page implies there may be more cached rows to page through.
       const nextCursor =
         messages.length === input.limit ? input.cursor + input.limit : null;
@@ -251,6 +261,94 @@ export const gmailRouter = createTRPCRouter({
     };
   }),
 
+  // Label actions: archive, trash, star and read-state toggles. The action
+  // names are mapped to Gmail label changes server-side.
+  modifyMessage: publicProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        action: z.enum([
+          "archive",
+          "trash",
+          "star",
+          "unstar",
+          "read",
+          "unread",
+        ]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      if (input.action === "trash") {
+        await withRetry(() => tenant.gmail.api.messages.trash({ id: input.id }));
+        return { ok: true };
+      }
+      const change: Record<
+        typeof input.action,
+        { add?: string[]; remove?: string[] }
+      > = {
+        archive: { remove: ["INBOX"] },
+        star: { add: ["STARRED"] },
+        unstar: { remove: ["STARRED"] },
+        read: { remove: ["UNREAD"] },
+        unread: { add: ["UNREAD"] },
+      };
+      const { add, remove } = change[input.action];
+      await withRetry(() =>
+        tenant.gmail.api.messages.modify({
+          id: input.id,
+          addLabelIds: add,
+          removeLabelIds: remove,
+        }),
+      );
+      return { ok: true };
+    }),
+
+  getDraft: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const tenant = await getTenant();
+      const draft = await withRetry(() =>
+        tenant.gmail.api.drafts.get({ id: input.id, format: "full" }),
+      );
+      const headers = draft.message?.payload?.headers;
+      return {
+        id: draft.id ?? input.id,
+        to: getHeader(headers, "To"),
+        subject: getHeader(headers, "Subject"),
+        body: extractBodyFromPayload(draft.message?.payload),
+      };
+    }),
+
+  updateDraft: publicProcedure
+    .input(
+      z.object({
+        draftId: z.string().min(1),
+        to: z.string().email(),
+        subject: z.string().min(1),
+        body: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      const raw = encodeRawEmail(input);
+      const draft = await tenant.gmail.api.drafts.update({
+        id: input.draftId,
+        draft: { message: { raw } },
+      });
+      return { id: draft.id ?? input.draftId };
+    }),
+
+  deleteDraft: publicProcedure
+    .input(z.object({ draftId: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      await tenant.gmail.api.drafts.delete({ id: input.draftId });
+      const tenantId = await getTenantId();
+      if (tenantId) await purgeCachedEntity(tenantId, input.draftId);
+      return { ok: true };
+    }),
+
   createDraft: publicProcedure
     .input(
       z.object({
@@ -276,6 +374,9 @@ export const gmailRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
       const message = await tenant.gmail.api.drafts.send({ id: input.draftId });
+      // Gmail deletes the draft on send; mirror that in the cache.
+      const tenantId = await getTenantId();
+      if (tenantId) await purgeCachedEntity(tenantId, input.draftId);
       return {
         id: message.id ?? "",
         threadId: message.threadId ?? "",

@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
+import type { EventSeed } from "@/app/_components/gmail-panel";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
   MapPinIcon,
+  PlusIcon,
   RefreshIcon,
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
@@ -17,6 +19,7 @@ import {
   formatAttendees,
   formatEventWhen,
   LinkifiedText,
+  parseEmailAddress,
 } from "@/lib/display";
 import { listRow, scrim, slideOver } from "@/lib/motion";
 import { formatWeekLabel, getWeekBounds } from "@/lib/week";
@@ -25,6 +28,19 @@ import { api } from "@/trpc/react";
 type Props = {
   createOpen: boolean;
   onCreateOpenChange: (open: boolean) => void;
+  seed: EventSeed | null;
+  onSeedConsumed: () => void;
+};
+
+type EventItem = {
+  id: string;
+  summary: string;
+  description: string;
+  location: string;
+  start: string;
+  end: string;
+  attendees: string[];
+  htmlLink: string;
 };
 
 function toDatetimeLocalValue(date: Date) {
@@ -32,17 +48,27 @@ function toDatetimeLocalValue(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function dayLabel(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  });
+function dayKey(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
+/** Next round hour (defaults for the create dialog). */
+function nextHour() {
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() + 1);
+  const end = new Date(start);
+  end.setHours(end.getHours() + 1);
+  return { start, end };
+}
+
+export function CalendarPanel({
+  createOpen,
+  onCreateOpenChange,
+  seed,
+  onSeedConsumed,
+}: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -51,17 +77,18 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
   const week = useMemo(() => getWeekBounds(weekOffset), [weekOffset]);
   const weekLabel = formatWeekLabel(week.start, week.end);
 
-  const defaultStart = new Date();
-  defaultStart.setMinutes(0, 0, 0);
-  const defaultEnd = new Date(defaultStart);
-  defaultEnd.setHours(defaultEnd.getHours() + 1);
-
+  // Dialog state: create or edit one event.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
-  const [start, setStart] = useState(toDatetimeLocalValue(defaultStart));
-  const [end, setEnd] = useState(toDatetimeLocalValue(defaultEnd));
+  const defaults = nextHour();
+  const [start, setStart] = useState(toDatetimeLocalValue(defaults.start));
+  const [end, setEnd] = useState(toDatetimeLocalValue(defaults.end));
   const [attendees, setAttendees] = useState("");
+
+  const dialogOpen = createOpen || editingId !== null;
 
   const utils = api.useUtils();
 
@@ -79,28 +106,80 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
     },
   });
 
-  function resetForm() {
+  function closeDialog() {
     setSummary("");
     setDescription("");
     setLocation("");
     setAttendees("");
+    setEditingId(null);
+    setConfirmingDelete(false);
+    onCreateOpenChange(false);
   }
 
   const createDraft = api.calendar.createDraft.useMutation({
     onSuccess: async () => {
       await utils.calendar.searchEvents.invalidate();
-      resetForm();
-      onCreateOpenChange(false);
+      closeDialog();
     },
   });
 
   const sendInvite = api.calendar.sendInvite.useMutation({
     onSuccess: async () => {
       await utils.calendar.searchEvents.invalidate();
-      resetForm();
-      onCreateOpenChange(false);
+      closeDialog();
     },
   });
+
+  const updateEvent = api.calendar.updateEvent.useMutation({
+    onSuccess: async () => {
+      await utils.calendar.searchEvents.invalidate();
+      closeDialog();
+    },
+  });
+
+  const deleteEvent = api.calendar.deleteEvent.useMutation({
+    onSuccess: async () => {
+      await utils.calendar.searchEvents.invalidate();
+      closeDialog();
+    },
+  });
+
+  // Consume an email-to-calendar seed when the dialog opens for it.
+  useEffect(() => {
+    if (!createOpen || !seed) return;
+    setSummary(seed.summary);
+    setAttendees(seed.attendee);
+    setDescription(seed.description);
+    onSeedConsumed();
+  }, [createOpen, seed, onSeedConsumed]);
+
+  // Edit: prefill the dialog from an existing event.
+  function openEdit(event: EventItem) {
+    setEditingId(event.id);
+    setConfirmingDelete(false);
+    setSummary(event.summary);
+    setDescription(event.description);
+    setLocation(event.location);
+    if (event.start) setStart(toDatetimeLocalValue(new Date(event.start)));
+    if (event.end) setEnd(toDatetimeLocalValue(new Date(event.end)));
+    setAttendees(
+      event.attendees
+        .map((a) => parseEmailAddress(a).email)
+        .filter(Boolean)
+        .join(", "),
+    );
+  }
+
+  // Quick add: a specific day at 09:00.
+  function openCreateForDay(day: Date) {
+    const startAt = new Date(day);
+    startAt.setHours(9, 0, 0, 0);
+    const endAt = new Date(startAt);
+    endAt.setHours(10);
+    setStart(toDatetimeLocalValue(startAt));
+    setEnd(toDatetimeLocalValue(endAt));
+    onCreateOpenChange(true);
+  }
 
   // Warm each week once when it loads with no cached events.
   const syncedWeeks = useRef(new Set<string>());
@@ -112,15 +191,16 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
     refreshEvents.mutate({ weekStart: key, weekEnd: week.end.toISOString() });
   }, [events.data, events.isLoading, week.start, week.end, refreshEvents]);
 
-  // Close the create panel on Escape.
+  // Close the dialog on Escape.
   useEffect(() => {
-    if (!createOpen) return;
+    if (!dialogOpen) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCreateOpenChange(false);
+      if (e.key === "Escape") closeDialog();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [createOpen, onCreateOpenChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen]);
 
   // Calendar keyboard layer: week navigation and today.
   useEffect(() => {
@@ -186,20 +266,57 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
     attendees: parseAttendees(),
   };
 
-  const grouped = useMemo(() => {
-    const list = events.data ?? [];
-    const groups = new Map<string, typeof list>();
-    for (const event of list) {
-      const label = dayLabel(event.start) || "Scheduled";
-      const existing = groups.get(label) ?? [];
-      existing.push(event);
-      groups.set(label, existing);
+  function submitPrimary() {
+    if (!canSubmit) return;
+    if (editingId) {
+      updateEvent.mutate({
+        id: editingId,
+        ...eventInput,
+        attendees: parseAttendees(),
+        notify: parseAttendees().length > 0,
+      });
+    } else if (parseAttendees().length > 0) {
+      sendInvite.mutate(eventInput);
+    } else {
+      createDraft.mutate(eventInput);
     }
-    return Array.from(groups.entries());
-  }, [events.data]);
+  }
 
-  const createError = createDraft.error ?? sendInvite.error;
-  const canCreate = Boolean(summary && start && end);
+  // The week, day by day, with that day's events attached.
+  const days = useMemo(() => {
+    const byDay = new Map<string, EventItem[]>();
+    for (const event of events.data ?? []) {
+      if (!event.start) continue;
+      const key = dayKey(new Date(event.start));
+      const list = byDay.get(key) ?? [];
+      list.push(event);
+      byDay.set(key, list);
+    }
+    const today = dayKey(new Date());
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(week.start);
+      date.setDate(date.getDate() + i);
+      const key = dayKey(date);
+      return {
+        date,
+        key,
+        isToday: key === today,
+        events: byDay.get(key) ?? [],
+      };
+    });
+  }, [events.data, week.start]);
+
+  const dialogError =
+    createDraft.error ??
+    sendInvite.error ??
+    updateEvent.error ??
+    deleteEvent.error;
+  const dialogBusy =
+    createDraft.isPending ||
+    sendInvite.isPending ||
+    updateEvent.isPending ||
+    deleteEvent.isPending;
+  const canSubmit = Boolean(summary && start && end);
 
   return (
     <div className="cal">
@@ -222,12 +339,9 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
           <ChevronRightIcon size={16} />
         </button>
         {weekOffset !== 0 && (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setWeekOffset(0)}
-          >
+          <button type="button" className="btn" onClick={() => setWeekOffset(0)}>
             Today
+            <Kbd>T</Kbd>
           </button>
         )}
         <span className="topbar-spacer" />
@@ -246,6 +360,27 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
         >
           <RefreshIcon size={15} />
         </button>
+      </div>
+
+      <div className="cal-strip">
+        {days.map((day) => (
+          <button
+            key={day.key}
+            type="button"
+            className="cal-strip-day"
+            data-today={day.isToday}
+            title="Add an event on this day"
+            onClick={() => openCreateForDay(day.date)}
+          >
+            <span className="cal-strip-name">
+              {day.date.toLocaleDateString("en-US", { weekday: "short" })}
+            </span>
+            <span className="cal-strip-num tnum">{day.date.getDate()}</span>
+            <span className="cal-strip-count">
+              {day.events.length > 0 ? day.events.length : ""}
+            </span>
+          </button>
+        ))}
       </div>
 
       <form
@@ -275,63 +410,70 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
           </div>
         )}
         {events.error && <p className="error">{events.error.message}</p>}
-        {events.data?.length === 0 && (
-          <div className="empty">
-            <p>No events this week.</p>
-            <p className="tnum">N to schedule one · H / L to change week</p>
-          </div>
-        )}
 
-        {grouped.length > 0 && (
+        {!events.isLoading && !events.error && (
           <div className="cal-list">
-            {grouped.map(([label, dayEvents]) => (
-              <section className="cal-day" key={label}>
-                <h2 className="cal-day-label">{label}</h2>
-                {(dayEvents ?? []).map((event, i) => (
-              <motion.article
-                className="event-row"
-                key={event.id}
-                variants={listRow}
-                initial="initial"
-                animate="animate"
-                custom={i}
-              >
-                <div className="event-when tnum">
-                  {formatEventWhen(event.start, event.end)}
+            {days.map((day) => (
+              <section className="cal-day" key={day.key}>
+                <div className="cal-day-head">
+                  <h2 className="cal-day-label" data-today={day.isToday}>
+                    {day.date.toLocaleDateString("en-US", {
+                      weekday: "long",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                    {day.isToday && <span className="cal-today-chip">Today</span>}
+                  </h2>
+                  <button
+                    type="button"
+                    className="icon-btn cal-day-add"
+                    title="Add an event on this day"
+                    onClick={() => openCreateForDay(day.date)}
+                  >
+                    <PlusIcon size={14} />
+                  </button>
                 </div>
-                <div className="event-main">
-                  <div className="event-title">
-                    {event.htmlLink ? (
-                      <a
-                        href={event.htmlLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {event.summary || "Untitled event"}
-                      </a>
-                    ) : (
-                      (event.summary ?? "Untitled event")
-                    )}
-                  </div>
-                  {event.location && (
-                    <div className="event-meta">
-                      <MapPinIcon size={13} />
-                      {event.location}
-                    </div>
-                  )}
-                  {event.attendees.length > 0 && (
-                    <div className="event-meta">
-                      {formatAttendees(event.attendees)}
-                    </div>
-                  )}
-                  {event.description && (
-                    <div className="event-desc">
-                      <LinkifiedText text={event.description} />
-                    </div>
-                  )}
-                </div>
-              </motion.article>
-            ))}
+                {day.events.length === 0 ? (
+                  <p className="cal-day-empty">No events</p>
+                ) : (
+                  day.events.map((event, i) => (
+                    <motion.article
+                      className="event-row"
+                      key={event.id}
+                      variants={listRow}
+                      initial="initial"
+                      animate="animate"
+                      custom={i}
+                      onClick={() => openEdit(event)}
+                      title="Edit event"
+                    >
+                      <div className="event-when tnum">
+                        {formatEventWhen(event.start, event.end)}
+                      </div>
+                      <div className="event-main">
+                        <div className="event-title">
+                          {event.summary || "Untitled event"}
+                        </div>
+                        {event.location && (
+                          <div className="event-meta">
+                            <MapPinIcon size={13} />
+                            {event.location}
+                          </div>
+                        )}
+                        {event.attendees.length > 0 && (
+                          <div className="event-meta">
+                            {formatAttendees(event.attendees)}
+                          </div>
+                        )}
+                        {event.description && (
+                          <div className="event-desc">
+                            <LinkifiedText text={event.description} />
+                          </div>
+                        )}
+                      </div>
+                    </motion.article>
+                  ))
+                )}
               </section>
             ))}
           </div>
@@ -339,7 +481,7 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
       </div>
 
       <AnimatePresence>
-        {createOpen && (
+        {dialogOpen && (
           <>
             <motion.div
               className="scrim"
@@ -347,7 +489,7 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
               initial="initial"
               animate="animate"
               exit="exit"
-              onClick={() => onCreateOpenChange(false)}
+              onClick={closeDialog}
             />
             <motion.div
               className="compose"
@@ -356,25 +498,21 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
               animate="animate"
               exit="exit"
               role="dialog"
-              aria-label="New event"
+              aria-label={editingId ? "Edit event" : "New event"}
               onKeyDown={(event) => {
                 if (!(event.metaKey || event.ctrlKey)) return;
-                if (event.key !== "Enter" || !canCreate) return;
+                if (event.key !== "Enter" || dialogBusy) return;
                 event.preventDefault();
-                if (parseAttendees().length > 0 && !sendInvite.isPending) {
-                  sendInvite.mutate(eventInput);
-                } else if (!createDraft.isPending) {
-                  createDraft.mutate(eventInput);
-                }
+                submitPrimary();
               }}
             >
               <div className="compose-head">
-                New event
+                {editingId ? "Edit event" : "New event"}
                 <span className="topbar-spacer" />
                 <button
                   type="button"
                   className="icon-btn"
-                  onClick={() => onCreateOpenChange(false)}
+                  onClick={closeDialog}
                   aria-label="Close"
                 >
                   <CloseIcon size={16} />
@@ -429,29 +567,51 @@ export function CalendarPanel({ createOpen, onCreateOpenChange }: Props) {
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Description"
                 />
-                {createError && <p className="error">{createError.message}</p>}
+                {dialogError && <p className="error">{dialogError.message}</p>}
               </div>
               <div className="compose-foot">
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={() => sendInvite.mutate(eventInput)}
-                  disabled={
-                    sendInvite.isPending ||
-                    !canCreate ||
-                    parseAttendees().length === 0
-                  }
+                  onClick={submitPrimary}
+                  disabled={dialogBusy || !canSubmit}
                 >
-                  {sendInvite.isPending ? "Sending…" : "Send invite"}
+                  {dialogBusy
+                    ? "Working…"
+                    : editingId
+                      ? "Save changes"
+                      : parseAttendees().length > 0
+                        ? "Send invite"
+                        : "Create event"}
+                  <Kbd>⌘↵</Kbd>
                 </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => createDraft.mutate(eventInput)}
-                  disabled={createDraft.isPending || !canCreate}
-                >
-                  {createDraft.isPending ? "Saving…" : "Save draft"}
-                </button>
+                {!editingId && parseAttendees().length > 0 && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => createDraft.mutate(eventInput)}
+                    disabled={dialogBusy || !canSubmit}
+                  >
+                    Save without sending
+                  </button>
+                )}
+                {editingId && (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() =>
+                      confirmingDelete
+                        ? deleteEvent.mutate({
+                            id: editingId,
+                            notify: parseAttendees().length > 0,
+                          })
+                        : setConfirmingDelete(true)
+                    }
+                    disabled={dialogBusy}
+                  >
+                    {confirmingDelete ? "Confirm delete" : "Delete"}
+                  </button>
+                )}
               </div>
             </motion.div>
           </>

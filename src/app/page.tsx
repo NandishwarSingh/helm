@@ -5,7 +5,7 @@ import { AnimatePresence, motion, MotionConfig } from "motion/react";
 
 import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { ConnectScreen } from "@/app/_components/connect-screen";
-import { GmailPanel } from "@/app/_components/gmail-panel";
+import { GmailPanel, type EventSeed } from "@/app/_components/gmail-panel";
 import { BrandMark } from "@/components/brand-mark";
 import { CommandPalette } from "@/components/command-palette";
 import { HelmLoader } from "@/components/helm-loader";
@@ -31,6 +31,7 @@ export default function Home() {
   const [view, setView] = useState<View>("mail");
   const [composeOpen, setComposeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [eventSeed, setEventSeed] = useState<EventSeed | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -203,11 +204,18 @@ export default function Home() {
                   <GmailPanel
                     composeOpen={composeOpen}
                     onComposeOpenChange={setComposeOpen}
+                    onAddToCalendar={(seed) => {
+                      setEventSeed(seed);
+                      setView("calendar");
+                      setCreateOpen(true);
+                    }}
                   />
                 ) : (
                   <CalendarPanel
                     createOpen={createOpen}
                     onCreateOpenChange={setCreateOpen}
+                    seed={eventSeed}
+                    onSeedConsumed={() => setEventSeed(null)}
                   />
                 )}
               </motion.div>

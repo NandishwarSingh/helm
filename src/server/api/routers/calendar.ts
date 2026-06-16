@@ -1,6 +1,8 @@
 import { z } from "zod";
 
+import { purgeCachedEntity } from "@/server/lib/cache";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
+import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 
@@ -173,6 +175,57 @@ export const calendarRouter = createTRPCRouter({
         id: event.id ?? "",
         htmlLink: event.htmlLink ?? "",
       };
+    }),
+
+  updateEvent: publicProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        summary: z.string().min(1),
+        description: z.string().optional(),
+        location: z.string().optional(),
+        start: z.string().datetime(),
+        end: z.string().datetime(),
+        attendees: z.array(z.string().email()),
+        // Notify attendees about the change when any are present.
+        notify: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      const event = await tenant.googlecalendar.api.events.update({
+        calendarId: "primary",
+        id: input.id,
+        sendUpdates: input.notify ? "all" : "none",
+        event: {
+          summary: input.summary,
+          description: input.description,
+          location: input.location,
+          start: { dateTime: input.start },
+          end: { dateTime: input.end },
+          attendees: input.attendees.map((email) => ({ email })),
+        },
+      });
+      return { id: event.id ?? input.id, htmlLink: event.htmlLink ?? "" };
+    }),
+
+  deleteEvent: publicProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        notify: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      await tenant.googlecalendar.api.events.delete({
+        calendarId: "primary",
+        id: input.id,
+        sendUpdates: input.notify ? "all" : "none",
+      });
+      const tenantId = await getTenantId();
+      if (tenantId) await purgeCachedEntity(tenantId, input.id);
+      return { ok: true };
     }),
 
   sendInvite: publicProcedure

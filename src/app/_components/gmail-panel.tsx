@@ -4,7 +4,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { EmailBody } from "@/app/_components/email-body";
-import { CloseIcon, RefreshIcon } from "@/components/icons";
+import {
+  ArchiveIcon,
+  CalendarPlusIcon,
+  CloseIcon,
+  ForwardIcon,
+  MailOpenIcon,
+  RefreshIcon,
+  ReplyIcon,
+  StarIcon,
+  TrashIcon,
+} from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
 import { hasOverlay, isTypingTarget, useAction } from "@/lib/actions";
@@ -16,10 +26,26 @@ import {
 import { listRow, scrim, slideOver } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
+export type EventSeed = {
+  summary: string;
+  attendee: string;
+  description: string;
+};
+
 type Props = {
   composeOpen: boolean;
   onComposeOpenChange: (open: boolean) => void;
+  onAddToCalendar: (seed: EventSeed) => void;
 };
+
+type LabelOverride = { unread?: boolean; starred?: boolean };
+type MessageAction =
+  | "archive"
+  | "trash"
+  | "star"
+  | "unstar"
+  | "read"
+  | "unread";
 
 function senderLabel(raw: string) {
   if (!raw) return "Unknown sender";
@@ -28,20 +54,35 @@ function senderLabel(raw: string) {
   return name || email || "Unknown sender";
 }
 
-export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
+export function GmailPanel({
+  composeOpen,
+  onComposeOpenChange,
+  onAddToCalendar,
+}: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [view, setView] = useState<"inbox" | "drafts">("inbox");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canSyncMore, setCanSyncMore] = useState(true);
 
+  // Optimistic local state: rows removed by archive/trash, and label flips
+  // (read/star) that the next refetch will confirm.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [overrides, setOverrides] = useState<Map<string, LabelOverride>>(
+    new Map(),
+  );
+
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [openingDraftId, setOpeningDraftId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const toRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const utils = api.useUtils();
 
@@ -54,24 +95,25 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     },
   );
 
-  // Flatten pages and drop any duplicates that straddle page boundaries.
+  // Flatten pages, dedupe across page boundaries, then apply local state.
   const pages = inbox.data?.pages;
   const emails = useMemo(() => {
     const seen = new Set<string>();
     return (pages ?? [])
       .flatMap((page) => page.items)
       .filter((item) => {
-        if (seen.has(item.id)) return false;
+        if (seen.has(item.id) || removedIds.has(item.id)) return false;
         seen.add(item.id);
         return true;
+      })
+      .map((item) => {
+        const override = overrides.get(item.id);
+        return override ? { ...item, ...override } : item;
       });
-  }, [pages]);
+  }, [pages, removedIds, overrides]);
 
-  const sentinelRef = useRef<HTMLDivElement>(null);
-
-  // Debounced read target: while J/K flies through the list, the highlight
-  // moves instantly but the (slow, live) message fetch fires only once the
-  // selection settles, so a fast scroll doesn't stack dozens of Google calls.
+  // Debounced read target: the highlight moves instantly; the (slow, live)
+  // message fetch fires only once the selection settles.
   const [readId, setReadId] = useState<string | null>(null);
   useEffect(() => {
     if (!selectedId) {
@@ -104,6 +146,8 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
   const refreshInbox = api.gmail.refreshInbox.useMutation({
     onSuccess: async () => {
       setCanSyncMore(true);
+      setRemovedIds(new Set());
+      setOverrides(new Map());
       await utils.gmail.searchEmails.invalidate();
       await utils.gmail.listDrafts.invalidate();
     },
@@ -117,25 +161,43 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     },
   });
 
-  function resetCompose() {
+  const modifyMessage = api.gmail.modifyMessage.useMutation({
+    onError: async () => {
+      // The optimistic state was wrong — resync with the server.
+      setRemovedIds(new Set());
+      setOverrides(new Map());
+      await utils.gmail.searchEmails.invalidate();
+    },
+  });
+
+  function closeCompose() {
     setTo("");
     setSubject("");
     setBody("");
+    setEditingDraftId(null);
+    onComposeOpenChange(false);
   }
 
   const createDraft = api.gmail.createDraft.useMutation({
     onSuccess: async () => {
       await utils.gmail.listDrafts.invalidate();
-      resetCompose();
-      onComposeOpenChange(false);
+      closeCompose();
+    },
+  });
+
+  const updateDraft = api.gmail.updateDraft.useMutation();
+
+  const deleteDraft = api.gmail.deleteDraft.useMutation({
+    onSuccess: async () => {
+      setConfirmDeleteId(null);
+      await utils.gmail.listDrafts.invalidate();
     },
   });
 
   const sendEmail = api.gmail.sendEmail.useMutation({
     onSuccess: async () => {
       await utils.gmail.searchEmails.invalidate();
-      resetCompose();
-      onComposeOpenChange(false);
+      closeCompose();
     },
   });
 
@@ -146,32 +208,67 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     },
   });
 
-  // Focus the right field when compose opens (body when replying, since the
-  // recipient is prefilled); close on Escape.
-  useEffect(() => {
-    if (!composeOpen) return;
-    const id = window.setTimeout(() => {
-      if (toRef.current?.value) bodyRef.current?.focus();
-      else toRef.current?.focus();
-    }, 60);
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onComposeOpenChange(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.clearTimeout(id);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [composeOpen, onComposeOpenChange]);
+  // ---- message actions ----------------------------------------------------
 
-  // Reply: prefill the recipient and subject from the open message.
+  function setOverride(id: string, patch: LabelOverride) {
+    setOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(id, { ...next.get(id), ...patch });
+      return next;
+    });
+  }
+
+  // Archive/trash: remove the row optimistically and advance the selection
+  // to the next message so triage never breaks stride.
+  function removeAndAdvance(id: string) {
+    const index = emails.findIndex((email) => email.id === id);
+    const next = emails[index + 1] ?? emails[index - 1];
+    setRemovedIds((prev) => new Set(prev).add(id));
+    if (selectedId === id) setSelectedId(next?.id ?? null);
+  }
+
+  function act(id: string, action: MessageAction) {
+    if (action === "archive" || action === "trash") {
+      removeAndAdvance(id);
+    } else if (action === "star" || action === "unstar") {
+      setOverride(id, { starred: action === "star" });
+    } else {
+      setOverride(id, { unread: action === "unread" });
+    }
+    modifyMessage.mutate({ id, action });
+  }
+
+  const selectedMeta = emails.find((email) => email.id === selectedId);
+
+  function toggleStar() {
+    if (!selectedId) return;
+    act(selectedId, selectedMeta?.starred ? "unstar" : "star");
+  }
+
+  function toggleUnread() {
+    if (!selectedId) return;
+    act(selectedId, selectedMeta?.unread ? "read" : "unread");
+  }
+
+  // Opening a message marks it read, like every mail client.
+  useEffect(() => {
+    if (!readId || !selectedEmail.data) return;
+    const meta = emails.find((email) => email.id === readId);
+    if (meta?.unread) {
+      setOverride(readId, { unread: false });
+      modifyMessage.mutate({ id: readId, action: "read" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readId, selectedEmail.data]);
+
+  // ---- compose seeds --------------------------------------------------------
+
   function replyToSelection() {
     const message = selectedEmail.data;
     if (!message) return;
-    const sender = parseEmailAddress(
-      (message.from || "").split(",")[0] ?? "",
-    );
+    const sender = parseEmailAddress((message.from || "").split(",")[0] ?? "");
     if (!sender.email) return;
+    setEditingDraftId(null);
     setTo(sender.email);
     setSubject(
       message.subject && !/^re:/i.test(message.subject)
@@ -181,14 +278,103 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     onComposeOpenChange(true);
   }
 
+  function forwardSelection() {
+    const message = selectedEmail.data;
+    if (!message) return;
+    setEditingDraftId(null);
+    setTo("");
+    setSubject(
+      message.subject && !/^fwd:/i.test(message.subject)
+        ? `Fwd: ${message.subject}`
+        : (message.subject ?? ""),
+    );
+    setBody(
+      [
+        "",
+        "",
+        "---------- Forwarded message ----------",
+        `From: ${message.from}`,
+        message.date ? `Date: ${formatMessageDate(message.date)}` : "",
+        `Subject: ${message.subject}`,
+        "",
+        message.body || message.snippet || "",
+      ].join("\n"),
+    );
+    onComposeOpenChange(true);
+  }
+
+  // Email-to-calendar: schedule a meeting with the sender in two keys.
+  function eventFromSelection() {
+    const message = selectedEmail.data;
+    if (!message) return;
+    const sender = parseEmailAddress((message.from || "").split(",")[0] ?? "");
+    onAddToCalendar({
+      summary: message.subject || "Meeting",
+      attendee: sender.email,
+      description: `Follow-up on "${message.subject}" — ${message.snippet}`.slice(
+        0,
+        400,
+      ),
+    });
+  }
+
+  // ---- drafts ----------------------------------------------------------------
+
+  async function openDraft(draftId: string) {
+    setOpeningDraftId(draftId);
+    try {
+      const draft = await utils.gmail.getDraft.fetch({ id: draftId });
+      setEditingDraftId(draftId);
+      setTo(draft.to);
+      setSubject(draft.subject);
+      setBody(draft.body);
+      onComposeOpenChange(true);
+    } finally {
+      setOpeningDraftId(null);
+    }
+  }
+
+  async function sendEditedDraft() {
+    if (!editingDraftId) return;
+    await updateDraft.mutateAsync({ draftId: editingDraftId, to, subject, body });
+    await sendDraft.mutateAsync({ draftId: editingDraftId });
+    closeCompose();
+  }
+
+  async function saveEditedDraft() {
+    if (!editingDraftId) return;
+    await updateDraft.mutateAsync({ draftId: editingDraftId, to, subject, body });
+    await utils.gmail.listDrafts.invalidate();
+    closeCompose();
+  }
+
+  // ---- keyboard layer ----------------------------------------------------------
+
+  // Focus the right field when compose opens (body when replying, since the
+  // recipient is prefilled); close on Escape.
+  useEffect(() => {
+    if (!composeOpen) return;
+    const id = window.setTimeout(() => {
+      if (toRef.current?.value) bodyRef.current?.focus();
+      else toRef.current?.focus();
+    }, 60);
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeCompose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composeOpen]);
+
   // Roving selection: J/K move through the list and the reading pane follows.
   function moveSelection(step: 1 | -1) {
     if (emails.length === 0) return;
     const index = emails.findIndex((email) => email.id === selectedId);
     const next =
-      index === -1
-        ? 0
-        : Math.min(Math.max(index + step, 0), emails.length - 1);
+      index === -1 ? 0 : Math.min(Math.max(index + step, 0), emails.length - 1);
     const target = emails[next];
     if (!target) return;
     setSelectedId(target.id);
@@ -236,9 +422,31 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
           if (!selectedId) return;
           setSelectedId(null);
           break;
+        case "e":
+          if (!selectedId) return;
+          act(selectedId, "archive");
+          break;
+        case "#":
+          if (!selectedId) return;
+          act(selectedId, "trash");
+          break;
+        case "s":
+          toggleStar();
+          break;
+        case "U":
+          toggleUnread();
+          break;
         case "r":
           if (!selectedId) return;
           replyToSelection();
+          break;
+        case "f":
+          if (!selectedId) return;
+          forwardSelection();
+          break;
+        case "t":
+          if (!selectedId) return;
+          eventFromSelection();
           break;
         case "i":
           setView("inbox");
@@ -265,8 +473,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     if (!refreshInbox.isPending) refreshInbox.mutate();
   });
 
-  // Warm the inbox once when it loads empty (first connect / cold cache),
-  // so mail appears without the user clicking refresh.
+  // Warm the inbox once when it loads empty (first connect / cold cache).
   const didAutoSync = useRef(false);
   useEffect(() => {
     if (didAutoSync.current) return;
@@ -276,8 +483,8 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     refreshInbox.mutate();
   }, [emails.length, inbox.isLoading, view, activeSearch, refreshInbox]);
 
-  // Infinite scroll: load the next cached page, or page deeper into Gmail when
-  // the cache is exhausted.
+  // Infinite scroll: load the next cached page, or page deeper into Gmail
+  // when the cache is exhausted.
   const { hasNextPage, isFetchingNextPage, isFetching, fetchNextPage } = inbox;
   useEffect(() => {
     const el = sentinelRef.current;
@@ -312,8 +519,14 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
     syncMore,
   ]);
 
-  const composeError = createDraft.error ?? sendEmail.error;
+  const composeError =
+    createDraft.error ?? sendEmail.error ?? updateDraft.error ?? sendDraft.error;
   const canSend = Boolean(to && subject && body);
+  const composeBusy =
+    sendEmail.isPending ||
+    createDraft.isPending ||
+    updateDraft.isPending ||
+    sendDraft.isPending;
 
   return (
     <div className="mail">
@@ -396,6 +609,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                     type="button"
                     className="row"
                     data-active={selectedId === email.id}
+                    data-unread={email.unread}
                     data-mail-id={email.id}
                     onClick={() => setSelectedId(email.id)}
                     variants={listRow}
@@ -404,9 +618,15 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                     custom={i}
                   >
                     <span className="row-top">
+                      {email.unread && <span className="row-dot" />}
                       <span className="row-from">
                         {senderLabel(email.from)}
                       </span>
+                      {email.starred && (
+                        <span className="row-star">
+                          <StarIcon size={11} filled />
+                        </span>
+                      )}
                       {email.date && (
                         <span className="row-date tnum">
                           {formatMessageDate(email.date)}
@@ -424,11 +644,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                 {(inbox.isFetchingNextPage || syncMore.isPending) && (
                   <MailRowsSkeleton count={3} />
                 )}
-                <div
-                  ref={sentinelRef}
-                  aria-hidden="true"
-                  style={{ height: 1 }}
-                />
+                <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
               </>
             ))}
 
@@ -444,24 +660,45 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             drafts.data &&
             (drafts.data.length === 0 ? (
               <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-                No drafts.
+                No drafts. Save one from Compose.
               </p>
             ) : (
               drafts.data.map((draft) => (
-                <div
-                  key={draft.id}
-                  className="row-top"
-                  style={{ padding: "0.55rem 0.6rem" }}
-                >
-                  <span className="row-from">Draft</span>
+                <div key={draft.id} className="draft-row">
+                  <button
+                    type="button"
+                    className="draft-main"
+                    onClick={() => void openDraft(draft.id)}
+                    disabled={openingDraftId === draft.id}
+                  >
+                    <span className="row-from">
+                      {openingDraftId === draft.id ? "Opening…" : "Draft"}
+                    </span>
+                    {draft.createdAt && (
+                      <span className="row-date tnum">
+                        {formatMessageDate(new Date(draft.createdAt))}
+                      </span>
+                    )}
+                  </button>
                   <button
                     type="button"
                     className="link"
-                    style={{ marginLeft: "auto" }}
                     onClick={() => sendDraft.mutate({ draftId: draft.id })}
                     disabled={sendDraft.isPending}
                   >
                     Send
+                  </button>
+                  <button
+                    type="button"
+                    className="link draft-delete"
+                    onClick={() =>
+                      confirmDeleteId === draft.id
+                        ? deleteDraft.mutate({ draftId: draft.id })
+                        : setConfirmDeleteId(draft.id)
+                    }
+                    disabled={deleteDraft.isPending}
+                  >
+                    {confirmDeleteId === draft.id ? "Confirm" : "Delete"}
                   </button>
                 </div>
               ))
@@ -490,6 +727,66 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
           </div>
         ) : selectedEmail.data ? (
           <article>
+            <div className="read-actions">
+              <button
+                type="button"
+                className="icon-btn"
+                title="Archive ( E )"
+                onClick={() => selectedId && act(selectedId, "archive")}
+              >
+                <ArchiveIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Move to trash ( # )"
+                onClick={() => selectedId && act(selectedId, "trash")}
+              >
+                <TrashIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                data-on={selectedMeta?.starred}
+                title={selectedMeta?.starred ? "Unstar ( S )" : "Star ( S )"}
+                onClick={toggleStar}
+              >
+                <StarIcon size={16} filled={Boolean(selectedMeta?.starred)} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Mark unread ( shift U )"
+                onClick={toggleUnread}
+              >
+                <MailOpenIcon size={16} />
+              </button>
+              <span className="read-actions-divider" />
+              <button
+                type="button"
+                className="icon-btn"
+                title="Reply ( R )"
+                onClick={replyToSelection}
+              >
+                <ReplyIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Forward ( F )"
+                onClick={forwardSelection}
+              >
+                <ForwardIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Turn into calendar event ( T )"
+                onClick={eventFromSelection}
+              >
+                <CalendarPlusIcon size={16} />
+              </button>
+            </div>
             <h1 className="read-subject">
               {selectedEmail.data.subject || "(no subject)"}
             </h1>
@@ -518,7 +815,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
               initial="initial"
               animate="animate"
               exit="exit"
-              onClick={() => onComposeOpenChange(false)}
+              onClick={closeCompose}
             />
             <motion.div
               className="compose"
@@ -530,26 +827,28 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
               aria-label="Compose message"
               onKeyDown={(event) => {
                 if (!(event.metaKey || event.ctrlKey)) return;
-                if (event.key === "Enter" && canSend && !sendEmail.isPending) {
+                if (event.key === "Enter" && canSend && !composeBusy) {
                   event.preventDefault();
-                  sendEmail.mutate({ to, subject, body });
+                  if (editingDraftId) void sendEditedDraft();
+                  else sendEmail.mutate({ to, subject, body });
                 } else if (
                   event.key.toLowerCase() === "s" &&
                   canSend &&
-                  !createDraft.isPending
+                  !composeBusy
                 ) {
                   event.preventDefault();
-                  createDraft.mutate({ to, subject, body });
+                  if (editingDraftId) void saveEditedDraft();
+                  else createDraft.mutate({ to, subject, body });
                 }
               }}
             >
               <div className="compose-head">
-                New message
+                {editingDraftId ? "Edit draft" : "New message"}
                 <span className="topbar-spacer" />
                 <button
                   type="button"
                   className="icon-btn"
-                  onClick={() => onComposeOpenChange(false)}
+                  onClick={closeCompose}
                   aria-label="Close"
                 >
                   <CloseIcon size={16} />
@@ -585,19 +884,27 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={() => sendEmail.mutate({ to, subject, body })}
-                  disabled={sendEmail.isPending || !canSend}
+                  onClick={() =>
+                    editingDraftId
+                      ? void sendEditedDraft()
+                      : sendEmail.mutate({ to, subject, body })
+                  }
+                  disabled={composeBusy || !canSend}
                 >
-                  {sendEmail.isPending ? "Sending…" : "Send"}
+                  {composeBusy ? "Working…" : "Send"}
                   <Kbd>⌘↵</Kbd>
                 </button>
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => createDraft.mutate({ to, subject, body })}
-                  disabled={createDraft.isPending || !canSend}
+                  onClick={() =>
+                    editingDraftId
+                      ? void saveEditedDraft()
+                      : createDraft.mutate({ to, subject, body })
+                  }
+                  disabled={composeBusy || !canSend}
                 >
-                  {createDraft.isPending ? "Saving…" : "Save draft"}
+                  {editingDraftId ? "Save changes" : "Save draft"}
                 </button>
               </div>
             </motion.div>
