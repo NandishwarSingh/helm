@@ -1358,6 +1358,7 @@
     min-height: 100dvh;
     display: flex;
     flex-direction: column;
+    overflow-x: clip;
   }
   .lp main {
     flex: 1;

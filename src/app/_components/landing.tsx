@@ -471,7 +471,6 @@ export function Landing() {
         {/* ---- final CTA ---- */}
         <section className="lp-final">
           <motion.div {...rise}>
-            <BrandMark size={28} />
             <h2>Take the helm of your inbox.</h2>
             <a className="btn btn-primary lp-cta" href="/api/oauth/start">
               Connect Google
