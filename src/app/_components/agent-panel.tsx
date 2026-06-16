@@ -18,46 +18,110 @@ const SUGGESTIONS = [
   "Schedule a 30 minute sync with dev@corsair.dev tomorrow at 9am and email him that I look forward to it",
 ];
 
-/** Inline **bold** spans without touching the DOM unsafely. */
+/** Inline rendering: **bold** and `code`, as plain React nodes. */
+function inlineCode(text: string, keyBase: string): React.ReactNode[] {
+  return text
+    .split(/`([^`]+)`/g)
+    .map((chunk, i) =>
+      i % 2 === 1 ? <code key={`${keyBase}c${i}`}>{chunk}</code> : chunk,
+    );
+}
+
 function renderInline(text: string): React.ReactNode[] {
-  return text.split(/\*\*([^*]+)\*\*/g).map((chunk, i) =>
-    i % 2 === 1 ? <strong key={i}>{chunk}</strong> : chunk,
-  );
+  return text
+    .split(/\*\*([^*]+)\*\*/g)
+    .flatMap((chunk, i) =>
+      i % 2 === 1
+        ? [<strong key={`b${i}`}>{inlineCode(chunk, `b${i}`)}</strong>]
+        : inlineCode(chunk, `t${i}`),
+    );
 }
 
 /**
- * Markdown-lite for agent replies: paragraphs, hyphen bullet lists and
- * bold — exactly the subset the system prompt allows.
+ * Markdown-lite for agent replies. The prompt constrains the model, but the
+ * renderer still defends: paragraphs, hyphen and numbered lists (real
+ * numbering), quotes, dividers, headings-as-bold, bold and inline code.
  */
 function AgentText({ text }: { text: string }) {
   const blocks: React.ReactNode[] = [];
-  let list: string[] = [];
+  let ul: string[] = [];
+  let ol: string[] = [];
+  let quote: string[] = [];
 
-  const flushList = (key: number) => {
-    if (list.length === 0) return;
-    blocks.push(
-      <ul key={`l${key}`}>
-        {list.map((item, i) => (
-          <li key={i}>{renderInline(item)}</li>
-        ))}
-      </ul>,
-    );
-    list = [];
+  const flush = (key: number) => {
+    if (ul.length > 0) {
+      blocks.push(
+        <ul key={`u${key}`}>
+          {ul.map((item, i) => (
+            <li key={i}>{renderInline(item)}</li>
+          ))}
+        </ul>,
+      );
+      ul = [];
+    }
+    if (ol.length > 0) {
+      blocks.push(
+        <ol key={`o${key}`}>
+          {ol.map((item, i) => (
+            <li key={i}>{renderInline(item)}</li>
+          ))}
+        </ol>,
+      );
+      ol = [];
+    }
+    if (quote.length > 0) {
+      blocks.push(
+        <blockquote key={`q${key}`}>
+          {quote.map((line, i) => (
+            <p key={i}>{renderInline(line)}</p>
+          ))}
+        </blockquote>,
+      );
+      quote = [];
+    }
   };
 
   const lines = text.split("\n");
   lines.forEach((line, i) => {
-    const bullet = /^\s*(?:[-*]|\d+[.)])\s+(.*)$/.exec(line);
-    if (bullet) {
-      list.push(bullet[1] ?? "");
+    const hyphen = /^\s*[-*]\s+(.*)$/.exec(line);
+    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    const quoted = /^\s*>\s?(.*)$/.exec(line);
+    const heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
+    const rule = /^\s*([-*_]\s*){3,}$/.test(line);
+
+    if (hyphen && !rule) {
+      if (ol.length > 0 || quote.length > 0) flush(i);
+      ul.push(hyphen[1] ?? "");
       return;
     }
-    flushList(i);
+    if (numbered) {
+      if (ul.length > 0 || quote.length > 0) flush(i);
+      ol.push(numbered[1] ?? "");
+      return;
+    }
+    if (quoted && line.trim() !== ">") {
+      if (ul.length > 0 || ol.length > 0) flush(i);
+      if (quoted[1]) quote.push(quoted[1]);
+      return;
+    }
+    flush(i);
+    if (rule) {
+      blocks.push(<span className="agent-hr" key={`r${i}`} />);
+      return;
+    }
+    if (heading) {
+      blocks.push(
+        <p className="agent-h" key={`h${i}`}>
+          {renderInline(heading[1] ?? "")}
+        </p>,
+      );
+      return;
+    }
     if (line.trim()) {
       blocks.push(<p key={`p${i}`}>{renderInline(line)}</p>);
     }
   });
-  flushList(lines.length);
+  flush(lines.length);
 
   return <div className="agent-text">{blocks}</div>;
 }

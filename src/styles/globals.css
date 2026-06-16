@@ -1015,6 +1015,51 @@
   .agent-text li::marker {
     color: var(--color-accent);
   }
+  .agent-text ol {
+    margin: 0;
+    padding-left: 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .agent-text ol li::marker {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+  .agent-text blockquote {
+    margin: 0;
+    padding: 0.45rem 0.85rem;
+    border-left: 2px solid var(--color-line-strong);
+    background: var(--color-paper-sunken);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--color-ink-2);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .agent-text blockquote p {
+    margin: 0;
+  }
+  .agent-text code {
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    padding: 0 4px;
+    background: var(--color-paper-sunken);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-sm);
+  }
+  .agent-text .agent-h {
+    font-weight: 650;
+    font-size: 1.02em;
+    color: var(--color-ink);
+    margin-top: 0.3rem;
+  }
+  .agent-hr {
+    display: block;
+    height: 1px;
+    background: var(--color-line);
+    margin: 0.25rem 0;
+  }
   .agent-tool {
     display: inline-flex;
     align-items: center;
