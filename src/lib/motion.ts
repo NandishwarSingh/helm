@@ -39,6 +39,28 @@ export const scrim: Variants = {
   exit: { opacity: 0, transition: snapFast },
 };
 
+// Chord hint bar: contents fade first, then the bar morphs away —
+// collapsing into a rounded dot as it drops. x carries the -50% centering.
+export const chordBar: Variants = {
+  initial: { x: "-50%", y: 8, opacity: 0 },
+  animate: { x: "-50%", y: 0, opacity: 1, transition: snap },
+  exit: {
+    x: "-50%",
+    y: 16,
+    scaleX: 0.05,
+    scaleY: 0.65,
+    opacity: 0,
+    borderRadius: 24,
+    transition: { ...snap, duration: 0.26, when: "afterChildren" },
+  },
+};
+
+export const chordInner: Variants = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: snapFast },
+  exit: { opacity: 0, transition: { duration: 0.09 } },
+};
+
 // Command palette: anchored near the top, drops in. x carries the -50%
 // horizontal centering (the element is pinned at left: 50%).
 export const paletteDrop: Variants = {

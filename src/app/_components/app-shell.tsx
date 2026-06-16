@@ -31,7 +31,7 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
 import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
-import { viewSwap } from "@/lib/motion";
+import { chordBar, chordInner, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar";
@@ -340,19 +340,31 @@ export function AppShell() {
         onHelp={() => setHelpOpen(true)}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
-      {chordPending && (
-        <div className="chord-chip" role="status">
-          <Kbd>G</Kbd>
-          <span className="chord-then">then</span>
-          <span><Kbd>I</Kbd> inbox</span>
-          <span><Kbd>S</Kbd> starred</span>
-          <span><Kbd>A</Kbd> archive</span>
-          <span><Kbd>P</Kbd> spam</span>
-          <span><Kbd>T</Kbd> trash</span>
-          <span><Kbd>D</Kbd> drafts</span>
-          <span><Kbd>C</Kbd> calendar</span>
-        </div>
-      )}
+      <AnimatePresence>
+        {chordPending && (
+          <motion.div
+            className="chord-chip"
+            variants={chordBar}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            style={{ transformOrigin: "50% 100%" }}
+            role="status"
+          >
+            <motion.span className="chord-inner" variants={chordInner}>
+              <Kbd>G</Kbd>
+              <span className="chord-then">then</span>
+              <span><Kbd>I</Kbd> inbox</span>
+              <span><Kbd>S</Kbd> starred</span>
+              <span><Kbd>A</Kbd> archive</span>
+              <span><Kbd>P</Kbd> spam</span>
+              <span><Kbd>T</Kbd> trash</span>
+              <span><Kbd>D</Kbd> drafts</span>
+              <span><Kbd>C</Kbd> calendar</span>
+            </motion.span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </MotionConfig>
   );
 }

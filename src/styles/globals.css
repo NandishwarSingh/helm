@@ -907,11 +907,9 @@
     position: fixed;
     left: 50%;
     bottom: 1.4rem;
-    transform: translateX(-50%);
     z-index: 70;
     display: flex;
     align-items: center;
-    gap: 0.9rem;
     padding: 0.45rem 0.8rem;
     background: var(--color-paper-raised);
     border: 1px solid var(--color-line-strong);
@@ -921,7 +919,12 @@
     color: var(--color-ink-2);
     white-space: nowrap;
   }
-  .chord-chip span {
+  .chord-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+  }
+  .chord-inner span {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
