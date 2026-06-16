@@ -302,6 +302,17 @@
   .rail-item .kbd {
     margin-left: auto;
   }
+  .rail-keys {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 3px;
+  }
+  .rail-keys .kbd {
+    margin-left: 0;
+    font-size: 0.66rem;
+    min-width: 1.3em;
+    height: 1.45em;
+  }
   .rail-divider {
     height: 1px;
     margin: 0.85rem 0.4rem;

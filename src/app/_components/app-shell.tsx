@@ -36,13 +36,18 @@ import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar";
 
-const MAIL_FOLDERS: { id: MailView; label: string; icon: React.ReactNode }[] = [
-  { id: "inbox", label: "Inbox", icon: <InboxIcon size={15} /> },
-  { id: "starred", label: "Starred", icon: <StarIcon size={15} /> },
-  { id: "archived", label: "Archive", icon: <ArchiveIcon size={15} /> },
-  { id: "spam", label: "Spam", icon: <SpamIcon size={15} /> },
-  { id: "trash", label: "Trash", icon: <TrashIcon size={15} /> },
-  { id: "drafts", label: "Drafts", icon: <ComposeIcon size={15} /> },
+const MAIL_FOLDERS: {
+  id: MailView;
+  label: string;
+  chord: string;
+  icon: React.ReactNode;
+}[] = [
+  { id: "inbox", label: "Inbox", chord: "I", icon: <InboxIcon size={15} /> },
+  { id: "starred", label: "Starred", chord: "S", icon: <StarIcon size={15} /> },
+  { id: "archived", label: "Archive", chord: "A", icon: <ArchiveIcon size={15} /> },
+  { id: "spam", label: "Spam", chord: "P", icon: <SpamIcon size={15} /> },
+  { id: "trash", label: "Trash", chord: "T", icon: <TrashIcon size={15} /> },
+  { id: "drafts", label: "Drafts", chord: "D", icon: <ComposeIcon size={15} /> },
 ];
 
 export function AppShell() {
@@ -204,6 +209,10 @@ export function AppShell() {
               >
                 {f.icon}
                 {f.label}
+                <span className="rail-keys">
+                  <Kbd>G</Kbd>
+                  <Kbd>{f.chord}</Kbd>
+                </span>
               </button>
             ))}
           </nav>
