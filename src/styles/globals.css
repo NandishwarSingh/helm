@@ -989,10 +989,31 @@
   }
   .agent-text {
     margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
     font-size: 0.94rem;
     line-height: 1.6;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  .agent-text p {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+  .agent-text strong {
+    font-weight: 650;
+    color: var(--color-ink);
+  }
+  .agent-text ul {
+    margin: 0;
+    padding-left: 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .agent-text ul::marker,
+  .agent-text li::marker {
+    color: var(--color-accent);
   }
   .agent-tool {
     display: inline-flex;

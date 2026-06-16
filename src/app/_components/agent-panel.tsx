@@ -18,6 +18,50 @@ const SUGGESTIONS = [
   "Schedule a 30 minute sync with dev@corsair.dev tomorrow at 9am and email him that I look forward to it",
 ];
 
+/** Inline **bold** spans without touching the DOM unsafely. */
+function renderInline(text: string): React.ReactNode[] {
+  return text.split(/\*\*([^*]+)\*\*/g).map((chunk, i) =>
+    i % 2 === 1 ? <strong key={i}>{chunk}</strong> : chunk,
+  );
+}
+
+/**
+ * Markdown-lite for agent replies: paragraphs, hyphen bullet lists and
+ * bold — exactly the subset the system prompt allows.
+ */
+function AgentText({ text }: { text: string }) {
+  const blocks: React.ReactNode[] = [];
+  let list: string[] = [];
+
+  const flushList = (key: number) => {
+    if (list.length === 0) return;
+    blocks.push(
+      <ul key={`l${key}`}>
+        {list.map((item, i) => (
+          <li key={i}>{renderInline(item)}</li>
+        ))}
+      </ul>,
+    );
+    list = [];
+  };
+
+  const lines = text.split("\n");
+  lines.forEach((line, i) => {
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) {
+      list.push(bullet[1] ?? "");
+      return;
+    }
+    flushList(i);
+    if (line.trim()) {
+      blocks.push(<p key={`p${i}`}>{renderInline(line)}</p>);
+    }
+  });
+  flushList(lines.length);
+
+  return <div className="agent-text">{blocks}</div>;
+}
+
 /** Friendly labels for tool activity chips. */
 function toolLabel(type: string, state: string, output: unknown): string {
   const name = type.replace(/^tool-/, "");
@@ -120,7 +164,9 @@ export function AgentPanel() {
             >
               {message.parts.map((part, i) => {
                 if (part.type === "text") {
-                  return (
+                  return message.role === "assistant" ? (
+                    <AgentText key={i} text={part.text} />
+                  ) : (
                     <p className="agent-text" key={i}>
                       {part.text}
                     </p>

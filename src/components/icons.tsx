@@ -156,8 +156,8 @@ export const CalendarPlusIcon = (p: IconProps) => (
 
 export const AgentIcon = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M12 3.5 13.9 9 19.5 11 13.9 13 12 18.5 10.1 13 4.5 11 10.1 9Z" />
-    <path d="M18.5 3.5v3M20 5h-3" />
+    <rect x="3" y="4.5" width="18" height="15" rx="2" />
+    <path d="m7 9.5 3 2.5-3 2.5M12.5 14.5H17" />
   </Svg>
 );
 
