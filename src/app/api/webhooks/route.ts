@@ -13,7 +13,7 @@ import { clientIp, rateLimit } from "@/server/lib/rate-limit";
  * deploy time — registration stamps each channel with its tenant id.
  */
 export async function POST(request: NextRequest) {
-  const { ok } = rateLimit(`webhook:${clientIp(request.headers)}`, 120, 60_000);
+  const { ok } = await rateLimit(`webhook:${clientIp(request.headers)}`, 120, 60_000);
   if (!ok) {
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }

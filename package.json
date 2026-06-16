@@ -37,6 +37,7 @@
     "corsair": "^0.1.74",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.41.0",
+    "ioredis": "^5.11.1",
     "motion": "^12.40.0",
     "next": "^15.2.3",
     "postgres": "^3.4.4",

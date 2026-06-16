@@ -264,9 +264,11 @@ export function GmailPanel({
       initialCursor: 0,
       getNextPageParam: (last) => last.nextCursor ?? undefined,
       // Reads hit the local cache, so polling is cheap — folders stay live
-      // without a manual refresh.
+      // without a manual refresh. Pause while a label mutation is in flight
+      // so a refetch can never land between the optimistic update and its
+      // confirmation.
       staleTime: 10_000,
-      refetchInterval: 45_000,
+      refetchInterval: () => (inFlight.current > 0 ? false : 45_000),
       refetchOnWindowFocus: true,
     },
   );

@@ -23,6 +23,11 @@ const RUN_CAP = 40;
 // Triage looks at the same cached window the mail views read from.
 const CACHE_WINDOW = 300;
 
+// One classification run per tenant at a time within this instance: two open
+// tabs (or a double-click) would otherwise pay the model twice for the same
+// batch. Concurrent callers await the in-flight run and return its result.
+const runningTriage = new Map<string, Promise<{ classified: number; remaining: number }>>();
+
 async function inboxMessages(): Promise<MappedMessage[]> {
   const rows = await listOrEmpty(async () => {
     const tenant = await getTenant();
@@ -70,47 +75,60 @@ export const triageRouter = createTRPCRouter({
     const tenantId = await getTenantId();
     if (!tenantId) return { classified: 0, remaining: 0 };
 
-    const [messages, existing] = await Promise.all([
-      inboxMessages(),
-      db
-        .select({ messageId: mailTriage.messageId })
-        .from(mailTriage)
-        .where(eq(mailTriage.tenantId, tenantId)),
-    ]);
-    const done = new Set(existing.map((row) => row.messageId));
-    const pending = messages.filter((message) => !done.has(message.id));
-    const batch = pending.slice(0, RUN_CAP);
-    if (batch.length === 0) return { classified: 0, remaining: 0 };
+    const inflight = runningTriage.get(tenantId);
+    if (inflight) return inflight;
 
-    const verdicts = await classifyEmails(
-      batch.map((message) => ({
-        id: message.id,
-        from: message.from,
-        subject: message.subject,
-        snippet: message.snippet,
-      })),
-    );
-    if (verdicts.length > 0) {
-      await db
-        .insert(mailTriage)
-        .values(
-          verdicts.map((verdict) => ({
-            tenantId,
-            messageId: verdict.messageId,
-            priority: verdict.priority,
-            reason: verdict.reason,
-          })),
-        )
-        .onConflictDoNothing();
-    }
-
-    // A zero-verdict run means the model output failed to parse; report no
-    // remainder so the client does not retry in a loop.
-    const remaining =
-      verdicts.length === 0 ? 0 : pending.length - verdicts.length;
-    return { classified: verdicts.length, remaining: Math.max(0, remaining) };
+    const work = classifyNextBatch(tenantId).finally(() => {
+      runningTriage.delete(tenantId);
+    });
+    runningTriage.set(tenantId, work);
+    return work;
   }),
 });
+
+async function classifyNextBatch(
+  tenantId: string,
+): Promise<{ classified: number; remaining: number }> {
+  const [messages, existing] = await Promise.all([
+    inboxMessages(),
+    db
+      .select({ messageId: mailTriage.messageId })
+      .from(mailTriage)
+      .where(eq(mailTriage.tenantId, tenantId)),
+  ]);
+  const done = new Set(existing.map((row) => row.messageId));
+  const pending = messages.filter((message) => !done.has(message.id));
+  const batch = pending.slice(0, RUN_CAP);
+  if (batch.length === 0) return { classified: 0, remaining: 0 };
+
+  const verdicts = await classifyEmails(
+    batch.map((message) => ({
+      id: message.id,
+      from: message.from,
+      subject: message.subject,
+      snippet: message.snippet,
+    })),
+  );
+  if (verdicts.length > 0) {
+    await db
+      .insert(mailTriage)
+      .values(
+        verdicts.map((verdict) => ({
+          tenantId,
+          messageId: verdict.messageId,
+          priority: verdict.priority,
+          reason: verdict.reason,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+
+  // A zero-verdict run means the model output failed to parse; report no
+  // remainder so the client does not retry in a loop.
+  const remaining =
+    verdicts.length === 0 ? 0 : pending.length - verdicts.length;
+  return { classified: verdicts.length, remaining: Math.max(0, remaining) };
+}
 
 function emptyGroups(): Record<
   Priority,

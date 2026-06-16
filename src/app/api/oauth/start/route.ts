@@ -9,7 +9,7 @@ import { ensureTenantId } from "@/server/lib/session";
  * redirects to a single consent screen covering both Gmail and Calendar.
  */
 export async function GET(request: NextRequest) {
-  const { ok } = rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
+  const { ok } = await rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
   if (!ok) {
     return NextResponse.redirect(new URL("/?error=rate_limited", request.url));
   }

@@ -1,0 +1,1 @@
+CREATE INDEX "corsair_entities_account_type_idx" ON "corsair_entities" USING btree ("account_id","entity_type");

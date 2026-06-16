@@ -1,4 +1,4 @@
-import { pgTable, primaryKey, text, jsonb, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, primaryKey, index, text, jsonb, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const corsairIntegrations = pgTable('corsair_integrations', {
     id: text('id').primaryKey(),
@@ -32,7 +32,11 @@ export const corsairEntities = pgTable('corsair_entities', {
     entityType: text('entity_type').notNull(),
     version: text('version').notNull(),
     data: jsonb('data').notNull().default({}),
-});
+}, (table) => [
+    // Every cache read filters by account + type (messages, drafts, events);
+    // without this each read scanned the whole entity table.
+    index('corsair_entities_account_type_idx').on(table.accountId, table.entityType),
+]);
 
 export const corsairEvents = pgTable('corsair_events', {
     id: text('id').primaryKey(),

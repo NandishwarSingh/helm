@@ -14,6 +14,9 @@ export const env = createEnv({
     AUTH_SECRET: z.string().min(16),
     // OpenRouter key powering the agent (DeepSeek chat + embeddings).
     OPENROUTER_API_KEY: z.string().min(1),
+    // Optional Redis URL. When set, rate-limit counters are shared across all
+    // app instances; without it a per-process window is used (single VPS).
+    REDIS_URL: z.string().url().optional(),
     // Google OAuth client (Web application) used for the single combined-scope
     // consent that connects Gmail and Calendar in one flow.
     GOOGLE_CLIENT_ID: z.string().min(1),
@@ -42,6 +45,7 @@ export const env = createEnv({
     CORSAIR_KEK: process.env.CORSAIR_KEK,
     AUTH_SECRET: process.env.AUTH_SECRET,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+    REDIS_URL: process.env.REDIS_URL,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     TENANT_ID: process.env.TENANT_ID,

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   if (!tenantId) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
-  const { ok, retryAfterMs } = rateLimit(
+  const { ok, retryAfterMs } = await rateLimit(
     `agent:${clientIp(request.headers)}`,
     15,
     60_000,
@@ -64,6 +64,9 @@ export async function POST(request: NextRequest) {
   const result = streamText({
     model: openrouter(AGENT_MODEL),
     temperature: 0.2,
+    // Bounds each step's generation so a single request can't run away on
+    // tokens; a recap fits comfortably under this.
+    maxOutputTokens: 1500,
     system: systemPrompt(),
     messages: await convertToModelMessages(recent),
     tools: buildAgentTools(tenantId),

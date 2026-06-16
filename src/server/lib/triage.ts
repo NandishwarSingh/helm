@@ -63,6 +63,9 @@ async function classifyBatch(
   const { text } = await generateText({
     model: openrouter(TRIAGE_MODEL),
     temperature: 0,
+    // A batch of verdicts is small JSON; cap output so a runaway response
+    // can't burn tokens.
+    maxOutputTokens: 1200,
     system: SYSTEM,
     prompt: JSON.stringify(payload),
   });

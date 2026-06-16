@@ -13,7 +13,7 @@ import { getTenantId } from "@/server/lib/session";
  * once, and stores the token under both the Gmail and Calendar accounts.
  */
 export async function GET(request: NextRequest) {
-  const { ok } = rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
+  const { ok } = await rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
   if (!ok) {
     return NextResponse.redirect(new URL("/?error=rate_limited", request.url));
   }

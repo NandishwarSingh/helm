@@ -91,7 +91,7 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
  */
 const rateLimitMiddleware = t.middleware(async ({ ctx, type, next }) => {
   const ip = clientIp(ctx.headers);
-  const all = rateLimit(`rpc:${ip}`, 240, 60_000);
+  const all = await rateLimit(`rpc:${ip}`, 240, 60_000);
   if (!all.ok) {
     throw new TRPCError({
       code: "TOO_MANY_REQUESTS",
@@ -99,7 +99,7 @@ const rateLimitMiddleware = t.middleware(async ({ ctx, type, next }) => {
     });
   }
   if (type === "mutation") {
-    const writes = rateLimit(`mutation:${ip}`, 30, 60_000);
+    const writes = await rateLimit(`mutation:${ip}`, 30, 60_000);
     if (!writes.ok) {
       throw new TRPCError({
         code: "TOO_MANY_REQUESTS",
