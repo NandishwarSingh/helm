@@ -148,13 +148,27 @@ async function ensureAccount(
     );
 
   if (!existing) {
-    await db.insert(corsairAccounts).values({
-      id: randomUUID(),
-      tenantId,
-      integrationId: integration.id,
-      config: {},
-    });
-    return { hadDek: false };
+    // Two concurrent consents must not create two account rows — the unique
+    // index makes the second insert a no-op and it re-reads the winner.
+    await db
+      .insert(corsairAccounts)
+      .values({
+        id: randomUUID(),
+        tenantId,
+        integrationId: integration.id,
+        config: {},
+      })
+      .onConflictDoNothing();
+    const [winner] = await db
+      .select({ dek: corsairAccounts.dek })
+      .from(corsairAccounts)
+      .where(
+        and(
+          eq(corsairAccounts.tenantId, tenantId),
+          eq(corsairAccounts.integrationId, integration.id),
+        ),
+      );
+    return { hadDek: Boolean(winner?.dek) };
   }
   return { hadDek: Boolean(existing.dek) };
 }

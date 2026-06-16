@@ -1,65 +1,65 @@
-import { processWebhook } from 'corsair';
-import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
-import { env } from '@/env';
-import { corsair } from '@/server/corsair';
+import { processWebhook } from "corsair";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
+import { env } from "@/env";
+import { corsair } from "@/server/corsair";
+import { clientIp, rateLimit } from "@/server/lib/rate-limit";
+
+/**
+ * Receives Google push notifications (Gmail watch, Calendar channels) and
+ * hands them to Corsair, which validates and applies them to the cache.
+ * Tenant routing is fixed until channels are registered per tenant at
+ * deploy time — registration stamps each channel with its tenant id.
+ */
 export async function POST(request: NextRequest) {
-	const headers: Record<string, string> = {};
-	request.headers.forEach((value, key) => {
-		headers[key] = value;
-	});
+  const { ok } = rateLimit(`webhook:${clientIp(request.headers)}`, 120, 60_000);
+  if (!ok) {
+    return NextResponse.json({ error: "Too many requests." }, { status: 429 });
+  }
 
-	const contentType = request.headers.get('content-type');
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
 
-	let body: string | Record<string, unknown>;
+  const contentType = request.headers.get("content-type");
+  let body: string | Record<string, unknown>;
+  if (contentType?.includes("application/json")) {
+    body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  } else {
+    const text = await request.text().catch(() => "");
+    body = text.trim() ? text : {};
+  }
 
-	if (contentType?.includes('application/json')) {
-		body = (await request.json()) as Record<string, unknown>;
-	} else {
-		const text = await request.text();
-		body = text?.trim() ? text : {};
-	}
+  try {
+    const result = await processWebhook(corsair, headers, body, {
+      tenantId: env.TENANT_ID,
+    });
 
-	const result = await processWebhook(corsair, headers, body, {
-		tenantId: env.TENANT_ID,
-	});
+    const nextHeaders = new Headers();
+    if (result.responseHeaders) {
+      for (const [key, value] of Object.entries(result.responseHeaders)) {
+        nextHeaders.set(key, value);
+      }
+    }
 
-	console.info('Plugin Processed:', result.plugin, result.action);
-
-	// Build response headers (e.g. Asana X-Hook-Secret handshake)
-	// any/unknown cast needed since responseHeaders is a newer field not yet in the installed type definitions
-	const responseHeaders = result.responseHeaders
-	const nextHeaders = new Headers();
-	if (responseHeaders) {
-		for (const [key, value] of Object.entries(responseHeaders)) {
-			nextHeaders.set(key, value);
-		}
-	}
-
-	// Handle case where no webhook matched
-	if (!result.response) {
-		return NextResponse.json(
-			{
-				success: false,
-				message: 'No matching webhook handler found',
-			},
-			{ status: 404 },
-		);
-	}
-
-	if (result.response !== undefined) {
-		return NextResponse.json(result.response, { headers: nextHeaders });
-	}
-
-	// Webhook processed successfully, but no data to return to sender
-	return new NextResponse(null, { status: 200, headers: nextHeaders });
+    if (!result.response) {
+      return NextResponse.json(
+        { error: "No matching webhook handler." },
+        { status: 404, headers: nextHeaders },
+      );
+    }
+    return NextResponse.json(result.response, { headers: nextHeaders });
+  } catch (error) {
+    console.error(
+      "webhook processing failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return NextResponse.json({ error: "Webhook failed." }, { status: 500 });
+  }
 }
 
 export async function GET() {
-	return NextResponse.json({
-		status: 'ok',
-		message: 'Webhook endpoint is active',
-		timestamp: new Date().toISOString(),
-	});
+  return NextResponse.json({ status: "ok" });
 }

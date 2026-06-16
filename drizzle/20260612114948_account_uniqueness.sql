@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "corsair_accounts_tenant_integration_uniq" ON "corsair_accounts" USING btree ("tenant_id","integration_id");

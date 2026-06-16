@@ -41,6 +41,7 @@ export function EmailBody({ html, text }: { html?: string; text?: string }) {
         title="Message"
         className="email-frame"
         sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
         srcDoc={wrap(html)}
         style={{ height: height ? `${height}px` : "62vh" }}
         onLoad={() => {

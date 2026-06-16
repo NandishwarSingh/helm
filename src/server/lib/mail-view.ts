@@ -41,9 +41,11 @@ export function mapMessage(message: {
     date: message.data.internalDate ?? null,
     // messages.list upserts bare id stubs before hydration fills them in; a
     // failed hydration leaves them empty, and empty rows must never render.
-    hydrated: Boolean(
-      message.data.from || message.data.subject || message.data.snippet,
-    ),
+    hydrated: [
+      message.data.from,
+      message.data.subject,
+      message.data.snippet,
+    ].some(Boolean),
     unread: labels.includes("UNREAD"),
     starred: labels.includes("STARRED"),
     spam: labels.includes("SPAM"),

@@ -50,6 +50,14 @@ function dayKey(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// Date-only strings are calendar dates, not instants — parse and shift them
+// in LOCAL time so the day never drifts across timezones.
+function shiftDateString(value: string, days: number): string {
+  const [y, m, d] = value.split("-").map(Number);
+  if (!y || !m || !d) return value;
+  return dayKey(new Date(y, m - 1, d + days));
+}
+
 /** Date-only starts ("2026-06-12") are all-day events. */
 function isAllDay(event: EventItem) {
   return Boolean(event.start) && !event.start.includes("T");
@@ -187,6 +195,8 @@ export function CalendarPanel({
   })();
   const [start, setStart] = useState(toDatetimeLocalValue(defaults.startAt));
   const [end, setEnd] = useState(toDatetimeLocalValue(defaults.endAt));
+  // All-day mode: start/end hold YYYY-MM-DD (end inclusive, for humans).
+  const [allDay, setAllDay] = useState(false);
   const [attendees, setAttendees] = useState("");
 
   const dialogOpen = createOpen || editingId !== null;
@@ -213,6 +223,9 @@ export function CalendarPanel({
     setDescription("");
     setLocation("");
     setAttendees("");
+    setAllDay(false);
+    setStart(toDatetimeLocalValue(defaults.startAt));
+    setEnd(toDatetimeLocalValue(defaults.endAt));
     setEditingId(null);
     setConfirmingDelete(false);
     setConfirmEvent(null);
@@ -262,10 +275,14 @@ export function CalendarPanel({
     setSummary(event.summary);
     setDescription(event.description);
     setLocation(event.location);
-    if (event.start.includes("T")) {
+    if (isAllDay(event)) {
+      // Google stores the end date exclusive; people read it inclusive.
+      setAllDay(true);
+      setStart(event.start);
+      setEnd(event.end ? shiftDateString(event.end, -1) : event.start);
+    } else {
+      setAllDay(false);
       setStart(toDatetimeLocalValue(new Date(event.start)));
-    }
-    if (event.end.includes("T")) {
       setEnd(toDatetimeLocalValue(new Date(event.end)));
     }
     setAttendees(
@@ -282,9 +299,30 @@ export function CalendarPanel({
     startAt.setHours(hour, minute, 0, 0);
     const endAt = new Date(startAt);
     endAt.setMinutes(endAt.getMinutes() + 60);
+    setAllDay(false);
     setStart(toDatetimeLocalValue(startAt));
     setEnd(toDatetimeLocalValue(endAt));
     onCreateOpenChange(true);
+  }
+
+  /** Quick add an all-day event (all-day lane click). */
+  function openCreateAllDay(day: Date) {
+    setAllDay(true);
+    setStart(dayKey(day));
+    setEnd(dayKey(day));
+    onCreateOpenChange(true);
+  }
+
+  /** Flip the dialog between timed and all-day, carrying the dates over. */
+  function toggleAllDay(next: boolean) {
+    setAllDay(next);
+    if (next) {
+      setStart(start.slice(0, 10));
+      setEnd(end.slice(0, 10) || start.slice(0, 10));
+    } else {
+      setStart(`${start.slice(0, 10)}T09:00`);
+      setEnd(`${(end || start).slice(0, 10)}T10:00`);
+    }
   }
 
   // Warm each week once when it loads with no cached events.
@@ -470,8 +508,10 @@ export function CalendarPanel({
     summary,
     description: description || undefined,
     location: location || undefined,
-    start: new Date(start).toISOString(),
-    end: new Date(end).toISOString(),
+    allDay,
+    // All-day sends calendar dates (end exclusive again); timed sends instants.
+    start: allDay ? start : new Date(start).toISOString(),
+    end: allDay ? shiftDateString(end, 1) : new Date(end).toISOString(),
     attendees: parseAttendees(),
   };
 
@@ -615,7 +655,11 @@ export function CalendarPanel({
             <div className="calgrid-allday">
               <span className="calgrid-gutterlabel tnum">all-day</span>
               {days.map((day) => (
-                <div className="calgrid-alldaycell" key={day.key}>
+                <div
+                  className="calgrid-alldaycell"
+                  key={day.key}
+                  onClick={() => openCreateAllDay(day.date)}
+                >
                   {day.allDay.map((event) => (
                     <button
                       key={event.id}
@@ -623,7 +667,8 @@ export function CalendarPanel({
                       className="calgrid-alldaychip"
                       data-active={selectedEventId === event.id}
                       data-event-id={event.id}
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setSelectedEventId(event.id);
                         openEdit(event);
                       }}
@@ -811,7 +856,7 @@ export function CalendarPanel({
                     Start
                     <input
                       className="field"
-                      type="datetime-local"
+                      type={allDay ? "date" : "datetime-local"}
                       value={start}
                       onChange={(e) => setStart(e.target.value)}
                     />
@@ -820,12 +865,20 @@ export function CalendarPanel({
                     End
                     <input
                       className="field"
-                      type="datetime-local"
+                      type={allDay ? "date" : "datetime-local"}
                       value={end}
                       onChange={(e) => setEnd(e.target.value)}
                     />
                   </label>
                 </div>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={allDay}
+                    onChange={(e) => toggleAllDay(e.target.checked)}
+                  />
+                  All day
+                </label>
                 <input
                   className="field"
                   type="text"

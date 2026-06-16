@@ -1,4 +1,4 @@
-import { pgTable, primaryKey, text, jsonb, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, primaryKey, text, jsonb, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const corsairIntegrations = pgTable('corsair_integrations', {
     id: text('id').primaryKey(),
@@ -17,7 +17,11 @@ export const corsairAccounts = pgTable('corsair_accounts', {
     integrationId: text('integration_id').notNull().references(() => corsairIntegrations.id),
     config: jsonb('config').notNull().default({}),
     dek: text('dek'),
-});
+}, (table) => [
+    // One account per tenant per integration — concurrent OAuth completions
+    // must converge on a single row.
+    uniqueIndex('corsair_accounts_tenant_integration_uniq').on(table.tenantId, table.integrationId),
+]);
 
 export const corsairEntities = pgTable('corsair_entities', {
     id: text('id').primaryKey(),

@@ -6,6 +6,7 @@ import {
   verifyState,
 } from "@/server/lib/google-oauth";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
+import { getTenantId } from "@/server/lib/session";
 
 /**
  * Completes the combined Google consent: verifies state, exchanges the code
@@ -31,6 +32,14 @@ export async function GET(request: NextRequest) {
 
   const tenantId = verifyState(state, Date.now());
   if (!tenantId) {
+    return NextResponse.redirect(new URL("/?error=bad_state", request.url));
+  }
+
+  // The state must belong to THIS browser's session. Without this check a
+  // crafted consent link could land a victim's Google account in the
+  // attacker's tenant (OAuth login-CSRF).
+  const sessionTenantId = await getTenantId();
+  if (sessionTenantId !== tenantId) {
     return NextResponse.redirect(new URL("/?error=bad_state", request.url));
   }
 

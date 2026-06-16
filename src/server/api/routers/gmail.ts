@@ -20,6 +20,7 @@ import {
   folderSchema,
   mapMessage,
   sortMessagesNewestFirst,
+  type MappedMessage,
 } from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
 import { getTenantId } from "@/server/lib/session";
@@ -80,45 +81,65 @@ export const gmailRouter = createTRPCRouter({
     )
     .query(async ({ input }) => {
       const query = input.query.trim();
-      const messages = await listOrEmpty(async () => {
-        const tenant = await getTenant();
-        if (!query) {
-          return tenant.gmail.db.messages.list({
-            limit: input.limit,
-            offset: input.cursor,
-          });
-        }
-        // The cache filters AND together, so match each field in parallel
-        // and merge — a query hits snippet, subject, or sender.
-        const fields = [
-          { snippet: { contains: query } },
-          { subject: { contains: query } },
-          { from: { contains: query } },
-        ];
-        const results = await Promise.all(
-          fields.map((data) =>
-            tenant.gmail.db.messages.search({
-              data,
-              limit: input.limit,
-              offset: input.cursor,
-            }),
-          ),
-        );
-        return results.flat();
-      });
 
-      // Folder membership is derived from cached Gmail labels (Corsair keeps
-      // them current from modify responses), then filtered per folder.
-      const items = sortMessagesNewestFirst(
-        dedupeByEntityId(messages).map(mapMessage),
-      )
-        .filter((message) => message.hydrated)
-        .filter(FOLDER_FILTERS[input.folder])
-        .slice(0, input.limit);
-      // A full page from any source implies more cached rows to page through.
-      const nextCursor =
-        messages.length >= input.limit ? input.cursor + input.limit : null;
-      return { items, nextCursor };
+      // One page of raw cache rows at a cursor. Search queries fan out per
+      // field (the cache ANDs filters together) and merge.
+      async function fetchPage(cursor: number) {
+        return listOrEmpty(async () => {
+          const tenant = await getTenant();
+          if (!query) {
+            return tenant.gmail.db.messages.list({
+              limit: input.limit,
+              offset: cursor,
+            });
+          }
+          const fields = [
+            { snippet: { contains: query } },
+            { subject: { contains: query } },
+            { from: { contains: query } },
+          ];
+          const results = await Promise.all(
+            fields.map((data) =>
+              tenant.gmail.db.messages.search({
+                data,
+                limit: input.limit,
+                offset: cursor,
+              }),
+            ),
+          );
+          return results.flat();
+        });
+      }
+
+      // Folder filtering can thin a raw page to nothing (a page of archived
+      // mail viewed from Starred), so keep walking the cache until the page
+      // fills or the cache ends — never hand the client an empty page with a
+      // live cursor.
+      const collected: MappedMessage[] = [];
+      const seen = new Set<string>();
+      let cursor = input.cursor;
+      let cacheHasMore = true;
+      for (let hop = 0; hop < 8 && collected.length < input.limit; hop++) {
+        const raw = await fetchPage(cursor);
+        cursor += input.limit;
+        cacheHasMore = raw.length >= input.limit;
+        const mapped = sortMessagesNewestFirst(
+          dedupeByEntityId(raw).map(mapMessage),
+        )
+          .filter((message) => message.hydrated)
+          .filter(FOLDER_FILTERS[input.folder]);
+        for (const message of mapped) {
+          if (seen.has(message.id)) continue;
+          seen.add(message.id);
+          collected.push(message);
+        }
+        if (!cacheHasMore) break;
+      }
+
+      // The whole final hop is returned (never trimmed): the cursor has
+      // already moved past its rows, so trimming would lose messages.
+      const nextCursor = cacheHasMore ? cursor : null;
+      return { items: collected, nextCursor };
     }),
 
   getMessage: authedProcedure

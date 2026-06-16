@@ -1,4 +1,19 @@
 import "server-only";
+
+// Header values must never contain CR/LF — a newline in a crafted subject
+// would otherwise inject extra headers (e.g. a hidden Bcc) into the message.
+function headerValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+// Non-ASCII subjects travel as an RFC 2047 encoded word so strict receivers
+// don't mangle them.
+function encodeSubject(subject: string): string {
+  const clean = headerValue(subject);
+  if (/^[\x20-\x7e]*$/.test(clean)) return clean;
+  return `=?UTF-8?B?${Buffer.from(clean, "utf-8").toString("base64")}?=`;
+}
+
 export function encodeRawEmail(opts: {
   to: string;
   subject: string;
@@ -6,9 +21,9 @@ export function encodeRawEmail(opts: {
   from?: string;
 }): string {
   const lines = [
-    ...(opts.from ? [`From: ${opts.from}`] : []),
-    `To: ${opts.to}`,
-    `Subject: ${opts.subject}`,
+    ...(opts.from ? [`From: ${headerValue(opts.from)}`] : []),
+    `To: ${headerValue(opts.to)}`,
+    `Subject: ${encodeSubject(opts.subject)}`,
     "Content-Type: text/plain; charset=utf-8",
     "MIME-Version: 1.0",
     "",

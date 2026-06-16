@@ -52,9 +52,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { messages } = (await request.json()) as { messages: UIMessage[] };
+  const body = (await request.json().catch(() => null)) as {
+    messages?: UIMessage[];
+  } | null;
+  if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
+    return NextResponse.json({ error: "No messages." }, { status: 400 });
+  }
   // Keep context bounded but roomy enough for multi-step follow-ups.
-  const recent = messages.slice(-24);
+  const recent = body.messages.slice(-24);
 
   const result = streamText({
     model: openrouter(AGENT_MODEL),

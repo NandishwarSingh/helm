@@ -11,6 +11,36 @@ const paginationSchema = z.object({
   offset: z.number().min(0).default(0),
 });
 
+// Timed events carry ISO datetimes; all-day events carry YYYY-MM-DD dates
+// (end exclusive, per the Google Calendar contract).
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const whenSchema = z
+  .object({
+    allDay: z.boolean().default(false),
+    start: z.string().min(1).max(40),
+    end: z.string().min(1).max(40),
+  })
+  .superRefine((value, ctx) => {
+    const valid = value.allDay
+      ? DATE_ONLY.test(value.start) && DATE_ONLY.test(value.end)
+      : !Number.isNaN(Date.parse(value.start)) &&
+        !Number.isNaN(Date.parse(value.end));
+    if (!valid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: value.allDay
+          ? "All-day events need YYYY-MM-DD dates."
+          : "Start and end must be ISO datetimes.",
+      });
+    }
+  });
+
+function eventTimes(input: { allDay: boolean; start: string; end: string }) {
+  return input.allDay
+    ? { start: { date: input.start }, end: { date: input.end } }
+    : { start: { dateTime: input.start }, end: { dateTime: input.end } };
+}
+
 function eventStartTimestamp(event: {
   data: {
     start?: { date?: string; dateTime?: string };
@@ -147,14 +177,14 @@ export const calendarRouter = createTRPCRouter({
 
   createDraft: authedProcedure
     .input(
-      z.object({
-        summary: z.string().min(1).max(300),
-        description: z.string().max(5000).optional(),
-        location: z.string().max(500).optional(),
-        start: z.string().datetime(),
-        end: z.string().datetime(),
-        attendees: z.array(z.string().email().max(320)).max(50).optional(),
-      }),
+      z
+        .object({
+          summary: z.string().min(1).max(300),
+          description: z.string().max(5000).optional(),
+          location: z.string().max(500).optional(),
+          attendees: z.array(z.string().email().max(320)).max(50).optional(),
+        })
+        .and(whenSchema),
     )
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -166,8 +196,7 @@ export const calendarRouter = createTRPCRouter({
           description: input.description,
           location: input.location,
           status: "tentative",
-          start: { dateTime: input.start },
-          end: { dateTime: input.end },
+          ...eventTimes(input),
           attendees: input.attendees?.map((email) => ({ email })),
         },
       });
@@ -179,17 +208,17 @@ export const calendarRouter = createTRPCRouter({
 
   updateEvent: authedProcedure
     .input(
-      z.object({
-        id: z.string().min(1),
-        summary: z.string().min(1).max(300),
-        description: z.string().max(5000).optional(),
-        location: z.string().max(500).optional(),
-        start: z.string().datetime(),
-        end: z.string().datetime(),
-        attendees: z.array(z.string().email().max(320)).max(50),
-        // Notify attendees about the change when any are present.
-        notify: z.boolean().default(false),
-      }),
+      z
+        .object({
+          id: z.string().min(1),
+          summary: z.string().min(1).max(300),
+          description: z.string().max(5000).optional(),
+          location: z.string().max(500).optional(),
+          attendees: z.array(z.string().email().max(320)).max(50),
+          // Notify attendees about the change when any are present.
+          notify: z.boolean().default(false),
+        })
+        .and(whenSchema),
     )
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -201,8 +230,7 @@ export const calendarRouter = createTRPCRouter({
           summary: input.summary,
           description: input.description,
           location: input.location,
-          start: { dateTime: input.start },
-          end: { dateTime: input.end },
+          ...eventTimes(input),
           attendees: input.attendees.map((email) => ({ email })),
         },
       });
@@ -230,14 +258,14 @@ export const calendarRouter = createTRPCRouter({
 
   sendInvite: authedProcedure
     .input(
-      z.object({
-        summary: z.string().min(1).max(300),
-        description: z.string().max(5000).optional(),
-        location: z.string().max(500).optional(),
-        start: z.string().datetime(),
-        end: z.string().datetime(),
-        attendees: z.array(z.string().email().max(320)).min(1).max(50),
-      }),
+      z
+        .object({
+          summary: z.string().min(1).max(300),
+          description: z.string().max(5000).optional(),
+          location: z.string().max(500).optional(),
+          attendees: z.array(z.string().email().max(320)).min(1).max(50),
+        })
+        .and(whenSchema),
     )
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -248,8 +276,7 @@ export const calendarRouter = createTRPCRouter({
           summary: input.summary,
           description: input.description,
           location: input.location,
-          start: { dateTime: input.start },
-          end: { dateTime: input.end },
+          ...eventTimes(input),
           attendees: input.attendees.map((email) => ({ email })),
         },
       });
