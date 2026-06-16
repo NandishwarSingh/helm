@@ -1362,15 +1362,6 @@
   .lp main {
     flex: 1;
   }
-  .lp-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    max-width: 1120px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 1.1rem 2rem;
-  }
   .lp-brand {
     display: inline-flex;
     align-items: center;
@@ -1378,30 +1369,67 @@
     font-weight: 650;
     letter-spacing: -0.01em;
   }
-  .lp-bar .btn {
+
+  /* ---- sticky nav ---- */
+  .lp-nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    padding: 0.85rem 2rem;
+    background: var(--color-paper);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .lp-nav-links {
+    display: flex;
+    gap: 1.4rem;
+  }
+  .lp-nav-links a {
+    color: var(--color-ink-2);
+    text-decoration: none;
+    font-size: 0.88rem;
+    transition: color 0.12s var(--ease-snap);
+  }
+  .lp-nav-links a:hover {
+    color: var(--color-ink);
+  }
+  .lp-nav .btn {
     text-decoration: none;
   }
 
+  /* ---- hero ---- */
   .lp-hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 3.5rem;
+    text-align: center;
     max-width: 1120px;
     margin: 0 auto;
-    padding: 4.5rem 2rem 1rem;
+    padding: 5rem 2rem 0;
+  }
+  .lp-eyebrow {
+    margin: 0 0 1.1rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    color: var(--color-accent);
   }
   .lp-hero h1 {
-    margin: 0 0 1rem;
-    font-size: clamp(2.1rem, 4.2vw, 3.3rem);
-    line-height: 1.08;
+    margin: 0 0 1.1rem;
+    font-size: clamp(2.3rem, 5vw, 3.9rem);
+    line-height: 1.06;
     font-weight: 700;
-    letter-spacing: -0.025em;
+    letter-spacing: -0.028em;
+  }
+  .lp-hero h1 em {
+    font-style: normal;
+    color: var(--color-accent);
   }
   .lp-sub {
-    margin: 0 0 1.7rem;
-    max-width: 34rem;
-    font-size: 1.05rem;
+    margin: 0 0 1.8rem;
+    max-width: 38rem;
+    font-size: 1.07rem;
     line-height: 1.6;
     color: var(--color-ink-2);
   }
@@ -1409,6 +1437,7 @@
     display: flex;
     gap: 0.7rem;
     flex-wrap: wrap;
+    justify-content: center;
   }
   .lp-cta {
     height: 38px;
@@ -1419,30 +1448,68 @@
     margin: 1rem 0 0;
   }
   .lp-fine {
-    margin: 1.5rem 0 0;
-    max-width: 30rem;
+    margin: 1.4rem 0 0;
+    max-width: 32rem;
     font-size: 0.8rem;
     line-height: 1.55;
     color: var(--color-ink-3);
   }
 
+  /* ---- hero stats ---- */
+  .lp-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    width: 100%;
+    max-width: 880px;
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-line);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .lp-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 1.2rem 0.8rem;
+    border-left: 1px solid var(--color-line);
+  }
+  .lp-stat:first-child {
+    border-left: none;
+  }
+  .lp-stat-num {
+    font-size: 1.7rem;
+    font-weight: 650;
+    color: var(--color-ink);
+    letter-spacing: -0.02em;
+  }
+  .lp-stat-label {
+    font-size: 0.78rem;
+    color: var(--color-ink-3);
+  }
+
+  .lp-mock-wrap {
+    width: 100%;
+    max-width: 980px;
+    margin-top: 3.2rem;
+  }
+
   /* ---- hero product mock ---- */
   .lp-mock {
     display: grid;
-    grid-template-columns: 42px 188px 1fr;
-    height: 380px;
+    grid-template-columns: 46px 210px 1fr;
+    height: 420px;
     background: var(--color-paper);
     border: 1px solid var(--color-line-strong);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-pop);
     overflow: hidden;
+    text-align: left;
   }
   .lp-mock-rail {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 7px;
-    padding: 10px 7px;
+    padding: 10px 8px;
     background: var(--color-paper-sunken);
     border-right: 1px solid var(--color-line);
   }
@@ -1477,7 +1544,7 @@
     flex-direction: column;
   }
   .lp-mock-search {
-    height: 24px;
+    height: 26px;
     margin: 10px;
     border: 1px solid var(--color-line-strong);
     border-radius: var(--radius-md);
@@ -1492,18 +1559,18 @@
     z-index: 1;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 9px 12px 10px;
+    gap: 5px;
+    padding: 11px 13px 12px;
     border-bottom: 1px solid var(--color-line);
   }
   .lp-mock-from {
-    font-size: 10.5px;
+    font-size: 11.5px;
     font-weight: 650;
     color: var(--color-ink);
     line-height: 1;
   }
   .lp-mock-subject {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--color-ink-2);
     line-height: 1;
     white-space: nowrap;
@@ -1515,44 +1582,43 @@
     border-radius: 3px;
     background: var(--color-line);
   }
-  /* The roving selection: steps through the rows on a loop. */
   .lp-mock-cursor {
     position: absolute;
     z-index: 0;
     left: 0;
     right: 0;
     top: 0;
-    height: 56px;
+    height: 63px;
     background: var(--color-accent-wash);
     border-left: 2px solid var(--color-accent);
     animation: mockstep 9s var(--ease-snap) infinite;
   }
   @keyframes mockstep {
     0%, 16% { transform: translateY(0); }
-    22%, 38% { transform: translateY(56px); }
-    44%, 60% { transform: translateY(112px); }
-    66%, 80% { transform: translateY(168px); }
+    22%, 38% { transform: translateY(63px); }
+    44%, 60% { transform: translateY(126px); }
+    66%, 80% { transform: translateY(189px); }
     86%, 100% { transform: translateY(0); }
   }
   @media (prefers-reduced-motion: reduce) {
     .lp-mock-cursor { animation: none; }
   }
   .lp-mock-read {
-    padding: 14px 16px;
+    padding: 16px 18px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 11px;
   }
   .lp-mock-actions {
     display: flex;
-    gap: 10px;
+    gap: 11px;
     color: var(--color-ink-3);
-    padding-bottom: 8px;
+    padding-bottom: 9px;
     border-bottom: 1px solid var(--color-line);
   }
   .lp-mock-subjectline {
     width: 64%;
-    height: 13px;
+    height: 14px;
     border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-ink) 82%, transparent);
   }
@@ -1565,7 +1631,7 @@
   .lp-mock-body {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 9px;
     padding-top: 6px;
   }
   .lp-mock-body span {
@@ -1580,9 +1646,9 @@
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
-    gap: 1.4rem 2.2rem;
+    gap: 1.2rem 2rem;
     max-width: 1120px;
-    margin: 3.5rem auto 0;
+    margin: 4rem auto 0;
     padding: 1rem 2rem;
     border-top: 1px solid var(--color-line);
     border-bottom: 1px solid var(--color-line);
@@ -1595,26 +1661,85 @@
     gap: 0.4rem;
   }
 
-  /* ---- sections ---- */
+  /* ---- section rhythm ---- */
   .lp-section {
     max-width: 1120px;
     margin: 0 auto;
-    padding: 4.5rem 2rem 0;
+    padding: 5.5rem 2rem 0;
   }
-  .lp-section h2 {
-    margin: 0 0 1.6rem;
-    font-size: 1.6rem;
+  .lp-head {
+    max-width: 620px;
+    margin-bottom: 2.2rem;
+  }
+  .lp-label {
+    margin: 0 0 0.6rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    color: var(--color-accent);
+  }
+  .lp-title {
+    margin: 0;
+    font-size: clamp(1.5rem, 2.6vw, 2.1rem);
     font-weight: 650;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.022em;
+    line-height: 1.15;
+  }
+  .lp-desc {
+    margin: 0.8rem 0 0;
+    font-size: 0.97rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
   }
 
+  /* ---- built on ---- */
+  .lp-built {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .lp-built-card {
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem 1.2rem 1.15rem;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+    background: var(--color-paper-raised);
+  }
+  .lp-built-card svg {
+    color: var(--color-accent);
+  }
+  .lp-built-card h3 {
+    margin: 0.75rem 0 0.35rem;
+    font-size: 0.95rem;
+    font-weight: 650;
+  }
+  .lp-built-card p {
+    margin: 0 0 0.9rem;
+    font-size: 0.84rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+  .lp-tag {
+    margin-top: auto;
+    align-self: flex-start;
+    padding: 2px 7px;
+    font-size: 0.64rem;
+    letter-spacing: 0.1em;
+    color: var(--color-accent);
+    background: var(--color-accent-wash);
+    border-radius: var(--radius-sm);
+  }
+
+  /* ---- feature cards ---- */
   .lp-cards {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
   }
   .lp-card {
-    padding: 1.3rem 1.3rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    padding: 1.3rem 1.3rem 1.2rem;
     border: 1px solid var(--color-line);
     border-radius: var(--radius-lg);
     background: var(--color-paper-raised);
@@ -1628,49 +1753,142 @@
     font-weight: 650;
   }
   .lp-card p {
+    margin: 0 0 1rem;
+    font-size: 0.89rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
+  }
+  .lp-card-keys {
+    margin-top: auto;
+    display: flex;
+    gap: 4px;
+  }
+
+  /* ---- steps ---- */
+  .lp-steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2.2rem;
+    border-top: 1px solid var(--color-line);
+    padding-top: 1.8rem;
+  }
+  .lp-step-num {
+    display: inline-block;
+    margin-bottom: 0.7rem;
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    color: var(--color-accent);
+  }
+  .lp-step h3 {
+    margin: 0 0 0.45rem;
+    font-size: 1.02rem;
+    font-weight: 650;
+  }
+  .lp-step p {
     margin: 0;
     font-size: 0.89rem;
     line-height: 1.6;
     color: var(--color-ink-2);
   }
 
-  /* ---- speed receipt ---- */
-  .lp-receipt {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+  /* ---- comparison ---- */
+  .lp-compare-wrap {
+    overflow-x: auto;
+  }
+  .lp-compare {
+    width: 100%;
+    border-collapse: collapse;
     border: 1px solid var(--color-line-strong);
     border-radius: var(--radius-lg);
     overflow: hidden;
+    font-size: 0.9rem;
   }
-  .lp-receipt-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 2.4rem 1rem 2.2rem;
-    background: var(--color-paper-raised);
+  .lp-compare th,
+  .lp-compare td {
+    padding: 0.8rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-line);
   }
-  .lp-receipt-col[data-accent="true"] {
-    background: var(--color-accent-wash);
-    border-left: 1px solid var(--color-line-strong);
-  }
-  .lp-receipt-label {
-    font-size: 0.7rem;
-    letter-spacing: 0.12em;
+  .lp-compare th {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--color-ink-3);
+    background: var(--color-paper-sunken);
   }
-  .lp-receipt-num {
-    font-size: 2.3rem;
-    font-weight: 650;
-    letter-spacing: -0.02em;
+  .lp-compare tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .lp-compare td {
+    color: var(--color-ink-2);
+  }
+  .lp-compare td:first-child {
     color: var(--color-ink);
   }
-  .lp-receipt-col[data-accent="true"] .lp-receipt-num {
+  .lp-compare th[data-accent="true"],
+  .lp-compare td[data-accent="true"] {
+    background: var(--color-accent-wash);
+    color: var(--color-ink);
+    font-weight: 550;
+  }
+  .lp-compare th[data-accent="true"] {
     color: var(--color-accent);
   }
-  .lp-receipt-sub {
-    font-size: 0.84rem;
+  .lp-no {
+    color: var(--color-ink-3);
+  }
+
+  /* ---- pricing ---- */
+  .lp-price {
+    max-width: 460px;
+    padding: 1.8rem 1.8rem 1.7rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    background: var(--color-paper-raised);
+  }
+  .lp-price-tier {
+    margin: 0 0 0.4rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.14em;
+    color: var(--color-accent);
+  }
+  .lp-price-amount {
+    margin: 0 0 0.5rem;
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .lp-price-desc {
+    margin: 0 0 1.1rem;
+    font-size: 0.9rem;
+    line-height: 1.55;
     color: var(--color-ink-2);
+  }
+  .lp-price-list {
+    margin: 0 0 1.4rem;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .lp-price-list li {
+    position: relative;
+    padding-left: 1.1rem;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+  }
+  .lp-price-list li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.52em;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-accent);
   }
 
   /* ---- trust rows ---- */
@@ -1739,7 +1957,7 @@
   /* ---- final CTA + footer ---- */
   .lp-final {
     text-align: center;
-    padding: 5.5rem 2rem 5rem;
+    padding: 6rem 2rem 5.5rem;
   }
   .lp-final h2 {
     margin: 1rem 0 1.5rem;
@@ -1753,12 +1971,24 @@
   .lp-foot {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 1.6rem;
     max-width: 1120px;
     width: 100%;
     margin: 0 auto;
     padding: 1.2rem 2rem 1.6rem;
     border-top: 1px solid var(--color-line);
+  }
+  .lp-foot-links {
+    display: flex;
+    gap: 1.1rem;
+  }
+  .lp-foot-links a {
+    color: var(--color-ink-3);
+    text-decoration: none;
+    font-size: 0.82rem;
+  }
+  .lp-foot-links a:hover {
+    color: var(--color-ink);
   }
   .lp-foot-note {
     color: var(--color-ink-3);
@@ -1766,24 +1996,37 @@
   }
 
   @media (max-width: 960px) {
-    .lp-hero {
-      grid-template-columns: 1fr;
-      gap: 2.5rem;
-      padding-top: 3rem;
+    .lp-nav {
+      gap: 1rem;
     }
-    .lp-cards {
+    .lp-nav-links {
+      display: none;
+    }
+    .lp-stats {
+      grid-template-columns: 1fr 1fr;
+    }
+    .lp-stat:nth-child(3) {
+      border-left: none;
+      border-top: 1px solid var(--color-line);
+    }
+    .lp-stat:nth-child(4) {
+      border-top: 1px solid var(--color-line);
+    }
+    .lp-built {
+      grid-template-columns: 1fr 1fr;
+    }
+    .lp-cards,
+    .lp-steps {
       grid-template-columns: 1fr;
     }
     .lp-trust-row {
       grid-template-columns: 1fr;
       gap: 0.4rem;
     }
-    .lp-receipt {
+  }
+  @media (max-width: 560px) {
+    .lp-built {
       grid-template-columns: 1fr;
-    }
-    .lp-receipt-col[data-accent="true"] {
-      border-left: none;
-      border-top: 1px solid var(--color-line-strong);
     }
   }
 }
