@@ -57,7 +57,7 @@ type MessageAction =
   | "notSpam"
   | "deleteForever";
 
-type Confirm = { kind: "trash" | "delete"; ids: string[] };
+type Confirm = { kind: "trash" | "delete" | "draft"; ids: string[] };
 
 // Actions that move a message out of the folder being viewed.
 const LEAVES_FOLDER: Record<Folder, MessageAction[]> = {
@@ -66,6 +66,15 @@ const LEAVES_FOLDER: Record<Folder, MessageAction[]> = {
   archived: ["unarchive", "trash", "deleteForever"],
   spam: ["notSpam", "trash", "deleteForever"],
   trash: ["untrash", "deleteForever"],
+};
+
+// E always means "move it where it belongs" for the folder being viewed.
+const E_ACTION: Record<Folder, MessageAction> = {
+  inbox: "archive",
+  starred: "archive",
+  archived: "unarchive",
+  spam: "notSpam",
+  trash: "untrash",
 };
 
 const EMPTY_COPY: Record<Folder, string> = {
@@ -113,12 +122,14 @@ export function GmailPanel({
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [openingDraftId, setOpeningDraftId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
   const [draftsNotice, setDraftsNotice] = useState<string | null>(null);
 
   const toRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const readRef = useRef<HTMLElement>(null);
 
   const utils = api.useUtils();
 
@@ -332,8 +343,34 @@ export function GmailPanel({
   }
   function runConfirm() {
     if (!confirm) return;
-    performAction(confirm.ids, confirm.kind === "trash" ? "trash" : "deleteForever");
+    if (confirm.kind === "draft") {
+      const draftId = confirm.ids[0];
+      if (draftId) {
+        if (selectedDraftId === draftId) setSelectedDraftId(null);
+        deleteDraft.mutate({ draftId });
+      }
+    } else {
+      performAction(
+        confirm.ids,
+        confirm.kind === "trash" ? "trash" : "deleteForever",
+      );
+    }
     setConfirm(null);
+  }
+
+  // Roving selection for the drafts list.
+  function moveDraftSelection(step: 1 | -1) {
+    const list = drafts.data ?? [];
+    if (list.length === 0) return;
+    const index = list.findIndex((draft) => draft.id === selectedDraftId);
+    const next =
+      index === -1 ? 0 : Math.min(Math.max(index + step, 0), list.length - 1);
+    const target = list[next];
+    if (!target) return;
+    setSelectedDraftId(target.id);
+    document
+      .querySelector(`[data-draft-id="${target.id}"]`)
+      ?.scrollIntoView({ block: "nearest" });
   }
 
   // Confirm dialog keys: Enter confirms, Escape cancels.
@@ -517,24 +554,54 @@ export function GmailPanel({
         return;
       }
       if (hasOverlay()) return;
+      // Select all loaded messages.
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "a" &&
+        inMessages &&
+        emails.length > 0
+      ) {
+        event.preventDefault();
+        setBulkIds(new Set(emails.map((email) => email.id)));
+        return;
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // With a multiselect active, action keys apply to the selection.
+      const targets =
+        bulkIds.size > 0 ? [...bulkIds] : selectedId ? [selectedId] : [];
 
       switch (event.key) {
         case "j":
         case "ArrowDown":
-          if (!inMessages) return;
-          moveSelection(1);
+          if (inMessages) moveSelection(1);
+          else moveDraftSelection(1);
           break;
         case "k":
         case "ArrowUp":
-          if (!inMessages) return;
-          moveSelection(-1);
+          if (inMessages) moveSelection(-1);
+          else moveDraftSelection(-1);
           break;
         case "Enter":
         case "o":
-          if (!inMessages || emails.length === 0) return;
-          if (!selectedId) setSelectedId(emails[0]?.id ?? null);
+          if (inMessages) {
+            if (emails.length === 0) return;
+            if (!selectedId) setSelectedId(emails[0]?.id ?? null);
+          } else {
+            if (!selectedDraftId) return;
+            void openDraft(selectedDraftId);
+          }
           break;
+        case " ": {
+          // Space scrolls the open message; shift scrolls back up.
+          const pane = readRef.current;
+          if (!selectedId || !pane) return;
+          pane.scrollBy({
+            top: (event.shiftKey ? -1 : 1) * pane.clientHeight * 0.85,
+            behavior: "smooth",
+          });
+          break;
+        }
         case "x":
           if (!inMessages || !selectedId) return;
           toggleBulk(selectedId);
@@ -545,29 +612,36 @@ export function GmailPanel({
             setBulkIds(new Set());
             break;
           }
+          if (!inMessages && selectedDraftId) {
+            setSelectedDraftId(null);
+            break;
+          }
           if (!selectedId) return;
           setSelectedId(null);
           break;
         case "e":
-          if (!inMessages || !selectedId) return;
-          if (folder === "archived") performAction([selectedId], "unarchive");
-          else if (folder === "inbox" || folder === "starred")
-            performAction([selectedId], "archive");
-          else return;
+          if (!inMessages || targets.length === 0) return;
+          performAction(targets, E_ACTION[folder]);
           break;
         case "#":
-          if (!inMessages || !selectedId) return;
-          if (folder === "spam" || folder === "trash")
-            requestDelete([selectedId]);
-          else requestTrash([selectedId]);
+          if (inMessages) {
+            if (targets.length === 0) return;
+            if (folder === "spam" || folder === "trash") requestDelete(targets);
+            else requestTrash(targets);
+          } else {
+            if (!selectedDraftId) return;
+            setConfirm({ kind: "draft", ids: [selectedDraftId] });
+          }
           break;
         case "s":
           if (!inMessages) return;
-          toggleStar();
+          if (bulkIds.size > 0) performAction(targets, "star");
+          else toggleStar();
           break;
         case "U":
           if (!inMessages) return;
-          toggleUnread();
+          if (bulkIds.size > 0) performAction(targets, "unread");
+          else toggleUnread();
           break;
         case "r":
           if (!selectedId) return;
@@ -617,6 +691,7 @@ export function GmailPanel({
     setSelectedId(null);
     setBulkIds(new Set());
     setConfirmDeleteId(null);
+    setSelectedDraftId(null);
   }, [view]);
 
   // Warm the inbox once when it loads empty (first connect / cold cache).
@@ -800,6 +875,7 @@ export function GmailPanel({
             onSubmit={(e) => {
               e.preventDefault();
               setActiveSearch(search);
+              searchRef.current?.blur();
             }}
           >
             {inMessages ? (
@@ -944,11 +1020,19 @@ export function GmailPanel({
               </p>
             ) : (
               drafts.data.map((draft) => (
-                <div key={draft.id} className="draft-row">
+                <div
+                  key={draft.id}
+                  className="draft-row"
+                  data-active={selectedDraftId === draft.id}
+                  data-draft-id={draft.id}
+                >
                   <button
                     type="button"
                     className="draft-main"
-                    onClick={() => void openDraft(draft.id)}
+                    onClick={() => {
+                      setSelectedDraftId(draft.id);
+                      void openDraft(draft.id);
+                    }}
                     disabled={openingDraftId === draft.id}
                   >
                     <span className="row-from">
@@ -986,7 +1070,7 @@ export function GmailPanel({
         </div>
       </div>
 
-      <section className="mail-read">
+      <section className="mail-read" ref={readRef}>
         {!selectedId ? (
           <div className="empty">
             <p>Select a conversation to read it.</p>
@@ -1186,7 +1270,9 @@ export function GmailPanel({
                 <h2 className="confirm-title">
                   {confirm.kind === "trash"
                     ? `Move ${confirm.ids.length === 1 ? "this message" : `${confirm.ids.length} messages`} to trash?`
-                    : `Delete ${confirm.ids.length === 1 ? "this message" : `${confirm.ids.length} messages`} forever?`}
+                    : confirm.kind === "draft"
+                      ? "Delete this draft?"
+                      : `Delete ${confirm.ids.length === 1 ? "this message" : `${confirm.ids.length} messages`} forever?`}
                 </h2>
                 <p className="confirm-text">
                   {confirm.kind === "trash"
@@ -1208,7 +1294,11 @@ export function GmailPanel({
                   className="btn btn-danger-solid"
                   onClick={runConfirm}
                 >
-                  {confirm.kind === "trash" ? "Move to trash" : "Delete forever"}
+                  {confirm.kind === "trash"
+                    ? "Move to trash"
+                    : confirm.kind === "draft"
+                      ? "Delete draft"
+                      : "Delete forever"}
                   <Kbd>↵</Kbd>
                 </button>
               </div>

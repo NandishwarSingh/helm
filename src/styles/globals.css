@@ -596,6 +596,9 @@
   .draft-delete {
     color: var(--color-danger);
   }
+  .draft-row[data-active="true"] {
+    background: var(--color-accent-wash);
+  }
   .row-snippet {
     display: block;
     margin-top: 1px;
@@ -882,6 +885,38 @@
   }
   .search-wrap:focus-within > .kbd {
     opacity: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Chord hint (G then ...)
+ * ------------------------------------------------------------------ */
+@layer components {
+  .chord-chip {
+    position: fixed;
+    left: 50%;
+    bottom: 1.4rem;
+    transform: translateX(-50%);
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.45rem 0.8rem;
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    font-size: 0.74rem;
+    color: var(--color-ink-2);
+    white-space: nowrap;
+  }
+  .chord-chip span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .chord-then {
+    color: var(--color-ink-3);
   }
 }
 
@@ -1236,6 +1271,10 @@
   }
   .event-row:hover {
     background: var(--color-paper-sunken);
+  }
+  .event-row[data-active="true"] {
+    background: var(--color-accent-wash);
+    box-shadow: inset 2px 0 0 var(--color-accent);
   }
   .event-when {
     flex: none;

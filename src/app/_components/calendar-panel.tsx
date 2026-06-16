@@ -14,7 +14,7 @@ import {
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
 import { Kbd } from "@/components/kbd";
-import { hasOverlay, isTypingTarget, useAction } from "@/lib/actions";
+import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import {
   formatAttendees,
   formatEventWhen,
@@ -77,6 +77,10 @@ export function CalendarPanel({
   const week = useMemo(() => getWeekBounds(weekOffset), [weekOffset]);
   const weekLabel = formatWeekLabel(week.start, week.end);
 
+  // Roving event selection (J/K) and the delete confirmation.
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [confirmEvent, setConfirmEvent] = useState<EventItem | null>(null);
+
   // Dialog state: create or edit one event.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -89,6 +93,7 @@ export function CalendarPanel({
   const [attendees, setAttendees] = useState("");
 
   const dialogOpen = createOpen || editingId !== null;
+  useOverlay(confirmEvent !== null);
 
   const utils = api.useUtils();
 
@@ -113,6 +118,7 @@ export function CalendarPanel({
     setAttendees("");
     setEditingId(null);
     setConfirmingDelete(false);
+    setConfirmEvent(null);
     onCreateOpenChange(false);
   }
 
@@ -202,6 +208,26 @@ export function CalendarPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialogOpen]);
 
+  // Delete-confirm keys: Enter confirms, Escape cancels.
+  useEffect(() => {
+    if (!confirmEvent) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setConfirmEvent(null);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        deleteEvent.mutate({
+          id: confirmEvent!.id,
+          notify: confirmEvent!.attendees.length > 0,
+        });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmEvent]);
+
   // Calendar keyboard layer: week navigation and today.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -219,13 +245,41 @@ export function CalendarPanel({
         case "h":
         case "ArrowLeft":
           setWeekOffset((w) => w - 1);
+          setSelectedEventId(null);
           break;
         case "l":
         case "ArrowRight":
           setWeekOffset((w) => w + 1);
+          setSelectedEventId(null);
           break;
         case "t":
           setWeekOffset(0);
+          setSelectedEventId(null);
+          break;
+        case "j":
+        case "ArrowDown":
+          moveEventSelection(1);
+          break;
+        case "k":
+        case "ArrowUp":
+          moveEventSelection(-1);
+          break;
+        case "Enter":
+        case "e": {
+          const target = orderedEvents.find((ev) => ev.id === selectedEventId);
+          if (!target) return;
+          openEdit(target);
+          break;
+        }
+        case "#": {
+          const target = orderedEvents.find((ev) => ev.id === selectedEventId);
+          if (!target) return;
+          setConfirmEvent(target);
+          break;
+        }
+        case "Escape":
+          if (!selectedEventId) return;
+          setSelectedEventId(null);
           break;
         default:
           return;
@@ -235,7 +289,7 @@ export function CalendarPanel({
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeSearch]);
+  });
 
   // Palette / global-shortcut hooks.
   useAction("focus-search", () => {
@@ -305,6 +359,24 @@ export function CalendarPanel({
       };
     });
   }, [events.data, week.start]);
+
+  // Events in visual order (day by day) for J/K navigation.
+  const orderedEvents = useMemo(() => days.flatMap((day) => day.events), [days]);
+
+  function moveEventSelection(step: 1 | -1) {
+    if (orderedEvents.length === 0) return;
+    const index = orderedEvents.findIndex((ev) => ev.id === selectedEventId);
+    const next =
+      index === -1
+        ? 0
+        : Math.min(Math.max(index + step, 0), orderedEvents.length - 1);
+    const target = orderedEvents[next];
+    if (!target) return;
+    setSelectedEventId(target.id);
+    document
+      .querySelector(`[data-event-id="${target.id}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }
 
   const dialogError =
     createDraft.error ??
@@ -391,6 +463,7 @@ export function CalendarPanel({
         onSubmit={(e) => {
           e.preventDefault();
           setActiveSearch(search);
+          searchRef.current?.blur();
         }}
       >
         <div className="search-wrap">
@@ -444,11 +517,16 @@ export function CalendarPanel({
                     <motion.article
                       className="event-row"
                       key={event.id}
+                      data-active={selectedEventId === event.id}
+                      data-event-id={event.id}
                       variants={listRow}
                       initial="initial"
                       animate="animate"
                       custom={i}
-                      onClick={() => openEdit(event)}
+                      onClick={() => {
+                        setSelectedEventId(event.id);
+                        openEdit(event);
+                      }}
                     >
                       <div className="event-when tnum">
                         {formatEventWhen(event.start, event.end)}
@@ -482,6 +560,65 @@ export function CalendarPanel({
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {confirmEvent && (
+          <>
+            <motion.div
+              className="scrim"
+              variants={scrim}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              onClick={() => setConfirmEvent(null)}
+            />
+            <motion.div
+              className="confirm"
+              variants={slideOver}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              role="alertdialog"
+              aria-label="Confirm delete"
+            >
+              <div className="confirm-body">
+                <h2 className="confirm-title">
+                  Delete &quot;{confirmEvent.summary || "Untitled event"}&quot;?
+                </h2>
+                <p className="confirm-text">
+                  {confirmEvent.attendees.length > 0
+                    ? "Attendees will be notified that the event is cancelled."
+                    : "This cannot be undone."}
+                </p>
+              </div>
+              <div className="confirm-foot">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setConfirmEvent(null)}
+                >
+                  Cancel
+                  <Kbd>esc</Kbd>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger-solid"
+                  onClick={() =>
+                    deleteEvent.mutate({
+                      id: confirmEvent.id,
+                      notify: confirmEvent.attendees.length > 0,
+                    })
+                  }
+                  disabled={deleteEvent.isPending}
+                >
+                  Delete event
+                  <Kbd>↵</Kbd>
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {dialogOpen && (

@@ -48,6 +48,7 @@ const MAIL_FOLDERS: { id: MailView; label: string; icon: React.ReactNode }[] = [
 export function AppShell() {
   const [view, setView] = useState<View>("mail");
   const [mailView, setMailView] = useState<MailView>("inbox");
+  const [chordPending, setChordPending] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [eventSeed, setEventSeed] = useState<EventSeed | null>(null);
@@ -64,6 +65,39 @@ export function AppShell() {
   const connected = Boolean(status.data?.gmail ?? status.data?.calendar);
   const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
 
+  // G-chords: G then a second key jumps anywhere. Runs in the capture phase
+  // so a consumed chord key never reaches the panel handlers.
+  useEffect(() => {
+    if (!chordPending) return;
+    const timeout = window.setTimeout(() => setChordPending(false), 1600);
+    function onChordKey(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setChordPending(false);
+      const go = (folder: MailView) => {
+        setView("mail");
+        setMailView(folder);
+      };
+      switch (event.key.toLowerCase()) {
+        case "i": go("inbox"); break;
+        case "s": go("starred"); break;
+        case "a": go("archived"); break;
+        case "p": go("spam"); break;
+        case "t": go("trash"); break;
+        case "d": go("drafts"); break;
+        case "m": setView("mail"); break;
+        case "c": setView("calendar"); break;
+        default: break; // unknown key just cancels the chord
+      }
+    }
+    window.addEventListener("keydown", onChordKey, { capture: true });
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("keydown", onChordKey, { capture: true });
+    };
+  }, [chordPending]);
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       // The palette toggle works everywhere, including inside inputs.
@@ -77,6 +111,9 @@ export function AppShell() {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       switch (event.key) {
+        case "g":
+          setChordPending(true);
+          break;
         case "1":
           setView("mail");
           break;
@@ -287,6 +324,19 @@ export function AppShell() {
         onHelp={() => setHelpOpen(true)}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
+      {chordPending && (
+        <div className="chord-chip" role="status">
+          <Kbd>G</Kbd>
+          <span className="chord-then">then</span>
+          <span><Kbd>I</Kbd> inbox</span>
+          <span><Kbd>S</Kbd> starred</span>
+          <span><Kbd>A</Kbd> archive</span>
+          <span><Kbd>P</Kbd> spam</span>
+          <span><Kbd>T</Kbd> trash</span>
+          <span><Kbd>D</Kbd> drafts</span>
+          <span><Kbd>C</Kbd> calendar</span>
+        </div>
+      )}
     </MotionConfig>
   );
 }
