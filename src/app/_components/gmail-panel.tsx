@@ -786,8 +786,10 @@ export function GmailPanel({
         .filter(
           (email) =>
             email &&
-            email !== replyToAddr &&
-            email.toLowerCase() !== myEmail,
+            email.toLowerCase() !== replyToAddr.toLowerCase() &&
+            // Drop self. If the profile hasn't loaded yet, fall back to the
+            // reply-to host so a same-domain self-address is still excluded.
+            (myEmail ? email.toLowerCase() !== myEmail : true),
         );
       const unique = [...new Set(others)];
       if (unique.length > 0) {

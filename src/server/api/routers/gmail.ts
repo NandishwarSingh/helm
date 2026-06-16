@@ -511,8 +511,9 @@ export const gmailRouter = createTRPCRouter({
         format: "metadata",
       });
       const from = getHeader(message.payload?.headers, "From");
-      const email = /<([^>]+)>/.exec(from)?.[1] ?? from;
-      return { email: email.trim().toLowerCase() };
+      const email = (/<([^>]+)>/.exec(from)?.[1] ?? from).trim().toLowerCase();
+      // Only return a real address, so reply-all never excludes a junk value.
+      return { email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : "" };
     } catch (error) {
       if (isNotConnectedError(error)) return { email: "" };
       return { email: "" };

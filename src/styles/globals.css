@@ -1596,8 +1596,6 @@
     min-height: 0;
     overflow: auto;
     position: relative;
-  }
-  .calgrid {
     --calhead-h: 56px;
   }
   .calgrid-head {

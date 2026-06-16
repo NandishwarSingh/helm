@@ -88,8 +88,11 @@ function rebuild(src: Node, dst: HTMLElement, links: number): number {
     );
     styleFor(tag, el);
     if (tag === "A") {
-      const href = (child as Element).getAttribute("href") ?? "";
-      if (/^(https?:|mailto:)/i.test(href) && links < 60) {
+      const href = (child as Element).getAttribute("href")?.trim() ?? "";
+      // Allowlist http(s)/mailto only; anything else (javascript:, data:,
+      // vbscript:, …) gets no href, so it can never navigate or execute.
+      const safe = /^(https?:|mailto:)/i.test(href);
+      if (safe && links < 60) {
         el.setAttribute("href", href);
         el.setAttribute("target", "_blank");
         el.setAttribute("rel", "noopener noreferrer");
