@@ -12,6 +12,7 @@ import { ZodError } from "zod";
 
 import { db } from "@/server/db";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
+import { getTenantId } from "@/server/lib/session";
 
 /**
  * 1. CONTEXT
@@ -85,30 +86,55 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
 });
 
 /**
- * Throttles mutations per client IP so write endpoints (send, draft, refresh)
- * can't be hammered. Queries are left unthrottled.
+ * Per-IP throttling: every call counts against a generous global budget, and
+ * mutations against a tighter one, so neither reads nor writes can be hammered.
  */
 const rateLimitMiddleware = t.middleware(async ({ ctx, type, next }) => {
+  const ip = clientIp(ctx.headers);
+  const all = rateLimit(`rpc:${ip}`, 240, 60_000);
+  if (!all.ok) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: `Too many requests. Try again in ${Math.ceil(all.retryAfterMs / 1000)}s.`,
+    });
+  }
   if (type === "mutation") {
-    const { ok, retryAfterMs } = rateLimit(
-      `mutation:${clientIp(ctx.headers)}`,
-      30,
-      60_000,
-    );
-    if (!ok) {
+    const writes = rateLimit(`mutation:${ip}`, 30, 60_000);
+    if (!writes.ok) {
       throw new TRPCError({
         code: "TOO_MANY_REQUESTS",
-        message: `Too many requests. Try again in ${Math.ceil(retryAfterMs / 1000)}s.`,
+        message: `Too many requests. Try again in ${Math.ceil(writes.retryAfterMs / 1000)}s.`,
       });
     }
   }
   return next();
 });
 
+/** Rejects calls that arrive without a valid signed session cookie. */
+const authMiddleware = t.middleware(async ({ next }) => {
+  if (!(await getTenantId())) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Sign in to continue.",
+    });
+  }
+  return next();
+});
+
 /**
- * Public procedure — the base for queries and mutations. Mutations are rate
- * limited per IP; it does not require an authenticated session.
+ * Public procedure — rate limited, no session required. Only for endpoints
+ * that must work before sign-in (connection status).
  */
 export const publicProcedure = t.procedure
   .use(rateLimitMiddleware)
+  .use(timingMiddleware);
+
+/**
+ * Authenticated procedure — every Gmail and Calendar endpoint. Requires the
+ * signed session cookie on top of the rate limits; tenant scoping happens in
+ * the handlers via getTenant().
+ */
+export const authedProcedure = t.procedure
+  .use(rateLimitMiddleware)
+  .use(authMiddleware)
   .use(timingMiddleware);

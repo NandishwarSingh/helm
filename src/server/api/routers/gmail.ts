@@ -17,7 +17,7 @@ import {
 import { withRetry } from "@/server/lib/retry";
 import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
-import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
+import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
 
 const paginationSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
@@ -142,10 +142,10 @@ const FOLDER_FILTERS: Record<Folder, (m: MappedMessage) => boolean> = {
 };
 
 export const gmailRouter = createTRPCRouter({
-  searchEmails: publicProcedure
+  searchEmails: authedProcedure
     .input(
       z.object({
-        query: z.string(),
+        query: z.string().max(256),
         folder: folderSchema,
         cursor: z.number().min(0).default(0),
         limit: z.number().min(1).max(50).default(25),
@@ -193,7 +193,7 @@ export const gmailRouter = createTRPCRouter({
       return { items, nextCursor };
     }),
 
-  getMessage: publicProcedure
+  getMessage: authedProcedure
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
       try {
@@ -227,7 +227,7 @@ export const gmailRouter = createTRPCRouter({
       }
     }),
 
-  listDrafts: publicProcedure
+  listDrafts: authedProcedure
     .input(paginationSchema)
     .query(async ({ input }) => {
       const drafts = await listOrEmpty(async () => {
@@ -246,7 +246,7 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   // Fresh sync: walk Gmail pages up to a cap, hydrate, and reset the cursor.
-  refreshInbox: publicProcedure.mutation(async () => {
+  refreshInbox: authedProcedure.mutation(async () => {
     const tenant = await getTenant();
     const tenantId = await getTenantId();
     if (!tenantId) return { synced: 0 };
@@ -270,7 +270,7 @@ export const gmailRouter = createTRPCRouter({
   }),
 
   // Pages deeper into Gmail when the cached list is exhausted (infinite scroll).
-  syncMore: publicProcedure.mutation(async () => {
+  syncMore: authedProcedure.mutation(async () => {
     const tenant = await getTenant();
     const tenantId = await getTenantId();
     if (!tenantId) return { synced: 0, hasMore: false };
@@ -296,7 +296,7 @@ export const gmailRouter = createTRPCRouter({
   }),
 
   // Label actions, mapped to Gmail label changes server-side.
-  modifyMessage: publicProcedure
+  modifyMessage: authedProcedure
     .input(
       z.object({
         id: z.string().min(1),
@@ -356,7 +356,7 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   // Bulk label actions over a multiselect, in one Gmail call.
-  bulkModify: publicProcedure
+  bulkModify: authedProcedure
     .input(
       z.object({
         ids: z.array(z.string().min(1)).min(1).max(50),
@@ -404,7 +404,7 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   // Permanently delete a multiselect (no batch endpoint upstream).
-  bulkDelete: publicProcedure
+  bulkDelete: authedProcedure
     .input(z.object({ ids: z.array(z.string().min(1)).min(1).max(25) }))
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -418,7 +418,7 @@ export const gmailRouter = createTRPCRouter({
 
   // Spam and trash are excluded from the normal sync; pull them on demand
   // when those folders are opened.
-  syncFolder: publicProcedure
+  syncFolder: authedProcedure
     .input(z.object({ folder: z.enum(["spam", "trash"]) }))
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -433,7 +433,7 @@ export const gmailRouter = createTRPCRouter({
       return { synced: ids.length };
     }),
 
-  getDraft: publicProcedure
+  getDraft: authedProcedure
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
       const tenant = await getTenant();
@@ -449,13 +449,13 @@ export const gmailRouter = createTRPCRouter({
       };
     }),
 
-  updateDraft: publicProcedure
+  updateDraft: authedProcedure
     .input(
       z.object({
         draftId: z.string().min(1),
-        to: z.string().email(),
-        subject: z.string().min(1),
-        body: z.string().min(1),
+        to: z.string().email().max(320),
+        subject: z.string().min(1).max(500),
+        body: z.string().min(1).max(100_000),
       }),
     )
     .mutation(async ({ input }) => {
@@ -468,7 +468,7 @@ export const gmailRouter = createTRPCRouter({
       return { id: draft.id ?? input.draftId };
     }),
 
-  deleteDraft: publicProcedure
+  deleteDraft: authedProcedure
     .input(z.object({ draftId: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -478,12 +478,12 @@ export const gmailRouter = createTRPCRouter({
       return { ok: true };
     }),
 
-  createDraft: publicProcedure
+  createDraft: authedProcedure
     .input(
       z.object({
-        to: z.string().email(),
-        subject: z.string().min(1),
-        body: z.string().min(1),
+        to: z.string().email().max(320),
+        subject: z.string().min(1).max(500),
+        body: z.string().min(1).max(100_000),
       }),
     )
     .mutation(async ({ input }) => {
@@ -498,7 +498,7 @@ export const gmailRouter = createTRPCRouter({
       };
     }),
 
-  sendDraft: publicProcedure
+  sendDraft: authedProcedure
     .input(z.object({ draftId: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
@@ -512,12 +512,12 @@ export const gmailRouter = createTRPCRouter({
       };
     }),
 
-  sendEmail: publicProcedure
+  sendEmail: authedProcedure
     .input(
       z.object({
-        to: z.string().email(),
-        subject: z.string().min(1),
-        body: z.string().min(1),
+        to: z.string().email().max(320),
+        subject: z.string().min(1).max(500),
+        body: z.string().min(1).max(100_000),
       }),
     )
     .mutation(async ({ input }) => {

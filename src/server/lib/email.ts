@@ -1,3 +1,4 @@
+import "server-only";
 export function encodeRawEmail(opts: {
   to: string;
   subject: string;

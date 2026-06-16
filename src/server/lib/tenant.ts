@@ -1,3 +1,4 @@
+import "server-only";
 import { corsair } from "@/server/corsair";
 import { getTenantId } from "@/server/lib/session";
 

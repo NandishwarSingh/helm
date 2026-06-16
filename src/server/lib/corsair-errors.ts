@@ -1,3 +1,4 @@
+import "server-only";
 /**
  * Before a tenant has connected Google, Corsair's cache reads throw rather
  * than returning empty. Treat that "not connected yet" state as an empty

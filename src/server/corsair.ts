@@ -1,3 +1,4 @@
+import "server-only";
 import "dotenv/config";
 import { createCorsair } from "corsair";
 import { gmail } from "@corsair-dev/gmail";

@@ -5,12 +5,18 @@ import {
   storeGoogleTokens,
   verifyState,
 } from "@/server/lib/google-oauth";
+import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 
 /**
  * Completes the combined Google consent: verifies state, exchanges the code
  * once, and stores the token under both the Gmail and Calendar accounts.
  */
 export async function GET(request: NextRequest) {
+  const { ok } = rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
+  if (!ok) {
+    return NextResponse.redirect(new URL("/?error=rate_limited", request.url));
+  }
+
   const params = request.nextUrl.searchParams;
 
   if (params.get("error")) {

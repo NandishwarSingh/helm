@@ -4,7 +4,7 @@ import { purgeCachedEntity } from "@/server/lib/cache";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
 import { getTenant } from "@/server/lib/tenant";
-import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
+import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
 
 const paginationSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
@@ -88,10 +88,10 @@ function filterEventsByWeek<
 }
 
 export const calendarRouter = createTRPCRouter({
-  searchEvents: publicProcedure
+  searchEvents: authedProcedure
     .input(
       paginationSchema.extend({
-        query: z.string(),
+        query: z.string().max(256),
         weekStart: z.string().datetime(),
         weekEnd: z.string().datetime(),
       }),
@@ -123,7 +123,7 @@ export const calendarRouter = createTRPCRouter({
       );
     }),
 
-  refreshEvents: publicProcedure
+  refreshEvents: authedProcedure
     .input(
       z.object({
         weekStart: z.string().datetime(),
@@ -145,15 +145,15 @@ export const calendarRouter = createTRPCRouter({
       };
     }),
 
-  createDraft: publicProcedure
+  createDraft: authedProcedure
     .input(
       z.object({
-        summary: z.string().min(1),
-        description: z.string().optional(),
-        location: z.string().optional(),
+        summary: z.string().min(1).max(300),
+        description: z.string().max(5000).optional(),
+        location: z.string().max(500).optional(),
         start: z.string().datetime(),
         end: z.string().datetime(),
-        attendees: z.array(z.string().email()).optional(),
+        attendees: z.array(z.string().email().max(320)).max(50).optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -177,16 +177,16 @@ export const calendarRouter = createTRPCRouter({
       };
     }),
 
-  updateEvent: publicProcedure
+  updateEvent: authedProcedure
     .input(
       z.object({
         id: z.string().min(1),
-        summary: z.string().min(1),
-        description: z.string().optional(),
-        location: z.string().optional(),
+        summary: z.string().min(1).max(300),
+        description: z.string().max(5000).optional(),
+        location: z.string().max(500).optional(),
         start: z.string().datetime(),
         end: z.string().datetime(),
-        attendees: z.array(z.string().email()),
+        attendees: z.array(z.string().email().max(320)).max(50),
         // Notify attendees about the change when any are present.
         notify: z.boolean().default(false),
       }),
@@ -209,7 +209,7 @@ export const calendarRouter = createTRPCRouter({
       return { id: event.id ?? input.id, htmlLink: event.htmlLink ?? "" };
     }),
 
-  deleteEvent: publicProcedure
+  deleteEvent: authedProcedure
     .input(
       z.object({
         id: z.string().min(1),
@@ -228,15 +228,15 @@ export const calendarRouter = createTRPCRouter({
       return { ok: true };
     }),
 
-  sendInvite: publicProcedure
+  sendInvite: authedProcedure
     .input(
       z.object({
-        summary: z.string().min(1),
-        description: z.string().optional(),
-        location: z.string().optional(),
+        summary: z.string().min(1).max(300),
+        description: z.string().max(5000).optional(),
+        location: z.string().max(500).optional(),
         start: z.string().datetime(),
         end: z.string().datetime(),
-        attendees: z.array(z.string().email()).min(1),
+        attendees: z.array(z.string().email().max(320)).min(1).max(50),
       }),
     )
     .mutation(async ({ input }) => {
