@@ -12,6 +12,8 @@ export const env = createEnv({
     CORSAIR_KEK: z.string().min(1),
     // Secret used to HMAC-sign the session cookie that scopes each user's tenant.
     AUTH_SECRET: z.string().min(16),
+    // OpenRouter key powering the agent (DeepSeek chat + embeddings).
+    OPENROUTER_API_KEY: z.string().min(1),
     // Google OAuth client (Web application) used for the single combined-scope
     // consent that connects Gmail and Calendar in one flow.
     GOOGLE_CLIENT_ID: z.string().min(1),
@@ -39,6 +41,7 @@ export const env = createEnv({
     DATABASE_URL: process.env.DATABASE_URL,
     CORSAIR_KEK: process.env.CORSAIR_KEK,
     AUTH_SECRET: process.env.AUTH_SECRET,
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     TENANT_ID: process.env.TENANT_ID,

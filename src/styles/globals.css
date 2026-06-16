@@ -900,6 +900,159 @@
 }
 
 /* ------------------------------------------------------------------ *
+ * Agent chat
+ * ------------------------------------------------------------------ */
+@layer components {
+  .agent {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .agent-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .agent-thread {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 1.6rem 1.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .agent-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 14vh 0 0;
+    color: var(--color-ink-2);
+  }
+  .agent-empty svg {
+    color: var(--color-accent);
+  }
+  .agent-empty h2 {
+    margin: 0.9rem 0 0.4rem;
+    font-size: 1.35rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+  }
+  .agent-empty p {
+    margin: 0 0 1.6rem;
+    max-width: 26rem;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--color-ink-3);
+  }
+  .agent-suggest {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+    width: 100%;
+  }
+  .agent-suggest button {
+    padding: 0.7rem 0.85rem;
+    text-align: left;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    color: var(--color-ink-2);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition:
+      border-color 0.12s var(--ease-snap),
+      color 0.12s var(--ease-snap);
+  }
+  .agent-suggest button:hover {
+    border-color: var(--color-accent);
+    color: var(--color-ink);
+  }
+  .agent-msg {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    align-items: flex-start;
+  }
+  .agent-msg[data-role="user"] {
+    align-items: flex-end;
+  }
+  .agent-msg[data-role="user"] .agent-text {
+    background: var(--color-accent-wash);
+    color: var(--color-ink);
+    border-radius: var(--radius-md);
+    padding: 0.55rem 0.8rem;
+    max-width: 85%;
+  }
+  .agent-text {
+    margin: 0;
+    font-size: 0.94rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .agent-tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 3px 9px;
+    font-size: 0.72rem;
+    color: var(--color-ink-3);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-paper-raised);
+  }
+  .agent-tool::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-ink-3);
+  }
+  .agent-tool[data-done="true"] {
+    color: var(--color-ink-2);
+  }
+  .agent-tool[data-done="true"]::before {
+    background: var(--color-accent);
+  }
+  .agent-tool[data-error="true"] {
+    color: var(--color-danger);
+    border-color: var(--color-danger);
+  }
+  .agent-tool[data-error="true"]::before {
+    background: var(--color-danger);
+  }
+  .agent-error {
+    margin: 0;
+  }
+  .agent-inputrow {
+    display: flex;
+    gap: 0.6rem;
+    max-width: 720px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 0.8rem 1.5rem 0.35rem;
+    border-top: 1px solid var(--color-line);
+  }
+  .agent-inputrow .field {
+    flex: 1;
+    height: 38px;
+  }
+  .agent-fine {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    justify-content: center;
+    margin: 0 0 0.8rem;
+    font-size: 0.7rem;
+    color: var(--color-ink-3);
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Chord hint (G then ...)
  * ------------------------------------------------------------------ */
 @layer components {

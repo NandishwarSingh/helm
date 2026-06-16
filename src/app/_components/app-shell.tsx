@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 
+import { AgentPanel } from "@/app/_components/agent-panel";
 import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { Landing } from "@/app/_components/landing";
 import {
@@ -14,6 +15,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { CommandPalette } from "@/components/command-palette";
 import { HelmLoader } from "@/components/helm-loader";
 import {
+  AgentIcon,
   ArchiveIcon,
   CalendarIcon,
   ComposeIcon,
@@ -34,7 +36,7 @@ import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/ac
 import { chordBar, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
-type View = "mail" | "calendar";
+type View = "mail" | "calendar" | "agent";
 
 const MAIL_FOLDERS: {
   id: MailView;
@@ -132,6 +134,9 @@ export function AppShell() {
         case "2":
           setView("calendar");
           break;
+        case "3":
+          setView("agent");
+          break;
         case "c":
           setView("mail");
           setComposeOpen(true);
@@ -198,6 +203,16 @@ export function AppShell() {
               Calendar
               <Kbd>2</Kbd>
             </button>
+            <button
+              type="button"
+              className="rail-item"
+              data-active={view === "agent"}
+              onClick={() => setView("agent")}
+            >
+              <AgentIcon />
+              Agent
+              <Kbd>3</Kbd>
+            </button>
           </nav>
 
           <div className="rail-divider" />
@@ -245,7 +260,7 @@ export function AppShell() {
         <div className="frame">
           <header className="topbar">
             <span className="topbar-title">
-              {view === "mail" ? "Mail" : "Calendar"}
+              {view === "mail" ? "Mail" : view === "calendar" ? "Calendar" : "Agent"}
             </span>
             <span className="topbar-spacer" />
             <button
@@ -266,7 +281,7 @@ export function AppShell() {
               Commands
               <Kbd>⌘K</Kbd>
             </button>
-            {view === "mail" ? (
+            {view === "mail" && (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -276,7 +291,8 @@ export function AppShell() {
                 Compose
                 <Kbd>C</Kbd>
               </button>
-            ) : (
+            )}
+            {view === "calendar" && (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -299,7 +315,9 @@ export function AppShell() {
                 exit="exit"
                 style={{ height: "100%" }}
               >
-                {view === "mail" ? (
+                {view === "agent" ? (
+                  <AgentPanel />
+                ) : view === "mail" ? (
                   <GmailPanel
                     view={mailView}
                     onViewChange={setMailView}

@@ -5,6 +5,7 @@ import { Command } from "cmdk";
 import { AnimatePresence, motion } from "motion/react";
 
 import {
+  AgentIcon,
   CalendarIcon,
   ComposeIcon,
   ContrastIcon,
@@ -21,7 +22,7 @@ import { paletteDrop, scrim } from "@/lib/motion";
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onNavigate: (view: "mail" | "calendar") => void;
+  onNavigate: (view: "mail" | "calendar" | "agent") => void;
   onCompose: () => void;
   onNewEvent: () => void;
   onHelp: () => void;
@@ -133,6 +134,13 @@ export function CommandPalette({
                     Calendar
                     <span className="palette-keys">
                       <Kbd>2</Kbd>
+                    </span>
+                  </Command.Item>
+                  <Command.Item onSelect={() => run(() => onNavigate("agent"))}>
+                    <AgentIcon size={15} />
+                    Agent
+                    <span className="palette-keys">
+                      <Kbd>3</Kbd>
                     </span>
                   </Command.Item>
                 </Command.Group>
