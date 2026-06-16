@@ -2568,22 +2568,50 @@
     line-height: 1.5;
     color: var(--color-ink-2);
   }
-  /* The grab cursor: rides above everything, never eats pointer input. */
+  /* The grab cursor: rides above everything, never eats pointer input. The
+     hand sits just ABOVE the pointer (margin lifts it up) so it reads as the
+     cursor rather than overlapping the pointer dot. */
   .veil-hand {
     position: fixed;
     top: 0;
     left: 0;
-    z-index: 20;
-    width: 34px;
-    height: 34px;
-    margin: -17px 0 0 -17px;
+    z-index: 30;
+    width: 36px;
+    height: 36px;
+    margin: -32px 0 0 -18px;
     pointer-events: none;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+    filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.6));
     will-change: transform;
   }
-  /* When the cloth is armed, swap the wait-cursor everywhere in the overlay. */
-  .veil-root[data-phase="armed"] {
-    cursor: none;
+  /* When the cloth is armed, hide the OS cursor everywhere in the overlay so
+     only the hand shows. !important beats SDL's inline canvas cursor. */
+  .veil-root[data-phase="armed"],
+  .veil-root[data-phase="armed"] .veil-host,
+  .veil-root[data-phase="armed"] canvas,
+  .veil-root[data-phase="armed"] .veil-enter {
+    cursor: none !important;
+  }
+  /* The "Enter Helm" button rides the cloth and offers a non-tear way in. */
+  .veil-enter {
+    position: absolute;
+    left: 50%;
+    top: 61%;
+    transform: translateX(-50%);
+    padding: 0.5rem 1.1rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-on-accent);
+    background: var(--color-accent);
+    border: none;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    white-space: nowrap;
+  }
+  .veil-enter::after {
+    content: " →";
+  }
+  .veil-enter:hover {
+    background: var(--color-accent-strong);
   }
   .veil-root[data-phase="revealed"] .veil-chrome {
     opacity: 0;
