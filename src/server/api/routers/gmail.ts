@@ -131,20 +131,32 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input }) => {
+      const query = input.query.trim();
       const messages = await listOrEmpty(async () => {
         const tenant = await getTenant();
-        return input.query.trim()
-          ? tenant.gmail.db.messages.search({
-              data: {
-                snippet: { contains: input.query },
-              },
+        if (!query) {
+          return tenant.gmail.db.messages.list({
+            limit: input.limit,
+            offset: input.cursor,
+          });
+        }
+        // The cache filters AND together, so match each field in parallel
+        // and merge — a query hits snippet, subject, or sender.
+        const fields = [
+          { snippet: { contains: query } },
+          { subject: { contains: query } },
+          { from: { contains: query } },
+        ];
+        const results = await Promise.all(
+          fields.map((data) =>
+            tenant.gmail.db.messages.search({
+              data,
               limit: input.limit,
               offset: input.cursor,
-            })
-          : tenant.gmail.db.messages.list({
-              limit: input.limit,
-              offset: input.cursor,
-            });
+            }),
+          ),
+        );
+        return results.flat();
       });
 
       // The inbox shows inbox mail only — archived and trashed messages
@@ -152,10 +164,12 @@ export const gmailRouter = createTRPCRouter({
       // are filtered out of the list.
       const items = sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
-      ).filter((message) => !message.archived && !message.trashed);
-      // A full page implies there may be more cached rows to page through.
+      )
+        .filter((message) => !message.archived && !message.trashed)
+        .slice(0, input.limit);
+      // A full page from any source implies more cached rows to page through.
       const nextCursor =
-        messages.length === input.limit ? input.cursor + input.limit : null;
+        messages.length >= input.limit ? input.cursor + input.limit : null;
       return { items, nextCursor };
     }),
 

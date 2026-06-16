@@ -78,6 +78,7 @@ export function GmailPanel({
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [openingDraftId, setOpeningDraftId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [draftsNotice, setDraftsNotice] = useState<string | null>(null);
 
   const toRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -322,6 +323,7 @@ export function GmailPanel({
 
   async function openDraft(draftId: string) {
     setOpeningDraftId(draftId);
+    setDraftsNotice(null);
     try {
       const draft = await utils.gmail.getDraft.fetch({ id: draftId });
       setEditingDraftId(draftId);
@@ -329,6 +331,8 @@ export function GmailPanel({
       setSubject(draft.subject);
       setBody(draft.body);
       onComposeOpenChange(true);
+    } catch {
+      setDraftsNotice("That draft could not be opened. Try refreshing.");
     } finally {
       setOpeningDraftId(null);
     }
@@ -656,6 +660,11 @@ export function GmailPanel({
               {drafts.error.message}
             </p>
           )}
+          {view === "drafts" && draftsNotice && (
+            <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
+              {draftsNotice}
+            </p>
+          )}
           {view === "drafts" &&
             drafts.data &&
             (drafts.data.length === 0 ? (
@@ -799,6 +808,7 @@ export function GmailPanel({
               )}
             </div>
             <EmailBody
+              key={selectedEmail.data.id}
               html={selectedEmail.data.html}
               text={selectedEmail.data.body || selectedEmail.data.snippet}
             />
