@@ -1,11 +1,14 @@
 import "server-only";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
 import { corsairAccounts, corsairIntegrations } from "@/server/db/schema";
+import { signState } from "@/server/lib/oauth-state";
+
+export { verifyState } from "@/server/lib/oauth-state";
 
 /**
  * A single combined-scope Google consent that connects Gmail and Google
@@ -22,7 +25,6 @@ const TOKEN_ENDPOINTS = [
   "https://accounts.google.com/o/oauth2/token",
 ];
 const TOKEN_TIMEOUT_MS = 8000;
-const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
@@ -38,32 +40,6 @@ type TokenSet = {
   expires_in?: number;
   scope?: string;
 };
-
-function sign(value: string): string {
-  return createHmac("sha256", env.AUTH_SECRET).update(value).digest("base64url");
-}
-
-export function signState(tenantId: string, nowMs: number): string {
-  const payload = Buffer.from(`${tenantId}:${nowMs}`).toString("base64url");
-  return `${payload}.${sign(payload)}`;
-}
-
-export function verifyState(state: string, nowMs: number): string | null {
-  const dot = state.lastIndexOf(".");
-  if (dot <= 0) return null;
-  const payload = state.slice(0, dot);
-  const sig = Buffer.from(state.slice(dot + 1));
-  const expected = Buffer.from(sign(payload));
-  if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) {
-    return null;
-  }
-  const [tenantId, issued] = Buffer.from(payload, "base64url")
-    .toString()
-    .split(":");
-  if (!tenantId || !issued) return null;
-  if (nowMs - Number(issued) > STATE_MAX_AGE_MS) return null;
-  return tenantId;
-}
 
 export function buildAuthUrl(tenantId: string, redirectUri: string, nowMs: number): string {
   const url = new URL(AUTH_ENDPOINT);

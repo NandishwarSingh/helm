@@ -13,6 +13,16 @@ import {
 import { HelmLoader } from "@/components/helm-loader";
 import { Kbd } from "@/components/kbd";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
+import {
+  DAY_MINUTES,
+  HOUR_PX,
+  dayKey,
+  isAllDay,
+  layoutDay,
+  minutesIntoDay,
+  shiftDateString,
+  toDatetimeLocalValue,
+} from "@/lib/calendar";
 import { parseEmailAddress } from "@/lib/display";
 import { scrim, slideOver } from "@/lib/motion";
 import { formatWeekLabel, getWeekBounds } from "@/lib/week";
@@ -36,38 +46,6 @@ type EventItem = {
   htmlLink: string;
 };
 
-/** Geometry of the week grid. */
-const HOUR_PX = 48;
-const DAY_MINUTES = 24 * 60;
-
-function toDatetimeLocalValue(date: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function dayKey(date: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-// Date-only strings are calendar dates, not instants — parse and shift them
-// in LOCAL time so the day never drifts across timezones.
-function shiftDateString(value: string, days: number): string {
-  const [y, m, d] = value.split("-").map(Number);
-  if (!y || !m || !d) return value;
-  return dayKey(new Date(y, m - 1, d + days));
-}
-
-/** Date-only starts ("2026-06-12") are all-day events. */
-function isAllDay(event: EventItem) {
-  return Boolean(event.start) && !event.start.includes("T");
-}
-
-function minutesIntoDay(iso: string) {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
-}
-
 function formatHour(hour: number) {
   if (hour === 0) return "12 AM";
   if (hour < 12) return `${hour} AM`;
@@ -84,59 +62,6 @@ function formatTimeRange(event: EventItem) {
   return `${fmt(event.start)} – ${fmt(event.end)}`;
 }
 
-type Positioned = {
-  event: EventItem;
-  top: number;
-  height: number;
-  lane: number;
-  lanes: number;
-};
-
-/**
- * Lays out one day's timed events: overlapping events split the column into
- * equal lanes (greedy first-free-lane assignment per overlap cluster).
- */
-function layoutDay(events: EventItem[]): Positioned[] {
-  const sorted = [...events].sort(
-    (a, b) => minutesIntoDay(a.start) - minutesIntoDay(b.start),
-  );
-  const out: Positioned[] = [];
-  let cluster: { item: EventItem; start: number; end: number; lane: number }[] =
-    [];
-  let clusterEnd = -1;
-
-  const flush = () => {
-    if (cluster.length === 0) return;
-    const lanes = Math.max(...cluster.map((c) => c.lane)) + 1;
-    for (const c of cluster) {
-      const top = (c.start / DAY_MINUTES) * 24 * HOUR_PX;
-      const height = Math.max(((c.end - c.start) / 60) * HOUR_PX, 22);
-      out.push({ event: c.item, top, height, lane: c.lane, lanes });
-    }
-    cluster = [];
-    clusterEnd = -1;
-  };
-
-  for (const item of sorted) {
-    const start = minutesIntoDay(item.start);
-    const end = Math.max(
-      item.end?.includes("T") ? minutesIntoDay(item.end) : start + 30,
-      start + 20,
-    );
-    if (cluster.length > 0 && start >= clusterEnd) flush();
-    // First lane whose previous occupant has ended.
-    const laneEnds: number[] = [];
-    for (const c of cluster) {
-      laneEnds[c.lane] = Math.max(laneEnds[c.lane] ?? 0, c.end);
-    }
-    let lane = 0;
-    while ((laneEnds[lane] ?? 0) > start) lane += 1;
-    cluster.push({ item, start, end, lane });
-    clusterEnd = Math.max(clusterEnd, end);
-  }
-  flush();
-  return out;
-}
 
 /** The accent line marking the current minute in today's column. */
 function NowLine() {

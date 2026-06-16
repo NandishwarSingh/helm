@@ -184,33 +184,29 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
           ) : null}
         </AnimatePresence>
       </div>
-      {phase === "armed" && <SawCursor />}
+      {phase === "armed" && <HandCursor />}
     </div>
   );
 }
 
-/** A circular saw blade that follows the pointer and spins while cutting. */
-const TEETH = 16;
-const SAW_POINTS = Array.from({ length: TEETH * 2 }, (_, i) => {
-  const r = i % 2 === 0 ? 17 : 13.4;
-  const a = (Math.PI / TEETH) * i - Math.PI / 2;
-  return `${(20 + r * Math.cos(a)).toFixed(2)},${(20 + r * Math.sin(a)).toFixed(2)}`;
-}).join(" ");
-
-function SawCursor() {
+/**
+ * A hand that follows the pointer: open and ready to grab at rest, closing
+ * into a grip while the cloth is being dragged/torn (pointer held down).
+ */
+function HandCursor() {
   const x = useMotionValue(-100);
   const y = useMotionValue(-100);
   const sx = useSpring(x, { stiffness: 900, damping: 60, mass: 0.4 });
   const sy = useSpring(y, { stiffness: 900, damping: 60, mass: 0.4 });
-  const [cutting, setCutting] = useState(false);
+  const [grabbing, setGrabbing] = useState(false);
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
       x.set(e.clientX);
       y.set(e.clientY);
     };
-    const down = () => setCutting(true);
-    const up = () => setCutting(false);
+    const down = () => setGrabbing(true);
+    const up = () => setGrabbing(false);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerdown", down);
     window.addEventListener("pointerup", up);
@@ -222,33 +218,44 @@ function SawCursor() {
   }, [x, y]);
 
   return (
-    <motion.div className="veil-saw" style={{ x: sx, y: sy }} aria-hidden="true">
+    <motion.div
+      className="veil-hand"
+      style={{ x: sx, y: sy }}
+      aria-hidden="true"
+    >
       <motion.svg
-        width="40"
-        height="40"
-        viewBox="0 0 40 40"
+        width="34"
+        height="34"
+        viewBox="0 0 24 24"
         fill="none"
-        animate={{ rotate: 360, scale: cutting ? 1.12 : 1 }}
-        transition={{
-          rotate: {
-            duration: cutting ? 0.5 : 1.4,
-            repeat: Infinity,
-            ease: "linear",
-          },
-          scale: snap,
-        }}
-        style={{ transformOrigin: "20px 20px" }}
+        stroke="var(--color-ink)"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        animate={{ scale: grabbing ? 0.82 : 1 }}
+        transition={snap}
+        style={{ transformOrigin: "12px 12px" }}
       >
-        <polygon
-          points={SAW_POINTS}
-          fill="#c9ced4"
-          stroke="#6b7177"
-          strokeWidth="1"
-          strokeLinejoin="round"
-        />
-        <circle cx="20" cy="20" r="8.5" fill="#1a1814" stroke="#6b7177" strokeWidth="1" />
-        <circle cx="20" cy="20" r="5.2" fill="none" stroke="var(--color-accent)" strokeWidth="1.4" />
-        <circle cx="20" cy="20" r="1.7" fill="var(--color-accent)" />
+        {/* Open hand, fingers extended — ready to grab. */}
+        <motion.g
+          animate={{ opacity: grabbing ? 0 : 1 }}
+          transition={{ duration: 0.1 }}
+        >
+          <path d="M18 11V6a2 2 0 0 0-4 0" />
+          <path d="M14 10V4a2 2 0 0 0-4 0v2" />
+          <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
+          <path d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+        </motion.g>
+        {/* Closed grip — fingers curled while pulling the cloth. */}
+        <motion.g
+          animate={{ opacity: grabbing ? 1 : 0 }}
+          transition={{ duration: 0.1 }}
+        >
+          <path d="M18 11.5V9a2 2 0 0 0-4 0v1.4" />
+          <path d="M14 10V8a2 2 0 0 0-4 0v2" />
+          <path d="M10 9.9V9a2 2 0 0 0-4 0v5" />
+          <path d="M6 14a2 2 0 0 0-4 0a8 8 0 0 0 8 8h4a8 8 0 0 0 8-8v-1" />
+        </motion.g>
       </motion.svg>
     </motion.div>
   );
