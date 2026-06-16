@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 
-import { AgentPanel } from "@/app/_components/agent-panel";
+import dynamic from "next/dynamic";
+
 import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { Landing } from "@/app/_components/landing";
 import {
@@ -37,6 +38,12 @@ import { chordBar, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar" | "agent";
+
+// The agent (and its chat runtime) loads only when the view is opened.
+const AgentPanel = dynamic(
+  () => import("@/app/_components/agent-panel").then((m) => m.AgentPanel),
+  { ssr: false, loading: () => null },
+);
 
 const MAIL_FOLDERS: {
   id: MailView;
