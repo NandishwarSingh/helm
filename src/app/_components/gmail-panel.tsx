@@ -45,7 +45,6 @@ type Props = {
 type Folder = "inbox" | "starred" | "archived" | "spam" | "trash";
 export type MailView = Folder | "drafts" | "priority";
 type PriorityKey = "urgent" | "reply" | "fyi" | "low";
-type LabelOverride = { unread?: boolean; starred?: boolean };
 type MessageAction =
   | "archive"
   | "unarchive"
@@ -68,6 +67,76 @@ const UNDO_REVERSE = {
   unarchive: "archive",
   trash: "untrash",
 } as const satisfies Record<UndoableAction, MessageAction>;
+
+/**
+ * Client-side label truth. Every action lands here synchronously, each view
+ * derives membership from it, and server refetches reconcile only once all
+ * mutations have settled — so a moved message is in its destination folder
+ * the instant the key goes down, and an undo can never flicker.
+ */
+type LabelState = {
+  unread: boolean;
+  starred: boolean;
+  archived: boolean;
+  trashed: boolean;
+  spam: boolean;
+  deleted: boolean;
+};
+
+type EmailRow = {
+  id: string;
+  from: string;
+  subject: string;
+  snippet: string;
+  date: string | null;
+  unread: boolean;
+  starred: boolean;
+  archived: boolean;
+  trashed: boolean;
+  spam: boolean;
+  timestamp: number;
+  reason: string;
+  priority: PriorityKey | undefined;
+};
+
+type LocalEdit = { row: EmailRow; state: LabelState };
+
+function stateFromRow(row: EmailRow): LabelState {
+  return {
+    unread: row.unread,
+    starred: row.starred,
+    archived: row.archived,
+    trashed: row.trashed,
+    spam: row.spam,
+    deleted: false,
+  };
+}
+
+function applyAction(state: LabelState, action: MessageAction): LabelState {
+  switch (action) {
+    case "archive": return { ...state, archived: true };
+    case "unarchive": return { ...state, archived: false };
+    case "trash": return { ...state, trashed: true, spam: false, archived: false };
+    case "untrash": return { ...state, trashed: false, spam: false, archived: false };
+    case "star": return { ...state, starred: true };
+    case "unstar": return { ...state, starred: false };
+    case "read": return { ...state, unread: false };
+    case "unread": return { ...state, unread: true };
+    case "notSpam": return { ...state, spam: false, archived: false };
+    case "deleteForever": return { ...state, deleted: true };
+  }
+}
+
+function inFolder(state: LabelState, folder: Folder): boolean {
+  if (state.deleted) return false;
+  switch (folder) {
+    case "inbox": return !state.archived && !state.trashed && !state.spam;
+    case "starred": return state.starred && !state.trashed && !state.spam;
+    case "archived": return state.archived && !state.trashed && !state.spam;
+    case "spam": return state.spam && !state.trashed;
+    case "trash": return state.trashed;
+  }
+}
 
 function undoLabel(undo: Undo) {
   const count = undo.ids.length;
@@ -156,12 +225,15 @@ export function GmailPanel({
     [],
   );
 
-  // Optimistic local state: rows removed from the current folder, and label
-  // flips the next refetch will confirm.
-  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
-  const [overrides, setOverrides] = useState<Map<string, LabelOverride>>(
+  // Optimistic truth: id -> the row and where it now belongs. Applied on top
+  // of every folder's query data until the server confirms.
+  const [localEdits, setLocalEdits] = useState<Map<string, LocalEdit>>(
     new Map(),
   );
+  // Tracked in-flight label mutations; views reconcile with the server only
+  // when this hits zero, so chained actions (archive then undo) never let a
+  // mid-flight refetch flash stale state.
+  const inFlight = useRef(0);
 
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
@@ -219,22 +291,13 @@ export function GmailPanel({
     return map;
   }, [overviewGroups]);
 
-  // Flatten pages, dedupe across page boundaries, then apply local state.
-  // In the Priority view the source is the triage groups, most urgent first.
+  // Flatten pages, dedupe across page boundaries, then apply local truth:
+  // drop rows that no longer belong here, surface rows that just moved in,
+  // and overlay unread/star flips. In the Priority view the source is the
+  // triage groups, most urgent first.
   const pages = inbox.data?.pages;
   const emails = useMemo(() => {
-    const source: {
-      id: string;
-      from: string;
-      subject: string;
-      snippet: string;
-      date: string | null;
-      unread: boolean;
-      starred: boolean;
-      timestamp: number;
-      reason: string;
-      priority: PriorityKey | undefined;
-    }[] = isPriority
+    const source: EmailRow[] = isPriority
       ? PRIORITY_ORDER.flatMap((priority) =>
           (overviewGroups?.[priority] ?? []).map((item) => ({
             ...item,
@@ -248,23 +311,45 @@ export function GmailPanel({
             reason: "",
             priority: priorityById.get(item.id),
           }));
+
     const seen = new Set<string>();
-    const merged = source
-      .filter((item) => {
-        if (seen.has(item.id) || removedIds.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-      })
-      .map((item) => {
-        const override = overrides.get(item.id);
-        return override ? { ...item, ...override } : item;
+    const merged: EmailRow[] = [];
+    for (const item of source) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      const edit = localEdits.get(item.id);
+      if (!edit) {
+        merged.push(item);
+        continue;
+      }
+      if (!inFolder(edit.state, folder)) continue;
+      merged.push({
+        ...item,
+        unread: edit.state.unread,
+        starred: edit.state.starred,
       });
+    }
+
+    // Rows the local truth says belong here but the cached page predates
+    // (e.g. just archived, viewed from Archive). Priority skips additions —
+    // a message needs a verdict before it can join a group.
+    if (!isPriority) {
+      for (const [id, edit] of localEdits) {
+        if (seen.has(id) || !inFolder(edit.state, folder)) continue;
+        merged.push({
+          ...edit.row,
+          unread: edit.state.unread,
+          starred: edit.state.starred,
+        });
+      }
+    }
+
     // Pages from the server can interleave in time; the priority view keeps
     // its verdict-group order instead.
     return isPriority
       ? merged
       : merged.sort((a, b) => b.timestamp - a.timestamp);
-  }, [isPriority, overviewGroups, pages, priorityById, removedIds, overrides]);
+  }, [isPriority, overviewGroups, pages, priorityById, localEdits, folder]);
 
   // Debounced read target: the highlight moves instantly; the (slow, live)
   // message fetch fires only once the selection settles.
@@ -312,12 +397,11 @@ export function GmailPanel({
   const refreshInbox = api.gmail.refreshInbox.useMutation({
     onSuccess: async () => {
       setCanSyncMore(true);
-      setRemovedIds(new Set());
-      setOverrides(new Map());
       triageRuns.current = 0;
       await utils.gmail.searchEmails.invalidate();
       await utils.gmail.listDrafts.invalidate();
       await utils.triage.overview.invalidate();
+      if (inFlight.current === 0) setLocalEdits(new Map());
     },
   });
 
@@ -335,8 +419,7 @@ export function GmailPanel({
     },
   });
 
-  // Any action that changes folder membership refreshes every mail view, so
-  // the message is already in its destination when the user looks there.
+  // Refetch every mail view. Called only once all tracked mutations settle.
   async function refreshMailViews() {
     await Promise.all([
       utils.gmail.searchEmails.invalidate(),
@@ -344,34 +427,35 @@ export function GmailPanel({
     ]);
   }
 
+  // When the last in-flight mutation settles, reconcile with the server and
+  // only then drop the local truth — the fresh data already agrees with it.
+  async function settleTracked() {
+    inFlight.current -= 1;
+    if (inFlight.current > 0) return;
+    await refreshMailViews();
+    if (inFlight.current === 0) setLocalEdits(new Map());
+  }
+  const trackedCallbacks = {
+    onSettled: () => void settleTracked(),
+  };
+
   const modifyMessage = api.gmail.modifyMessage.useMutation({
-    onSuccess: async (_data, vars) => {
-      // Read-state flips happen on every J/K; they never move a message, so
-      // skip the refetch for those.
-      if (vars.action !== "read" && vars.action !== "unread") {
-        await refreshMailViews();
-      }
-    },
     onError: async () => {
-      setRemovedIds(new Set());
-      setOverrides(new Map());
+      setLocalEdits(new Map());
       await refreshMailViews();
     },
   });
 
   const bulkModify = api.gmail.bulkModify.useMutation({
-    onSuccess: async () => {
-      await refreshMailViews();
-    },
     onError: async () => {
-      setRemovedIds(new Set());
-      setOverrides(new Map());
+      setLocalEdits(new Map());
       await refreshMailViews();
     },
   });
 
   const bulkDelete = api.gmail.bulkDelete.useMutation({
-    onSuccess: async () => {
+    onError: async () => {
+      setLocalEdits(new Map());
       await refreshMailViews();
     },
   });
@@ -391,9 +475,11 @@ export function GmailPanel({
   };
   useEffect(() => {
     const tick = () => syncNewRef.current();
-    const id = window.setInterval(tick, 60_000);
+    const first = window.setTimeout(tick, 2_500);
+    const id = window.setInterval(tick, 30_000);
     window.addEventListener("focus", tick);
     return () => {
+      window.clearTimeout(first);
       window.clearInterval(id);
       window.removeEventListener("focus", tick);
     };
@@ -439,55 +525,60 @@ export function GmailPanel({
 
   // ---- message actions ------------------------------------------------------
 
-  function setOverride(id: string, patch: LabelOverride) {
-    setOverrides((prev) => {
+  // Records the new label state for each id, synchronously.
+  function applyLocal(ids: string[], action: MessageAction) {
+    setLocalEdits((prev) => {
       const next = new Map(prev);
-      next.set(id, { ...next.get(id), ...patch });
+      for (const id of ids) {
+        const existing = next.get(id);
+        const row = existing?.row ?? emails.find((email) => email.id === id);
+        if (!row) continue;
+        const state = applyAction(existing?.state ?? stateFromRow(row), action);
+        next.set(id, { row, state });
+      }
       return next;
     });
   }
 
-  function removeRows(ids: string[]) {
-    const removing = new Set(ids);
+  // Moves the cursor off rows that are about to leave the current view.
+  function advanceSelectionPast(ids: string[]) {
+    const leaving = new Set(ids);
+    if (!selectedId || !leaving.has(selectedId)) return;
     const index = emails.findIndex((email) => email.id === selectedId);
-    setRemovedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) next.add(id);
-      return next;
-    });
-    if (selectedId && removing.has(selectedId)) {
-      const after = emails.filter(
-        (email) => !removing.has(email.id) || email.id === selectedId,
-      );
-      const pos = after.findIndex((email) => email.id === selectedId);
-      const next =
-        emails.slice(index + 1).find((email) => !removing.has(email.id)) ??
-        after[pos - 1];
-      setSelectedId(next && !removing.has(next.id) ? next.id : null);
-    }
+    const next =
+      emails.slice(index + 1).find((email) => !leaving.has(email.id)) ??
+      emails
+        .slice(0, Math.max(index, 0))
+        .reverse()
+        .find((email) => !leaving.has(email.id));
+    setSelectedId(next ? next.id : null);
   }
 
-  // Applies an action to one or many messages with optimistic UI.
+  // Applies an action to one or many messages. The local truth updates
+  // before the network is touched, so every view is correct instantly.
   function performAction(ids: string[], action: MessageAction) {
     if (ids.length === 0) return;
     if (view !== "drafts" && LEAVES_FOLDER[folder].includes(action)) {
-      removeRows(ids);
-    } else if (action === "star" || action === "unstar") {
-      for (const id of ids) setOverride(id, { starred: action === "star" });
-    } else if (action === "read" || action === "unread") {
-      for (const id of ids) setOverride(id, { unread: action === "unread" });
+      advanceSelectionPast(ids);
     }
+    applyLocal(ids, action);
+
+    // Read-state flips fire on every J/K; they never move a message, so
+    // they stay untracked and trigger no reconciling refetch.
+    const tracked = action !== "read" && action !== "unread";
+    if (tracked) inFlight.current += 1;
+    const callbacks = tracked ? trackedCallbacks : undefined;
 
     if (action === "deleteForever") {
       if (ids.length === 1) {
-        modifyMessage.mutate({ id: ids[0]!, action });
+        modifyMessage.mutate({ id: ids[0]!, action }, callbacks);
       } else {
-        bulkDelete.mutate({ ids });
+        bulkDelete.mutate({ ids }, callbacks);
       }
     } else if (ids.length === 1) {
-      modifyMessage.mutate({ id: ids[0]!, action });
+      modifyMessage.mutate({ id: ids[0]!, action }, callbacks);
     } else {
-      bulkModify.mutate({ ids, action });
+      bulkModify.mutate({ ids, action }, callbacks);
     }
     setBulkIds(new Set());
 
@@ -500,15 +591,12 @@ export function GmailPanel({
   function performUndo() {
     if (!undo) return;
     const reverse = UNDO_REVERSE[undo.action];
-    setRemovedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of undo.ids) next.delete(id);
-      return next;
-    });
+    applyLocal(undo.ids, reverse);
+    inFlight.current += 1;
     if (undo.ids.length === 1) {
-      modifyMessage.mutate({ id: undo.ids[0]!, action: reverse });
+      modifyMessage.mutate({ id: undo.ids[0]!, action: reverse }, trackedCallbacks);
     } else {
-      bulkModify.mutate({ ids: undo.ids, action: reverse });
+      bulkModify.mutate({ ids: undo.ids, action: reverse }, trackedCallbacks);
     }
     if (undoTimer.current) window.clearTimeout(undoTimer.current);
     setUndo(null);
@@ -594,7 +682,7 @@ export function GmailPanel({
     if (!readId || !selectedEmail.data) return;
     const meta = emails.find((email) => email.id === readId);
     if (meta?.unread) {
-      setOverride(readId, { unread: false });
+      applyLocal([readId], "read");
       modifyMessage.mutate({ id: readId, action: "read" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
