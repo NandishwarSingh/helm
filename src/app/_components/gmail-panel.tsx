@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 
 import { EmailBody } from "@/app/_components/email-body";
@@ -90,10 +89,12 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
       refetchOnWindowFocus: false,
       staleTime: 5 * 60 * 1000,
       retry: 1,
-      // Keep the previous message visible while the next one loads.
-      placeholderData: keepPreviousData,
     },
   );
+
+  // True from the moment the selection changes until its message is in.
+  const readPending =
+    selectedId !== readId || (!!readId && selectedEmail.isLoading);
 
   const drafts = api.gmail.listDrafts.useQuery(
     { limit: 50, offset: 0 },
@@ -474,7 +475,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             <p>Select a conversation to read it.</p>
             <p className="tnum">J / K to browse · C to compose · ? for keys</p>
           </div>
-        ) : selectedEmail.isLoading ? (
+        ) : readPending ? (
           <ReadingSkeleton />
         ) : selectedEmail.error ? (
           <div className="empty">
@@ -488,7 +489,7 @@ export function GmailPanel({ composeOpen, onComposeOpenChange }: Props) {
             </button>
           </div>
         ) : selectedEmail.data ? (
-          <article data-stale={selectedEmail.isFetching}>
+          <article>
             <h1 className="read-subject">
               {selectedEmail.data.subject || "(no subject)"}
             </h1>
