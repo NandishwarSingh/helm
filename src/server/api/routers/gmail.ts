@@ -58,8 +58,13 @@ function mapMessage(message: {
     date: message.data.internalDate ?? null,
     unread: labels.includes("UNREAD"),
     starred: labels.includes("STARRED"),
-    archived: labels.length > 0 && !labels.includes("INBOX"),
+    spam: labels.includes("SPAM"),
     trashed: labels.includes("TRASH"),
+    archived:
+      labels.length > 0 &&
+      !labels.includes("INBOX") &&
+      !labels.includes("SPAM") &&
+      !labels.includes("TRASH"),
     timestamp: messageTimestamp(
       message.data.internalDate,
       message.data.createdAt,
@@ -121,11 +126,27 @@ async function setSyncCursor(tenantId: string, token: string | null) {
     });
 }
 
+const folderSchema = z
+  .enum(["inbox", "starred", "archived", "spam", "trash"])
+  .default("inbox");
+
+type Folder = z.infer<typeof folderSchema>;
+type MappedMessage = ReturnType<typeof mapMessage>;
+
+const FOLDER_FILTERS: Record<Folder, (m: MappedMessage) => boolean> = {
+  inbox: (m) => !m.archived && !m.trashed && !m.spam,
+  starred: (m) => m.starred && !m.trashed && !m.spam,
+  archived: (m) => m.archived,
+  spam: (m) => m.spam,
+  trash: (m) => m.trashed,
+};
+
 export const gmailRouter = createTRPCRouter({
   searchEmails: publicProcedure
     .input(
       z.object({
         query: z.string(),
+        folder: folderSchema,
         cursor: z.number().min(0).default(0),
         limit: z.number().min(1).max(50).default(25),
       }),
@@ -159,13 +180,12 @@ export const gmailRouter = createTRPCRouter({
         return results.flat();
       });
 
-      // The inbox shows inbox mail only — archived and trashed messages
-      // remain cached (Corsair updates labels from modify responses) but
-      // are filtered out of the list.
+      // Folder membership is derived from cached Gmail labels (Corsair keeps
+      // them current from modify responses), then filtered per folder.
       const items = sortMessagesNewestFirst(
         dedupeByEntityId(messages).map(mapMessage),
       )
-        .filter((message) => !message.archived && !message.trashed)
+        .filter(FOLDER_FILTERS[input.folder])
         .slice(0, input.limit);
       // A full page from any source implies more cached rows to page through.
       const nextCursor =
@@ -275,19 +295,22 @@ export const gmailRouter = createTRPCRouter({
     };
   }),
 
-  // Label actions: archive, trash, star and read-state toggles. The action
-  // names are mapped to Gmail label changes server-side.
+  // Label actions, mapped to Gmail label changes server-side.
   modifyMessage: publicProcedure
     .input(
       z.object({
         id: z.string().min(1),
         action: z.enum([
           "archive",
+          "unarchive",
           "trash",
+          "untrash",
           "star",
           "unstar",
           "read",
           "unread",
+          "notSpam",
+          "deleteForever",
         ]),
       }),
     )
@@ -297,15 +320,29 @@ export const gmailRouter = createTRPCRouter({
         await withRetry(() => tenant.gmail.api.messages.trash({ id: input.id }));
         return { ok: true };
       }
+      if (input.action === "untrash") {
+        await withRetry(() =>
+          tenant.gmail.api.messages.untrash({ id: input.id }),
+        );
+        return { ok: true };
+      }
+      if (input.action === "deleteForever") {
+        await withRetry(() => tenant.gmail.api.messages.delete({ id: input.id }));
+        const tenantId = await getTenantId();
+        if (tenantId) await purgeCachedEntity(tenantId, input.id);
+        return { ok: true };
+      }
       const change: Record<
         typeof input.action,
         { add?: string[]; remove?: string[] }
       > = {
         archive: { remove: ["INBOX"] },
+        unarchive: { add: ["INBOX"] },
         star: { add: ["STARRED"] },
         unstar: { remove: ["STARRED"] },
         read: { remove: ["UNREAD"] },
         unread: { add: ["UNREAD"] },
+        notSpam: { add: ["INBOX"], remove: ["SPAM"] },
       };
       const { add, remove } = change[input.action];
       await withRetry(() =>
@@ -316,6 +353,84 @@ export const gmailRouter = createTRPCRouter({
         }),
       );
       return { ok: true };
+    }),
+
+  // Bulk label actions over a multiselect, in one Gmail call.
+  bulkModify: publicProcedure
+    .input(
+      z.object({
+        ids: z.array(z.string().min(1)).min(1).max(50),
+        action: z.enum([
+          "archive",
+          "unarchive",
+          "trash",
+          "star",
+          "unstar",
+          "read",
+          "unread",
+          "notSpam",
+          "untrash",
+        ]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      const change: Record<
+        typeof input.action,
+        { add?: string[]; remove?: string[] }
+      > = {
+        archive: { remove: ["INBOX"] },
+        unarchive: { add: ["INBOX"] },
+        trash: { add: ["TRASH"], remove: ["INBOX", "SPAM"] },
+        star: { add: ["STARRED"] },
+        unstar: { remove: ["STARRED"] },
+        read: { remove: ["UNREAD"] },
+        unread: { add: ["UNREAD"] },
+        notSpam: { add: ["INBOX"], remove: ["SPAM"] },
+        untrash: { add: ["INBOX"], remove: ["TRASH"] },
+      };
+      const { add, remove } = change[input.action];
+      await withRetry(() =>
+        tenant.gmail.api.messages.batchModify({
+          ids: input.ids,
+          addLabelIds: add,
+          removeLabelIds: remove,
+        }),
+      );
+      // batchModify returns void, so re-hydrate the affected messages to
+      // keep cached labels truthful.
+      await hydrateMessages(tenant, input.ids);
+      return { ok: true, count: input.ids.length };
+    }),
+
+  // Permanently delete a multiselect (no batch endpoint upstream).
+  bulkDelete: publicProcedure
+    .input(z.object({ ids: z.array(z.string().min(1)).min(1).max(25) }))
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      const tenantId = await getTenantId();
+      for (const id of input.ids) {
+        await withRetry(() => tenant.gmail.api.messages.delete({ id }));
+        if (tenantId) await purgeCachedEntity(tenantId, id);
+      }
+      return { ok: true, count: input.ids.length };
+    }),
+
+  // Spam and trash are excluded from the normal sync; pull them on demand
+  // when those folders are opened.
+  syncFolder: publicProcedure
+    .input(z.object({ folder: z.enum(["spam", "trash"]) }))
+    .mutation(async ({ input }) => {
+      const tenant = await getTenant();
+      const label = input.folder === "spam" ? "SPAM" : "TRASH";
+      const result = await tenant.gmail.api.messages.list({
+        maxResults: 30,
+        labelIds: [label],
+        includeSpamTrash: true,
+      });
+      const ids = messageIds(result);
+      await hydrateMessages(tenant, ids);
+      return { synced: ids.length };
     }),
 
   getDraft: publicProcedure

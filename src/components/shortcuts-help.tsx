@@ -31,8 +31,9 @@ const GROUPS: { title: string; rows: Row[] }[] = [
     rows: [
       { keys: ["J"], label: "Next message" },
       { keys: ["K"], label: "Previous message" },
-      { keys: ["E"], label: "Archive" },
-      { keys: ["#"], label: "Move to trash" },
+      { keys: ["X"], label: "Select for bulk actions" },
+      { keys: ["E"], label: "Archive / move to inbox" },
+      { keys: ["#"], label: "Trash (delete forever in Spam/Trash)" },
       { keys: ["S"], label: "Star / unstar" },
       { keys: ["⇧", "U"], label: "Mark unread / read" },
       { keys: ["R"], label: "Reply" },

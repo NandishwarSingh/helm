@@ -7,8 +7,10 @@ import { EmailBody } from "@/app/_components/email-body";
 import {
   ArchiveIcon,
   CalendarPlusIcon,
+  CheckIcon,
   CloseIcon,
   ForwardIcon,
+  InboxIcon,
   MailOpenIcon,
   RefreshIcon,
   ReplyIcon,
@@ -17,7 +19,7 @@ import {
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
-import { hasOverlay, isTypingTarget, useAction } from "@/lib/actions";
+import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import {
   formatMessageDate,
   formatSender,
@@ -38,14 +40,48 @@ type Props = {
   onAddToCalendar: (seed: EventSeed) => void;
 };
 
+type Folder = "inbox" | "starred" | "archived" | "spam" | "trash";
+type View = Folder | "drafts";
 type LabelOverride = { unread?: boolean; starred?: boolean };
 type MessageAction =
   | "archive"
+  | "unarchive"
   | "trash"
+  | "untrash"
   | "star"
   | "unstar"
   | "read"
-  | "unread";
+  | "unread"
+  | "notSpam"
+  | "deleteForever";
+
+type Confirm = { kind: "trash" | "delete"; ids: string[] };
+
+const FOLDERS: { id: View; label: string }[] = [
+  { id: "inbox", label: "Inbox" },
+  { id: "starred", label: "Starred" },
+  { id: "archived", label: "Archive" },
+  { id: "spam", label: "Spam" },
+  { id: "trash", label: "Trash" },
+  { id: "drafts", label: "Drafts" },
+];
+
+// Actions that move a message out of the folder being viewed.
+const LEAVES_FOLDER: Record<Folder, MessageAction[]> = {
+  inbox: ["archive", "trash", "deleteForever"],
+  starred: ["unstar", "archive", "trash", "deleteForever"],
+  archived: ["unarchive", "trash", "deleteForever"],
+  spam: ["notSpam", "trash", "deleteForever"],
+  trash: ["untrash", "deleteForever"],
+};
+
+const EMPTY_COPY: Record<Folder, string> = {
+  inbox: "No mail here. Refresh from Gmail to sync.",
+  starred: "Nothing starred yet. Press S on a message to star it.",
+  archived: "Nothing archived yet. Press E on a message to archive it.",
+  spam: "No spam. Long may it last.",
+  trash: "Trash is empty.",
+};
 
 function senderLabel(raw: string) {
   if (!raw) return "Unknown sender";
@@ -61,12 +97,17 @@ export function GmailPanel({
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
-  const [view, setView] = useState<"inbox" | "drafts">("inbox");
+  const [view, setView] = useState<View>("inbox");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canSyncMore, setCanSyncMore] = useState(true);
 
-  // Optimistic local state: rows removed by archive/trash, and label flips
-  // (read/star) that the next refetch will confirm.
+  // Multiselect + destructive-action confirmation.
+  const [bulkIds, setBulkIds] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  useOverlay(confirm !== null);
+
+  // Optimistic local state: rows removed from the current folder, and label
+  // flips the next refetch will confirm.
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Map<string, LabelOverride>>(
     new Map(),
@@ -87,10 +128,13 @@ export function GmailPanel({
 
   const utils = api.useUtils();
 
+  const folder: Folder = view === "drafts" ? "inbox" : view;
+  const inMessages = view !== "drafts";
+
   const inbox = api.gmail.searchEmails.useInfiniteQuery(
-    { query: activeSearch },
+    { query: activeSearch, folder },
     {
-      enabled: view === "inbox",
+      enabled: inMessages,
       initialCursor: 0,
       getNextPageParam: (last) => last.nextCursor ?? undefined,
     },
@@ -135,7 +179,6 @@ export function GmailPanel({
     },
   );
 
-  // True from the moment the selection changes until its message is in.
   const readPending =
     selectedId !== readId || (!!readId && selectedEmail.isLoading);
 
@@ -154,7 +197,13 @@ export function GmailPanel({
     },
   });
 
-  // Pulls older mail from Gmail when the cached list runs out (infinite scroll).
+  // Spam and trash are excluded from the normal sync; pull them on demand.
+  const syncFolder = api.gmail.syncFolder.useMutation({
+    onSuccess: async () => {
+      await utils.gmail.searchEmails.invalidate();
+    },
+  });
+
   const syncMore = api.gmail.syncMore.useMutation({
     onSuccess: async (result) => {
       setCanSyncMore(result.hasMore);
@@ -164,9 +213,25 @@ export function GmailPanel({
 
   const modifyMessage = api.gmail.modifyMessage.useMutation({
     onError: async () => {
-      // The optimistic state was wrong — resync with the server.
       setRemovedIds(new Set());
       setOverrides(new Map());
+      await utils.gmail.searchEmails.invalidate();
+    },
+  });
+
+  const bulkModify = api.gmail.bulkModify.useMutation({
+    onSuccess: async () => {
+      await utils.gmail.searchEmails.invalidate();
+    },
+    onError: async () => {
+      setRemovedIds(new Set());
+      setOverrides(new Map());
+      await utils.gmail.searchEmails.invalidate();
+    },
+  });
+
+  const bulkDelete = api.gmail.bulkDelete.useMutation({
+    onSuccess: async () => {
       await utils.gmail.searchEmails.invalidate();
     },
   });
@@ -209,7 +274,7 @@ export function GmailPanel({
     },
   });
 
-  // ---- message actions ----------------------------------------------------
+  // ---- message actions ------------------------------------------------------
 
   function setOverride(id: string, patch: LabelOverride) {
     setOverrides((prev) => {
@@ -219,36 +284,98 @@ export function GmailPanel({
     });
   }
 
-  // Archive/trash: remove the row optimistically and advance the selection
-  // to the next message so triage never breaks stride.
-  function removeAndAdvance(id: string) {
-    const index = emails.findIndex((email) => email.id === id);
-    const next = emails[index + 1] ?? emails[index - 1];
-    setRemovedIds((prev) => new Set(prev).add(id));
-    if (selectedId === id) setSelectedId(next?.id ?? null);
+  function removeRows(ids: string[]) {
+    const removing = new Set(ids);
+    const index = emails.findIndex((email) => email.id === selectedId);
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.add(id);
+      return next;
+    });
+    if (selectedId && removing.has(selectedId)) {
+      const after = emails.filter(
+        (email) => !removing.has(email.id) || email.id === selectedId,
+      );
+      const pos = after.findIndex((email) => email.id === selectedId);
+      const next =
+        emails.slice(index + 1).find((email) => !removing.has(email.id)) ??
+        after[pos - 1];
+      setSelectedId(next && !removing.has(next.id) ? next.id : null);
+    }
   }
 
-  function act(id: string, action: MessageAction) {
-    if (action === "archive" || action === "trash") {
-      removeAndAdvance(id);
+  // Applies an action to one or many messages with optimistic UI.
+  function performAction(ids: string[], action: MessageAction) {
+    if (ids.length === 0) return;
+    if (view !== "drafts" && LEAVES_FOLDER[folder].includes(action)) {
+      removeRows(ids);
     } else if (action === "star" || action === "unstar") {
-      setOverride(id, { starred: action === "star" });
-    } else {
-      setOverride(id, { unread: action === "unread" });
+      for (const id of ids) setOverride(id, { starred: action === "star" });
+    } else if (action === "read" || action === "unread") {
+      for (const id of ids) setOverride(id, { unread: action === "unread" });
     }
-    modifyMessage.mutate({ id, action });
+
+    if (action === "deleteForever") {
+      if (ids.length === 1) {
+        modifyMessage.mutate({ id: ids[0]!, action });
+      } else {
+        bulkDelete.mutate({ ids });
+      }
+    } else if (ids.length === 1) {
+      modifyMessage.mutate({ id: ids[0]!, action });
+    } else {
+      bulkModify.mutate({ ids, action });
+    }
+    setBulkIds(new Set());
   }
+
+  // Trash and permanent delete always pass through a confirmation.
+  function requestTrash(ids: string[]) {
+    if (ids.length > 0) setConfirm({ kind: "trash", ids });
+  }
+  function requestDelete(ids: string[]) {
+    if (ids.length > 0) setConfirm({ kind: "delete", ids });
+  }
+  function runConfirm() {
+    if (!confirm) return;
+    performAction(confirm.ids, confirm.kind === "trash" ? "trash" : "deleteForever");
+    setConfirm(null);
+  }
+
+  // Confirm dialog keys: Enter confirms, Escape cancels.
+  useEffect(() => {
+    if (!confirm) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setConfirm(null);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        runConfirm();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirm]);
 
   const selectedMeta = emails.find((email) => email.id === selectedId);
 
   function toggleStar() {
     if (!selectedId) return;
-    act(selectedId, selectedMeta?.starred ? "unstar" : "star");
+    performAction([selectedId], selectedMeta?.starred ? "unstar" : "star");
   }
-
   function toggleUnread() {
     if (!selectedId) return;
-    act(selectedId, selectedMeta?.unread ? "read" : "unread");
+    performAction([selectedId], selectedMeta?.unread ? "read" : "unread");
+  }
+  function toggleBulk(id: string) {
+    setBulkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   // Opening a message marks it read, like every mail client.
@@ -262,7 +389,7 @@ export function GmailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readId, selectedEmail.data]);
 
-  // ---- compose seeds --------------------------------------------------------
+  // ---- compose seeds ----------------------------------------------------------
 
   function replyToSelection() {
     const message = selectedEmail.data;
@@ -304,7 +431,6 @@ export function GmailPanel({
     onComposeOpenChange(true);
   }
 
-  // Email-to-calendar: schedule a meeting with the sender in two keys.
   function eventFromSelection() {
     const message = selectedEmail.data;
     if (!message) return;
@@ -319,7 +445,7 @@ export function GmailPanel({
     });
   }
 
-  // ---- drafts ----------------------------------------------------------------
+  // ---- drafts -------------------------------------------------------------------
 
   async function openDraft(draftId: string) {
     setOpeningDraftId(draftId);
@@ -352,10 +478,8 @@ export function GmailPanel({
     closeCompose();
   }
 
-  // ---- keyboard layer ----------------------------------------------------------
+  // ---- keyboard layer --------------------------------------------------------------
 
-  // Focus the right field when compose opens (body when replying, since the
-  // recipient is prefilled); close on Escape.
   useEffect(() => {
     if (!composeOpen) return;
     const id = window.setTimeout(() => {
@@ -373,7 +497,6 @@ export function GmailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composeOpen]);
 
-  // Roving selection: J/K move through the list and the reading pane follows.
   function moveSelection(step: 1 | -1) {
     if (emails.length === 0) return;
     const index = emails.findIndex((email) => email.id === selectedId);
@@ -385,17 +508,14 @@ export function GmailPanel({
     document
       .querySelector(`[data-mail-id="${target.id}"]`)
       ?.scrollIntoView({ block: "nearest" });
-    // Nearing the end of the loaded list: pull the next page in early.
     if (next >= emails.length - 3 && hasNextPage && !isFetchingNextPage) {
       void fetchNextPage();
     }
   }
 
-  // Mail keyboard layer. Suspended while typing or while an overlay is open.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (isTypingTarget(event.target)) {
-        // Esc inside search: revert the draft text and return to the list.
         if (event.key === "Escape" && event.target === searchRef.current) {
           setSearch(activeSearch);
           searchRef.current?.blur();
@@ -408,36 +528,51 @@ export function GmailPanel({
       switch (event.key) {
         case "j":
         case "ArrowDown":
-          if (view !== "inbox") return;
+          if (!inMessages) return;
           moveSelection(1);
           break;
         case "k":
         case "ArrowUp":
-          if (view !== "inbox") return;
+          if (!inMessages) return;
           moveSelection(-1);
           break;
         case "Enter":
         case "o":
-          if (view !== "inbox" || emails.length === 0) return;
+          if (!inMessages || emails.length === 0) return;
           if (!selectedId) setSelectedId(emails[0]?.id ?? null);
+          break;
+        case "x":
+          if (!inMessages || !selectedId) return;
+          toggleBulk(selectedId);
           break;
         case "u":
         case "Escape":
+          if (bulkIds.size > 0) {
+            setBulkIds(new Set());
+            break;
+          }
           if (!selectedId) return;
           setSelectedId(null);
           break;
         case "e":
-          if (!selectedId) return;
-          act(selectedId, "archive");
+          if (!inMessages || !selectedId) return;
+          if (folder === "archived") performAction([selectedId], "unarchive");
+          else if (folder === "inbox" || folder === "starred")
+            performAction([selectedId], "archive");
+          else return;
           break;
         case "#":
-          if (!selectedId) return;
-          act(selectedId, "trash");
+          if (!inMessages || !selectedId) return;
+          if (folder === "spam" || folder === "trash")
+            requestDelete([selectedId]);
+          else requestTrash([selectedId]);
           break;
         case "s":
+          if (!inMessages) return;
           toggleStar();
           break;
         case "U":
+          if (!inMessages) return;
           toggleUnread();
           break;
         case "r":
@@ -468,14 +603,26 @@ export function GmailPanel({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // Palette / global-shortcut hooks.
   useAction("focus-search", () => {
     searchRef.current?.focus();
     searchRef.current?.select();
   });
   useAction("refresh", () => {
-    if (!refreshInbox.isPending) refreshInbox.mutate();
+    if (folder === "spam" || folder === "trash") {
+      if (!syncFolder.isPending) syncFolder.mutate({ folder });
+    } else if (!refreshInbox.isPending) {
+      refreshInbox.mutate();
+    }
   });
+
+  // Folder switches reset transient state.
+  function switchView(next: View) {
+    if (next === view) return;
+    setView(next);
+    setSelectedId(null);
+    setBulkIds(new Set());
+    setConfirmDeleteId(null);
+  }
 
   // Warm the inbox once when it loads empty (first connect / cold cache).
   const didAutoSync = useRef(false);
@@ -487,18 +634,28 @@ export function GmailPanel({
     refreshInbox.mutate();
   }, [emails.length, inbox.isLoading, view, activeSearch, refreshInbox]);
 
-  // Infinite scroll: load the next cached page, or page deeper into Gmail
-  // when the cache is exhausted.
+  // Spam and trash sync on first open when empty.
+  const syncedFolders = useRef(new Set<string>());
+  useEffect(() => {
+    if (folder !== "spam" && folder !== "trash") return;
+    if (inbox.isLoading || emails.length > 0) return;
+    if (syncedFolders.current.has(folder)) return;
+    syncedFolders.current.add(folder);
+    syncFolder.mutate({ folder });
+  }, [folder, inbox.isLoading, emails.length, syncFolder]);
+
+  // Infinite scroll within the cache; deep Gmail paging is inbox-only.
   const { hasNextPage, isFetchingNextPage, isFetching, fetchNextPage } = inbox;
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || view !== "inbox") return;
+    if (!el || !inMessages) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries[0]?.isIntersecting) return;
         if (hasNextPage && !isFetchingNextPage) {
           void fetchNextPage();
         } else if (
+          folder === "inbox" &&
           !hasNextPage &&
           !isFetching &&
           !activeSearch.trim() &&
@@ -513,7 +670,8 @@ export function GmailPanel({
     observer.observe(el);
     return () => observer.disconnect();
   }, [
-    view,
+    inMessages,
+    folder,
     hasNextPage,
     isFetchingNextPage,
     isFetching,
@@ -531,119 +689,249 @@ export function GmailPanel({
     createDraft.isPending ||
     updateDraft.isPending ||
     sendDraft.isPending;
+  const listBusy = inbox.isLoading || (syncFolder.isPending && emails.length === 0);
+  const bulkList = [...bulkIds];
 
   return (
     <div className="mail">
       <div className="mail-list">
         <div className="mail-list-head">
-          <div className="seg">
-            <button
-              type="button"
-              data-active={view === "inbox"}
-              onClick={() => setView("inbox")}
-            >
-              Inbox
-            </button>
-            <button
-              type="button"
-              data-active={view === "drafts"}
-              onClick={() => setView("drafts")}
-            >
-              Drafts
-            </button>
+          <div className="seg seg-folders">
+            {FOLDERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                data-active={view === f.id}
+                onClick={() => switchView(f.id)}
+              >
+                {f.label}
+              </button>
+            ))}
           </div>
           <span className="topbar-spacer" />
           <button
             type="button"
             className="icon-btn"
-            title="Refresh from Gmail"
-            data-spinning={refreshInbox.isPending}
-            onClick={() => refreshInbox.mutate()}
-            disabled={refreshInbox.isPending}
+            data-tip="Refresh from Gmail"
+            data-tip-pos="down"
+            aria-label="Refresh from Gmail"
+            data-spinning={refreshInbox.isPending || syncFolder.isPending}
+            onClick={() =>
+              folder === "spam" || folder === "trash"
+                ? syncFolder.mutate({ folder })
+                : refreshInbox.mutate()
+            }
+            disabled={refreshInbox.isPending || syncFolder.isPending}
           >
             <RefreshIcon size={15} />
           </button>
         </div>
 
-        {view === "inbox" && (
-          <form
-            className="mail-search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setActiveSearch(search);
-            }}
-          >
-            <div className="search-wrap">
-              <input
-                ref={searchRef}
-                className="field"
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search mail"
-              />
-              <Kbd>/</Kbd>
-            </div>
-          </form>
+        {bulkIds.size > 0 && inMessages ? (
+          <div className="bulk-bar">
+            <span className="bulk-count tnum">{bulkIds.size} selected</span>
+            {(folder === "inbox" || folder === "starred") && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Archive selected"
+                data-tip-pos="down"
+                aria-label="Archive selected"
+                onClick={() => performAction(bulkList, "archive")}
+              >
+                <ArchiveIcon size={15} />
+              </button>
+            )}
+            {folder === "archived" && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Move selected to inbox"
+                data-tip-pos="down"
+                aria-label="Move selected to inbox"
+                onClick={() => performAction(bulkList, "unarchive")}
+              >
+                <InboxIcon size={15} />
+              </button>
+            )}
+            {folder === "spam" && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Not spam — move to inbox"
+                data-tip-pos="down"
+                aria-label="Not spam"
+                onClick={() => performAction(bulkList, "notSpam")}
+              >
+                <InboxIcon size={15} />
+              </button>
+            )}
+            {folder === "trash" && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Restore selected to inbox"
+                data-tip-pos="down"
+                aria-label="Restore selected"
+                onClick={() => performAction(bulkList, "untrash")}
+              >
+                <InboxIcon size={15} />
+              </button>
+            )}
+            {folder !== "trash" && folder !== "spam" && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Move selected to trash"
+                data-tip-pos="down"
+                aria-label="Move selected to trash"
+                onClick={() => requestTrash(bulkList)}
+              >
+                <TrashIcon size={15} />
+              </button>
+            )}
+            {(folder === "trash" || folder === "spam") && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Delete selected forever"
+                data-tip-pos="down"
+                aria-label="Delete selected forever"
+                onClick={() => requestDelete(bulkList)}
+              >
+                <TrashIcon size={15} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="icon-btn"
+              data-tip="Star selected"
+              data-tip-pos="down"
+              aria-label="Star selected"
+              onClick={() => performAction(bulkList, "star")}
+            >
+              <StarIcon size={15} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              data-tip="Mark selected read"
+              data-tip-pos="down"
+              aria-label="Mark selected read"
+              onClick={() => performAction(bulkList, "read")}
+            >
+              <MailOpenIcon size={15} />
+            </button>
+            <button
+              type="button"
+              className="btn bulk-clear"
+              onClick={() => setBulkIds(new Set())}
+            >
+              Clear
+              <Kbd>esc</Kbd>
+            </button>
+          </div>
+        ) : (
+          inMessages && (
+            <form
+              className="mail-search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setActiveSearch(search);
+              }}
+            >
+              <div className="search-wrap">
+                <input
+                  ref={searchRef}
+                  className="field"
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={`Search ${view}`}
+                />
+                <Kbd>/</Kbd>
+              </div>
+            </form>
+          )
         )}
 
-        <div className="mail-rows">
-          {view === "inbox" && inbox.isLoading && <MailRowsSkeleton />}
-          {view === "inbox" && inbox.error && (
+        <div className="mail-rows" data-bulk={bulkIds.size > 0}>
+          {inMessages && listBusy && <MailRowsSkeleton />}
+          {inMessages && inbox.error && (
             <p className="error" style={{ padding: "0.5rem 0.6rem" }}>
               {inbox.error.message}
             </p>
           )}
-          {view === "inbox" &&
-            !inbox.isLoading &&
+          {inMessages &&
+            !listBusy &&
             !inbox.error &&
             (emails.length === 0 ? (
               refreshInbox.isPending ? (
                 <MailRowsSkeleton />
               ) : (
                 <p className="muted" style={{ padding: "0.5rem 0.6rem" }}>
-                  No mail yet. Refresh from Gmail to sync.
+                  {EMPTY_COPY[folder]}
                 </p>
               )
             ) : (
               <>
                 {emails.map((email, i) => (
-                  <motion.button
+                  <motion.div
                     key={email.id}
-                    type="button"
                     className="row"
+                    role="button"
+                    tabIndex={0}
                     data-active={selectedId === email.id}
                     data-unread={email.unread}
+                    data-checked={bulkIds.has(email.id)}
                     data-mail-id={email.id}
                     onClick={() => setSelectedId(email.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setSelectedId(email.id);
+                    }}
                     variants={listRow}
                     initial="initial"
                     animate="animate"
                     custom={i}
                   >
-                    <span className="row-top">
-                      {email.unread && <span className="row-dot" />}
-                      <span className="row-from">
-                        {senderLabel(email.from)}
+                    <span
+                      className="row-check"
+                      role="checkbox"
+                      aria-checked={bulkIds.has(email.id)}
+                      aria-label="Select message"
+                      data-checked={bulkIds.has(email.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBulk(email.id);
+                      }}
+                    >
+                      <CheckIcon size={11} />
+                    </span>
+                    <span className="row-inner">
+                      <span className="row-top">
+                        {email.unread && <span className="row-dot" />}
+                        <span className="row-from">
+                          {senderLabel(email.from)}
+                        </span>
+                        {email.starred && (
+                          <span className="row-star">
+                            <StarIcon size={11} filled />
+                          </span>
+                        )}
+                        {email.date && (
+                          <span className="row-date tnum">
+                            {formatMessageDate(email.date)}
+                          </span>
+                        )}
                       </span>
-                      {email.starred && (
-                        <span className="row-star">
-                          <StarIcon size={11} filled />
-                        </span>
+                      {email.subject && (
+                        <span className="row-subject">{email.subject}</span>
                       )}
-                      {email.date && (
-                        <span className="row-date tnum">
-                          {formatMessageDate(email.date)}
-                        </span>
+                      {email.snippet && (
+                        <span className="row-snippet">{email.snippet}</span>
                       )}
                     </span>
-                    {email.subject && (
-                      <span className="row-subject">{email.subject}</span>
-                    )}
-                    {email.snippet && (
-                      <span className="row-snippet">{email.snippet}</span>
-                    )}
-                  </motion.button>
+                  </motion.div>
                 ))}
                 {(inbox.isFetchingNextPage || syncMore.isPending) && (
                   <MailRowsSkeleton count={3} />
@@ -719,7 +1007,7 @@ export function GmailPanel({
         {!selectedId ? (
           <div className="empty">
             <p>Select a conversation to read it.</p>
-            <p className="tnum">J / K to browse · C to compose · ? for keys</p>
+            <p className="tnum">J / K to browse · X to select · ? for keys</p>
           </div>
         ) : readPending ? (
           <ReadingSkeleton />
@@ -737,27 +1025,90 @@ export function GmailPanel({
         ) : selectedEmail.data ? (
           <article>
             <div className="read-actions">
-              <button
-                type="button"
-                className="icon-btn"
-                title="Archive ( E )"
-                onClick={() => selectedId && act(selectedId, "archive")}
-              >
-                <ArchiveIcon size={16} />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                title="Move to trash ( # )"
-                onClick={() => selectedId && act(selectedId, "trash")}
-              >
-                <TrashIcon size={16} />
-              </button>
+              {(folder === "inbox" || folder === "starred") && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip="Archive — E"
+                  data-tip-pos="down"
+                  aria-label="Archive"
+                  onClick={() => selectedId && performAction([selectedId], "archive")}
+                >
+                  <ArchiveIcon size={16} />
+                </button>
+              )}
+              {folder === "archived" && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip="Move to inbox — E"
+                  data-tip-pos="down"
+                  aria-label="Move to inbox"
+                  onClick={() =>
+                    selectedId && performAction([selectedId], "unarchive")
+                  }
+                >
+                  <InboxIcon size={16} />
+                </button>
+              )}
+              {folder === "spam" && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip="Not spam — move to inbox"
+                  data-tip-pos="down"
+                  aria-label="Not spam"
+                  onClick={() =>
+                    selectedId && performAction([selectedId], "notSpam")
+                  }
+                >
+                  <InboxIcon size={16} />
+                </button>
+              )}
+              {folder === "trash" && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip="Restore to inbox"
+                  data-tip-pos="down"
+                  aria-label="Restore to inbox"
+                  onClick={() =>
+                    selectedId && performAction([selectedId], "untrash")
+                  }
+                >
+                  <InboxIcon size={16} />
+                </button>
+              )}
+              {folder !== "spam" && folder !== "trash" ? (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip="Move to trash — #"
+                  data-tip-pos="down"
+                  aria-label="Move to trash"
+                  onClick={() => selectedId && requestTrash([selectedId])}
+                >
+                  <TrashIcon size={16} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip="Delete forever — #"
+                  data-tip-pos="down"
+                  aria-label="Delete forever"
+                  onClick={() => selectedId && requestDelete([selectedId])}
+                >
+                  <TrashIcon size={16} />
+                </button>
+              )}
               <button
                 type="button"
                 className="icon-btn"
                 data-on={selectedMeta?.starred}
-                title={selectedMeta?.starred ? "Unstar ( S )" : "Star ( S )"}
+                data-tip={selectedMeta?.starred ? "Unstar — S" : "Star — S"}
+                data-tip-pos="down"
+                aria-label="Star"
                 onClick={toggleStar}
               >
                 <StarIcon size={16} filled={Boolean(selectedMeta?.starred)} />
@@ -765,36 +1116,48 @@ export function GmailPanel({
               <button
                 type="button"
                 className="icon-btn"
-                title="Mark unread ( shift U )"
+                data-tip="Mark unread — shift U"
+                data-tip-pos="down"
+                aria-label="Mark unread"
                 onClick={toggleUnread}
               >
                 <MailOpenIcon size={16} />
               </button>
-              <span className="read-actions-divider" />
-              <button
-                type="button"
-                className="icon-btn"
-                title="Reply ( R )"
-                onClick={replyToSelection}
-              >
-                <ReplyIcon size={16} />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                title="Forward ( F )"
-                onClick={forwardSelection}
-              >
-                <ForwardIcon size={16} />
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
-                title="Turn into calendar event ( T )"
-                onClick={eventFromSelection}
-              >
-                <CalendarPlusIcon size={16} />
-              </button>
+              {folder !== "spam" && folder !== "trash" && (
+                <>
+                  <span className="read-actions-divider" />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    data-tip="Reply — R"
+                    data-tip-pos="down"
+                    aria-label="Reply"
+                    onClick={replyToSelection}
+                  >
+                    <ReplyIcon size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    data-tip="Forward — F"
+                    data-tip-pos="down"
+                    aria-label="Forward"
+                    onClick={forwardSelection}
+                  >
+                    <ForwardIcon size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    data-tip="Turn into calendar event — T"
+                    data-tip-pos="down"
+                    aria-label="Turn into calendar event"
+                    onClick={eventFromSelection}
+                  >
+                    <CalendarPlusIcon size={16} />
+                  </button>
+                </>
+              )}
             </div>
             <h1 className="read-subject">
               {selectedEmail.data.subject || "(no subject)"}
@@ -815,6 +1178,61 @@ export function GmailPanel({
           </article>
         ) : null}
       </section>
+
+      <AnimatePresence>
+        {confirm && (
+          <>
+            <motion.div
+              className="scrim"
+              variants={scrim}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              onClick={() => setConfirm(null)}
+            />
+            <motion.div
+              className="confirm"
+              variants={slideOver}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              role="alertdialog"
+              aria-label="Confirm action"
+            >
+              <div className="confirm-body">
+                <h2 className="confirm-title">
+                  {confirm.kind === "trash"
+                    ? `Move ${confirm.ids.length === 1 ? "this message" : `${confirm.ids.length} messages`} to trash?`
+                    : `Delete ${confirm.ids.length === 1 ? "this message" : `${confirm.ids.length} messages`} forever?`}
+                </h2>
+                <p className="confirm-text">
+                  {confirm.kind === "trash"
+                    ? "You can restore it from Trash later."
+                    : "This cannot be undone."}
+                </p>
+              </div>
+              <div className="confirm-foot">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setConfirm(null)}
+                >
+                  Cancel
+                  <Kbd>esc</Kbd>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger-solid"
+                  onClick={runConfirm}
+                >
+                  {confirm.kind === "trash" ? "Move to trash" : "Delete forever"}
+                  <Kbd>↵</Kbd>
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {composeOpen && (

@@ -138,7 +138,12 @@ export default function Home() {
             </span>
             <ThemeToggle />
             <form action="/api/auth/logout" method="post">
-              <button type="submit" className="icon-btn" title="Sign out">
+              <button
+                type="submit"
+                className="icon-btn"
+                data-tip="Sign out"
+                aria-label="Sign out"
+              >
                 <SignOutIcon size={15} />
               </button>
             </form>
@@ -154,7 +159,9 @@ export default function Home() {
             <button
               type="button"
               className="icon-btn"
-              title="Keyboard shortcuts ( ? )"
+              data-tip="Keyboard shortcuts — ?"
+              data-tip-pos="down"
+              aria-label="Keyboard shortcuts"
               onClick={() => setHelpOpen(true)}
             >
               <HelpIcon size={15} />

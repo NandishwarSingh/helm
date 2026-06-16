@@ -348,7 +348,9 @@ export function CalendarPanel({
         <button
           type="button"
           className="icon-btn"
-          title="Refresh from Calendar"
+          data-tip="Refresh from Calendar"
+          data-tip-pos="down"
+          aria-label="Refresh from Calendar"
           data-spinning={refreshEvents.isPending}
           onClick={() =>
             refreshEvents.mutate({
@@ -369,7 +371,8 @@ export function CalendarPanel({
             type="button"
             className="cal-strip-day"
             data-today={day.isToday}
-            title="Add an event on this day"
+            data-tip="Add an event on this day"
+            data-tip-pos="down"
             onClick={() => openCreateForDay(day.date)}
           >
             <span className="cal-strip-name">
@@ -427,7 +430,8 @@ export function CalendarPanel({
                   <button
                     type="button"
                     className="icon-btn cal-day-add"
-                    title="Add an event on this day"
+                    data-tip="Add an event on this day"
+                    aria-label="Add an event on this day"
                     onClick={() => openCreateForDay(day.date)}
                   >
                     <PlusIcon size={14} />
@@ -445,7 +449,6 @@ export function CalendarPanel({
                       animate="animate"
                       custom={i}
                       onClick={() => openEdit(event)}
-                      title="Edit event"
                     >
                       <div className="event-when tnum">
                         {formatEventWhen(event.start, event.end)}

@@ -55,7 +55,7 @@ export function ThemeToggle() {
       type="button"
       className="icon-btn"
       onClick={toggle}
-      title={isDark ? "Switch to light" : "Switch to dark"}
+      data-tip={isDark ? "Switch to light theme" : "Switch to dark theme"}
       aria-label="Toggle colour theme"
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none">

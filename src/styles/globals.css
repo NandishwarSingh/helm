@@ -37,6 +37,8 @@
   --scrim: rgba(23, 23, 15, 0.18);
 
   --ease-snap: cubic-bezier(0.2, 0, 0, 1);
+  /* Hover delay before tooltips appear. */
+  --tip-delay: 800ms;
 }
 
 /* ------------------------------------------------------------------ *
@@ -390,6 +392,71 @@
     box-shadow: var(--shadow-rest);
     font-weight: 550;
   }
+  /* Compact variant: six mail folders in one row */
+  .seg.seg-folders button {
+    padding: 0 0.45rem;
+    font-size: 0.76rem;
+  }
+
+  /* Multiselect bulk-action bar (replaces the search row while active) */
+  .bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.45rem 0.9rem;
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-accent-wash);
+  }
+  .bulk-count {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    margin-right: 0.45rem;
+  }
+  .bulk-clear {
+    margin-left: auto;
+  }
+
+  /* Row select checkbox */
+  .row-check {
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-paper-raised);
+    color: transparent;
+    cursor: pointer;
+    opacity: 0;
+    transition:
+      opacity 0.1s var(--ease-snap),
+      background 0.1s var(--ease-snap);
+  }
+  .row:hover .row-check,
+  .row-check[data-checked="true"],
+  .mail-rows[data-bulk="true"] .row-check {
+    opacity: 1;
+  }
+  .row-check[data-checked="true"] {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+  .row:hover .row-inner,
+  .mail-rows[data-bulk="true"] .row-inner,
+  .row[data-checked="true"] .row-inner {
+    padding-left: 20px;
+  }
+  .row-inner {
+    display: block;
+    transition: padding-left 0.1s var(--ease-snap);
+  }
   .mail-search {
     padding: 0.6rem 0.9rem;
     border-bottom: 1px solid var(--color-line);
@@ -581,6 +648,60 @@
 }
 
 /* ------------------------------------------------------------------ *
+ * Tooltips — pure CSS, theme tokens, delayed reveal via --tip-delay
+ * ------------------------------------------------------------------ */
+@layer components {
+  [data-tip] {
+    position: relative;
+  }
+  [data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 7px);
+    transform: translateX(-50%) translateY(3px);
+    padding: 0.28rem 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: nowrap;
+    color: var(--color-ink);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 80;
+    transition:
+      opacity 0.12s var(--ease-snap),
+      transform 0.12s var(--ease-snap);
+  }
+  [data-tip]:hover::after,
+  [data-tip]:focus-visible::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    transition-delay: var(--tip-delay);
+  }
+  [data-tip][data-tip-pos="down"]::after {
+    bottom: auto;
+    top: calc(100% + 7px);
+    transform: translateX(-50%) translateY(-3px);
+  }
+  [data-tip][data-tip-pos="down"]:hover::after,
+  [data-tip][data-tip-pos="down"]:focus-visible::after {
+    transform: translateX(-50%) translateY(0);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    [data-tip]::after {
+      transition: opacity 0.01s;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Command palette
  * ------------------------------------------------------------------ */
 @layer components {
@@ -729,6 +850,54 @@
   }
   .search-wrap:focus-within > .kbd {
     opacity: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Confirm dialog (destructive actions)
+ * ------------------------------------------------------------------ */
+@layer components {
+  .confirm {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    z-index: 60;
+    width: min(420px, calc(100vw - 2.2rem));
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-pop);
+    overflow: hidden;
+  }
+  .confirm-body {
+    padding: 1.1rem 1.1rem 0.9rem;
+  }
+  .confirm-title {
+    margin: 0 0 0.35rem;
+    font-size: 0.98rem;
+    font-weight: 650;
+  }
+  .confirm-text {
+    margin: 0;
+    color: var(--color-ink-2);
+    font-size: 0.86rem;
+    line-height: 1.5;
+  }
+  .confirm-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    padding: 0.85rem 1.1rem;
+    border-top: 1px solid var(--color-line);
+    background: var(--color-paper);
+  }
+  .btn-danger-solid {
+    color: #ffffff;
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+  }
+  .btn-danger-solid:hover:not(:disabled) {
+    filter: brightness(1.08);
   }
 }
 
