@@ -914,11 +914,15 @@ export function GmailPanel({
 
   // Grow the window, then (once it's exhausted) deep-sync the cache for more.
   function revealMore() {
-    if (inbox.data?.hasMore && limit < MAIL_WINDOW) {
-      setLimit((l) => Math.min(l + MAIL_PAGE, MAIL_WINDOW));
+    if (!inMessages || isPriority) return;
+    if (inbox.data?.hasMore) {
+      // More rows already sit in the window — reveal them.
+      if (limit < MAIL_WINDOW) {
+        setLimit((l) => Math.min(l + MAIL_PAGE, MAIL_WINDOW));
+      }
     } else if (
+      // Whole window shown: deep-sync Gmail for older mail (inbox only).
       folder === "inbox" &&
-      inbox.data?.windowFull &&
       !activeSearch.trim() &&
       canSyncMore &&
       !syncMore.isPending
@@ -1120,18 +1124,21 @@ export function GmailPanel({
   // then deep-sync the cache (inbox only) once the window is exhausted.
   const revealMoreRef = useRef(revealMore);
   revealMoreRef.current = revealMore;
+  // The sentinel only exists once rows render, so re-attach the observer when
+  // the list first has rows — not just on mount, when it's still empty.
+  const hasRows = inMessages && !isPriority && emails.length > 0;
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || !inMessages) return;
+    if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) revealMoreRef.current();
       },
-      { rootMargin: "240px" },
+      { rootMargin: "300px" },
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [inMessages]);
+  }, [hasRows]);
 
   const composeError =
     createDraft.error ?? sendEmail.error ?? updateDraft.error ?? sendDraft.error;
