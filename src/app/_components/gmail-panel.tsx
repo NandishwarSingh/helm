@@ -20,9 +20,11 @@ import {
   RefreshIcon,
   ReplyAllIcon,
   ReplyIcon,
+  ScissorsIcon,
   StarIcon,
   TrashIcon,
 } from "@/components/icons";
+import { TearableReader } from "@/app/_components/tearable-reader";
 import { Kbd } from "@/components/kbd";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
@@ -213,6 +215,8 @@ export function GmailPanel({
   const [activeSearch, setActiveSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canSyncMore, setCanSyncMore] = useState(true);
+  // Tearable triage: the open mail is a physics cloth you tear to trash.
+  const [tearMode, setTearMode] = useState(false);
 
   // Multiselect + destructive-action confirmation.
   const [bulkIds, setBulkIds] = useState<Set<string>>(new Set());
@@ -727,6 +731,12 @@ export function GmailPanel({
   function toggleStar() {
     if (!selectedId) return;
     performAction([selectedId], selectedMeta?.starred ? "unstar" : "star");
+  }
+  // Tearing IS the confirmation, so trash straight away (with the usual undo)
+  // and the optimistic move advances the selection to the next message.
+  function tearToTrash() {
+    if (!selectedId) return;
+    performAction([selectedId], folder === "trash" ? "deleteForever" : "trash");
   }
   function toggleUnread() {
     if (!selectedId) return;
@@ -1550,9 +1560,54 @@ export function GmailPanel({
               Try again
             </button>
           </div>
+        ) : selectedEmail.data && tearMode ? (
+          <div className="tear-pane">
+            <div className="tear-bar">
+              <span className="tear-chip tnum">
+                <ScissorsIcon size={12} />
+                Tearable mode · drag to tear, tear to trash
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                data-on="true"
+                data-tip="Exit tearable mode"
+                data-tip-pos="down"
+                aria-label="Exit tearable mode"
+                onClick={() => setTearMode(false)}
+              >
+                <ScissorsIcon size={15} />
+              </button>
+            </div>
+            <TearableReader
+              key={selectedEmail.data.id}
+              email={selectedEmail.data}
+              starred={Boolean(selectedMeta?.starred)}
+              onTear={tearToTrash}
+              onReply={() => startReply(false)}
+              onArchive={() =>
+                selectedId && performAction([selectedId], "archive")
+              }
+              onStar={(next) =>
+                selectedId &&
+                performAction([selectedId], next ? "star" : "unstar")
+              }
+            />
+          </div>
         ) : selectedEmail.data ? (
           <article>
             <div className="read-actions">
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Tearable mode"
+                data-tip-pos="down"
+                aria-label="Tearable mode"
+                onClick={() => setTearMode(true)}
+              >
+                <ScissorsIcon size={16} />
+              </button>
+              <span className="read-actions-divider" />
               {(folder === "inbox" || folder === "starred") && (
                 <button
                   type="button"
