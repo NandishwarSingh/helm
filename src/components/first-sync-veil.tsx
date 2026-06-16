@@ -107,7 +107,10 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
         el.setAttribute("src", VEIL_RUNTIME);
         // Dark fabric with a faint sky-slate crown — on theme with the app.
         el.setAttribute("color", "#212c36, #0d0c0a");
-        el.setAttribute("reveal-threshold", "0.3");
+        // Edge-fraction torn before the cloth releases and falls. ~0.2 looks
+        // like roughly half the cloth is gone (torn edges open big holes), so
+        // it falls well before you have to shred the whole thing.
+        el.setAttribute("reveal-threshold", "0.2");
         el.setAttribute("breeze", "10");
         // Locked until the sync completes.
         el.setAttribute("interaction", "none");

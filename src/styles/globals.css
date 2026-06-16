@@ -723,6 +723,76 @@
     color: var(--color-accent-strong);
   }
 
+  /* Threaded conversation in the reading pane */
+  .thread-count {
+    margin: 0 0 0.8rem;
+    font-size: 0.72rem;
+    color: var(--color-ink-3);
+  }
+  .thread {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .thread-msg {
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--color-paper);
+  }
+  .thread-msg[data-open="true"] {
+    border-color: var(--color-line-strong);
+  }
+  .thread-msg[data-unread="true"] {
+    border-left: 2px solid var(--color-accent);
+  }
+  .thread-msg-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    width: 100%;
+    padding: 0.6rem 0.85rem;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    color: var(--color-ink);
+  }
+  .thread-msg-head:hover {
+    background: var(--color-paper-sunken);
+  }
+  .thread-from {
+    flex: none;
+    font-weight: 600;
+    font-size: 0.82rem;
+  }
+  .thread-preview {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.78rem;
+    color: var(--color-ink-3);
+  }
+  .thread-date {
+    flex: none;
+    margin-left: auto;
+    font-size: 0.7rem;
+    color: var(--color-ink-3);
+  }
+  .thread-msg-body {
+    padding: 0 0.85rem 0.85rem;
+  }
+  .thread-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.9rem;
+    padding: 0.1rem 0 0.7rem;
+    font-size: 0.72rem;
+    color: var(--color-ink-3);
+  }
+
   .empty {
     display: flex;
     flex-direction: column;
@@ -1396,6 +1466,23 @@
     display: flex;
     flex-direction: column;
     gap: 0.85rem;
+  }
+  .compose-recip {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .compose-recip .field {
+    flex: 1;
+  }
+  .compose-ccbcc-toggle {
+    flex: none;
+    font-size: 0.74rem;
+    color: var(--color-ink-3);
+    white-space: nowrap;
+  }
+  .compose-ccbcc-toggle:hover {
+    color: var(--color-accent-strong);
   }
   .compose-foot {
     display: flex;

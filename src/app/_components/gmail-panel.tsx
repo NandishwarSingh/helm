@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
+
+// One page worth of rows revealed at a time, up to the server's window cap.
+const MAIL_PAGE = 40;
+const MAIL_WINDOW = 300;
 
 import { EmailBody } from "@/app/_components/email-body";
 import {
@@ -13,6 +18,7 @@ import {
   InboxIcon,
   MailOpenIcon,
   RefreshIcon,
+  ReplyAllIcon,
   ReplyIcon,
   StarIcon,
   TrashIcon,
@@ -240,8 +246,17 @@ export function GmailPanel({
   const inFlight = useRef(0);
 
   const [to, setTo] = useState("");
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCcBcc, setShowCcBcc] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  // Threading: set when replying so the sent message nests in its conversation.
+  const [replyThread, setReplyThread] = useState<{
+    threadId: string;
+    inReplyTo: string;
+    references: string;
+  } | null>(null);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [openingDraftId, setOpeningDraftId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -261,12 +276,21 @@ export function GmailPanel({
     view === "drafts" || view === "priority" ? "inbox" : view;
   const inMessages = view !== "drafts";
 
-  const inbox = api.gmail.searchEmails.useInfiniteQuery(
-    { query: activeSearch, folder },
+  // A growing window into a stable, date-sorted list. Scrolling raises the
+  // limit; the same prefix returns on every refetch, so rows never pop in and
+  // out. keepPreviousData means raising the limit (or a poll) never blanks the
+  // list.
+  const [limit, setLimit] = useState(MAIL_PAGE);
+  // Reset the window when the folder or active search changes.
+  useEffect(() => {
+    setLimit(MAIL_PAGE);
+  }, [folder, activeSearch]);
+
+  const inbox = api.gmail.searchEmails.useQuery(
+    { query: activeSearch, folder, limit },
     {
       enabled: inMessages && !isPriority,
-      initialCursor: 0,
-      getNextPageParam: (last) => last.nextCursor ?? undefined,
+      placeholderData: keepPreviousData,
       // Reads hit the local cache, so polling is cheap — folders stay live
       // without a manual refresh. Pause while a label mutation is in flight
       // so a refetch can never land between the optimistic update and its
@@ -297,11 +321,10 @@ export function GmailPanel({
     return map;
   }, [overviewGroups]);
 
-  // Flatten pages, dedupe across page boundaries, then apply local truth:
-  // drop rows that no longer belong here, surface rows that just moved in,
-  // and overlay unread/star flips. In the Priority view the source is the
-  // triage groups, most urgent first.
-  const pages = inbox.data?.pages;
+  // Apply local truth on the server list: drop rows that no longer belong
+  // here, surface rows that just moved in, and overlay unread/star flips. In
+  // the Priority view the source is the triage groups, most urgent first.
+  const items = inbox.data?.items;
   const emails = useMemo(() => {
     const source: EmailRow[] = isPriority
       ? PRIORITY_ORDER.flatMap((priority) =>
@@ -310,13 +333,11 @@ export function GmailPanel({
             priority,
           })),
         )
-      : (pages ?? [])
-          .flatMap((page) => page.items)
-          .map((item) => ({
-            ...item,
-            reason: "",
-            priority: priorityById.get(item.id),
-          }));
+      : (items ?? []).map((item) => ({
+          ...item,
+          reason: "",
+          priority: priorityById.get(item.id),
+        }));
 
     const seen = new Set<string>();
     const merged: EmailRow[] = [];
@@ -350,12 +371,12 @@ export function GmailPanel({
       }
     }
 
-    // Pages from the server can interleave in time; the priority view keeps
-    // its verdict-group order instead.
+    // The server list is already date-sorted; the priority view keeps its
+    // verdict-group order instead.
     return isPriority
       ? merged
       : merged.sort((a, b) => b.timestamp - a.timestamp);
-  }, [isPriority, overviewGroups, pages, priorityById, localEdits, folder]);
+  }, [isPriority, overviewGroups, items, priorityById, localEdits, folder]);
 
   // Debounced read target: the highlight moves instantly; the (slow, live)
   // message fetch fires only once the selection settles.
@@ -378,6 +399,27 @@ export function GmailPanel({
       retry: 1,
     },
   );
+
+  // The full conversation for the open message. The reading pane shows the
+  // thread when it holds more than one message.
+  const threadId = selectedEmail.data?.threadId ?? "";
+  const thread = api.gmail.getThread.useQuery(
+    { id: threadId },
+    {
+      enabled: !!threadId,
+      refetchOnWindowFocus: false,
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    },
+  );
+  const threadMessages = thread.data?.messages ?? [];
+  const isThread = threadMessages.length > 1;
+
+  // The user's own address, so reply-all never cc's them back to themselves.
+  const myEmail = api.gmail.profile.useQuery(undefined, {
+    enabled: inMessages,
+    staleTime: 60 * 60 * 1000,
+  }).data?.email;
 
   const readPending =
     selectedId !== readId || (!!readId && selectedEmail.isLoading);
@@ -493,10 +535,26 @@ export function GmailPanel({
 
   function closeCompose() {
     setTo("");
+    setCc("");
+    setBcc("");
+    setShowCcBcc(false);
     setSubject("");
     setBody("");
+    setReplyThread(null);
     setEditingDraftId(null);
     onComposeOpenChange(false);
+  }
+
+  // Fields shared by send/draft/update, including Cc/Bcc and any reply thread.
+  function composePayload() {
+    return {
+      to,
+      cc: cc.trim() || undefined,
+      bcc: bcc.trim() || undefined,
+      subject,
+      body,
+      ...(replyThread ?? {}),
+    };
   }
 
   const createDraft = api.gmail.createDraft.useMutation({
@@ -696,25 +754,60 @@ export function GmailPanel({
 
   // ---- compose seeds ----------------------------------------------------------
 
-  function replyToSelection() {
+  // Reply to the latest message in the thread (it carries the Message-ID
+  // headers Gmail needs to nest the reply). replyAll cc's the other people.
+  function startReply(replyAll = false) {
     const message = selectedEmail.data;
     if (!message) return;
-    const sender = parseEmailAddress((message.from || "").split(",")[0] ?? "");
-    if (!sender.email) return;
+    const last = threadMessages[threadMessages.length - 1];
+    const replyToAddr = parseEmailAddress(
+      (last?.from ?? message.from ?? "").split(",")[0] ?? "",
+    ).email;
+    if (!replyToAddr) return;
     setEditingDraftId(null);
-    setTo(sender.email);
-    setSubject(
-      message.subject && !/^re:/i.test(message.subject)
-        ? `Re: ${message.subject}`
-        : (message.subject ?? ""),
-    );
+    setTo(replyToAddr);
+
+    if (replyAll) {
+      const others = [
+        ...(last?.to ?? message.to ?? "").split(","),
+        ...(last?.cc ?? "").split(","),
+      ]
+        .map((entry) => parseEmailAddress(entry).email)
+        .filter(
+          (email) =>
+            email &&
+            email !== replyToAddr &&
+            email.toLowerCase() !== myEmail,
+        );
+      const unique = [...new Set(others)];
+      if (unique.length > 0) {
+        setCc(unique.join(", "));
+        setShowCcBcc(true);
+      }
+    }
+
+    const subj = last?.subject ?? message.subject ?? "";
+    setSubject(/^re:/i.test(subj) ? subj : `Re: ${subj}`);
+    setReplyThread({
+      threadId: thread.data?.id ?? message.threadId ?? "",
+      inReplyTo: last?.messageIdHeader ?? "",
+      references: [last?.references, last?.messageIdHeader]
+        .filter(Boolean)
+        .join(" ")
+        .trim(),
+    });
     onComposeOpenChange(true);
   }
+  const replyToSelection = () => startReply(false);
 
   function forwardSelection() {
     const message = selectedEmail.data;
     if (!message) return;
     setEditingDraftId(null);
+    // A forward is a fresh message, not a threaded reply.
+    setReplyThread(null);
+    setCc("");
+    setBcc("");
     setTo("");
     setSubject(
       message.subject && !/^fwd:/i.test(message.subject)
@@ -759,6 +852,9 @@ export function GmailPanel({
       const draft = await utils.gmail.getDraft.fetch({ id: draftId });
       setEditingDraftId(draftId);
       setTo(draft.to);
+      setCc(draft.cc);
+      setBcc(draft.bcc);
+      if (draft.cc || draft.bcc) setShowCcBcc(true);
       setSubject(draft.subject);
       setBody(draft.body);
       onComposeOpenChange(true);
@@ -771,14 +867,14 @@ export function GmailPanel({
 
   async function sendEditedDraft() {
     if (!editingDraftId) return;
-    await updateDraft.mutateAsync({ draftId: editingDraftId, to, subject, body });
+    await updateDraft.mutateAsync({ draftId: editingDraftId, ...composePayload() });
     await sendDraft.mutateAsync({ draftId: editingDraftId });
     closeCompose();
   }
 
   async function saveEditedDraft() {
     if (!editingDraftId) return;
-    await updateDraft.mutateAsync({ draftId: editingDraftId, to, subject, body });
+    await updateDraft.mutateAsync({ draftId: editingDraftId, ...composePayload() });
     await utils.gmail.listDrafts.invalidate();
     closeCompose();
   }
@@ -813,8 +909,22 @@ export function GmailPanel({
     document
       .querySelector(`[data-mail-id="${target.id}"]`)
       ?.scrollIntoView({ block: "nearest" });
-    if (next >= emails.length - 3 && hasNextPage && !isFetchingNextPage) {
-      void fetchNextPage();
+    // Pull more into view as the selection nears the end.
+    if (next >= emails.length - 3) revealMore();
+  }
+
+  // Grow the window, then (once it's exhausted) deep-sync the cache for more.
+  function revealMore() {
+    if (inbox.data?.hasMore && limit < MAIL_WINDOW) {
+      setLimit((l) => Math.min(l + MAIL_PAGE, MAIL_WINDOW));
+    } else if (
+      folder === "inbox" &&
+      inbox.data?.windowFull &&
+      !activeSearch.trim() &&
+      canSyncMore &&
+      !syncMore.isPending
+    ) {
+      syncMore.mutate();
     }
   }
 
@@ -923,7 +1033,11 @@ export function GmailPanel({
           break;
         case "r":
           if (!selectedId) return;
-          replyToSelection();
+          startReply(false);
+          break;
+        case "R":
+          if (!selectedId) return;
+          startReply(true);
           break;
         case "f":
           if (!selectedId) return;
@@ -1003,42 +1117,22 @@ export function GmailPanel({
     syncFolder.mutate({ folder });
   }, [folder, inbox.isLoading, emails.length, syncFolder]);
 
-  // Infinite scroll within the cache; deep Gmail paging is inbox-only.
-  const { hasNextPage, isFetchingNextPage, isFetching, fetchNextPage } = inbox;
+  // Infinite scroll: reveal more of the stable list as the sentinel nears,
+  // then deep-sync the cache (inbox only) once the window is exhausted.
+  const revealMoreRef = useRef(revealMore);
+  revealMoreRef.current = revealMore;
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || !inMessages) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        if (hasNextPage && !isFetchingNextPage) {
-          void fetchNextPage();
-        } else if (
-          folder === "inbox" &&
-          !hasNextPage &&
-          !isFetching &&
-          !activeSearch.trim() &&
-          canSyncMore &&
-          !syncMore.isPending
-        ) {
-          syncMore.mutate();
-        }
+        if (entries[0]?.isIntersecting) revealMoreRef.current();
       },
       { rootMargin: "240px" },
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [
-    inMessages,
-    folder,
-    hasNextPage,
-    isFetchingNextPage,
-    isFetching,
-    fetchNextPage,
-    activeSearch,
-    canSyncMore,
-    syncMore,
-  ]);
+  }, [inMessages]);
 
   const composeError =
     createDraft.error ?? sendEmail.error ?? updateDraft.error ?? sendDraft.error;
@@ -1293,7 +1387,8 @@ export function GmailPanel({
             ) : (
               <>
                 {emails.map(renderRow)}
-                {(inbox.isFetchingNextPage || syncMore.isPending) && (
+                {(syncMore.isPending ||
+                  (inbox.isFetching && inbox.isPlaceholderData)) && (
                   <MailRowsSkeleton count={3} />
                 )}
                 <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
@@ -1559,9 +1654,19 @@ export function GmailPanel({
                     data-tip="Reply — R"
                     data-tip-pos="down"
                     aria-label="Reply"
-                    onClick={replyToSelection}
+                    onClick={() => startReply(false)}
                   >
                     <ReplyIcon size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    data-tip="Reply all — ⇧R"
+                    data-tip-pos="down"
+                    aria-label="Reply all"
+                    onClick={() => startReply(true)}
+                  >
+                    <ReplyAllIcon size={16} />
                   </button>
                   <button
                     type="button"
@@ -1589,19 +1694,34 @@ export function GmailPanel({
             <h1 className="read-subject">
               {selectedEmail.data.subject || "(no subject)"}
             </h1>
-            <div className="read-meta">
-              <span>{formatSender(selectedEmail.data.from)}</span>
-              {selectedEmail.data.date && (
-                <span className="tnum">
-                  {formatMessageDate(selectedEmail.data.date)}
-                </span>
-              )}
-            </div>
-            <EmailBody
-              key={selectedEmail.data.id}
-              html={selectedEmail.data.html}
-              text={selectedEmail.data.body || selectedEmail.data.snippet}
-            />
+            {isThread ? (
+              <>
+                <p className="thread-count tnum">
+                  {threadMessages.length} messages in this conversation
+                </p>
+                <ThreadView
+                  key={`${thread.data?.id ?? "t"}-${selectedEmail.data.id}`}
+                  messages={threadMessages}
+                  focusId={selectedEmail.data.id}
+                />
+              </>
+            ) : (
+              <>
+                <div className="read-meta">
+                  <span>{formatSender(selectedEmail.data.from)}</span>
+                  {selectedEmail.data.date && (
+                    <span className="tnum">
+                      {formatMessageDate(selectedEmail.data.date)}
+                    </span>
+                  )}
+                </div>
+                <EmailBody
+                  key={selectedEmail.data.id}
+                  html={selectedEmail.data.html}
+                  text={selectedEmail.data.body || selectedEmail.data.snippet}
+                />
+              </>
+            )}
           </article>
         ) : null}
       </section>
@@ -1710,7 +1830,7 @@ export function GmailPanel({
                 if (event.key === "Enter" && canSend && !composeBusy) {
                   event.preventDefault();
                   if (editingDraftId) void sendEditedDraft();
-                  else sendEmail.mutate({ to, subject, body });
+                  else sendEmail.mutate(composePayload());
                 } else if (
                   event.key.toLowerCase() === "s" &&
                   canSend &&
@@ -1718,7 +1838,7 @@ export function GmailPanel({
                 ) {
                   event.preventDefault();
                   if (editingDraftId) void saveEditedDraft();
-                  else createDraft.mutate({ to, subject, body });
+                  else createDraft.mutate(composePayload());
                 }
               }}
             >
@@ -1735,14 +1855,43 @@ export function GmailPanel({
                 </button>
               </div>
               <div className="compose-body">
-                <input
-                  ref={toRef}
-                  className="field"
-                  type="email"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  placeholder="To"
-                />
+                <div className="compose-recip">
+                  <input
+                    ref={toRef}
+                    className="field"
+                    type="email"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    placeholder="To"
+                  />
+                  {!showCcBcc && (
+                    <button
+                      type="button"
+                      className="link compose-ccbcc-toggle"
+                      onClick={() => setShowCcBcc(true)}
+                    >
+                      Cc / Bcc
+                    </button>
+                  )}
+                </div>
+                {showCcBcc && (
+                  <>
+                    <input
+                      className="field"
+                      type="text"
+                      value={cc}
+                      onChange={(e) => setCc(e.target.value)}
+                      placeholder="Cc (comma-separated)"
+                    />
+                    <input
+                      className="field"
+                      type="text"
+                      value={bcc}
+                      onChange={(e) => setBcc(e.target.value)}
+                      placeholder="Bcc (comma-separated)"
+                    />
+                  </>
+                )}
                 <input
                   className="field"
                   type="text"
@@ -1767,7 +1916,7 @@ export function GmailPanel({
                   onClick={() =>
                     editingDraftId
                       ? void sendEditedDraft()
-                      : sendEmail.mutate({ to, subject, body })
+                      : sendEmail.mutate(composePayload())
                   }
                   disabled={composeBusy || !canSend}
                 >
@@ -1780,7 +1929,7 @@ export function GmailPanel({
                   onClick={() =>
                     editingDraftId
                       ? void saveEditedDraft()
-                      : createDraft.mutate({ to, subject, body })
+                      : createDraft.mutate(composePayload())
                   }
                   disabled={composeBusy || !canSend}
                 >
@@ -1791,6 +1940,89 @@ export function GmailPanel({
           </>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+type ThreadMessage = {
+  id: string;
+  from: string;
+  to: string;
+  cc: string;
+  subject: string;
+  date: string | null;
+  snippet: string;
+  body: string;
+  html: string;
+  unread: boolean;
+};
+
+/**
+ * A conversation: every message stacked oldest-first. The focused (clicked)
+ * message and the latest one open by default; the rest collapse to a one-line
+ * summary you can expand.
+ */
+function ThreadView({
+  messages,
+  focusId,
+}: {
+  messages: ThreadMessage[];
+  focusId: string;
+}) {
+  const lastId = messages[messages.length - 1]?.id;
+  const [open, setOpen] = useState<Set<string>>(
+    () => new Set([focusId, lastId].filter(Boolean) as string[]),
+  );
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <div className="thread">
+      {messages.map((message) => {
+        const isOpen = open.has(message.id);
+        return (
+          <div
+            className="thread-msg"
+            data-open={isOpen}
+            data-unread={message.unread}
+            key={message.id}
+          >
+            <button
+              type="button"
+              className="thread-msg-head"
+              onClick={() => toggle(message.id)}
+            >
+              <span className="thread-from">{senderLabel(message.from)}</span>
+              {!isOpen && (
+                <span className="thread-preview">{message.snippet}</span>
+              )}
+              {message.date && (
+                <span className="thread-date tnum">
+                  {formatMessageDate(message.date)}
+                </span>
+              )}
+            </button>
+            {isOpen && (
+              <div className="thread-msg-body">
+                <div className="thread-meta tnum">
+                  <span>To: {message.to || "—"}</span>
+                  {message.cc && <span>Cc: {message.cc}</span>}
+                </div>
+                <EmailBody
+                  key={message.id}
+                  html={message.html}
+                  text={message.body || message.snippet}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

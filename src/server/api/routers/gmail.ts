@@ -20,7 +20,6 @@ import {
   folderSchema,
   mapMessage,
   sortMessagesNewestFirst,
-  type MappedMessage,
 } from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
 import { getTenantId } from "@/server/lib/session";
@@ -32,9 +31,38 @@ const paginationSchema = z.object({
   offset: z.number().min(0).default(0),
 });
 
+// Cc/Bcc are comma-separated lists; each address must be a real email.
+const emailList = z
+  .string()
+  .max(640)
+  .optional()
+  .refine(
+    (value) =>
+      !value ||
+      value
+        .split(",")
+        .every((email) => z.string().email().safeParse(email.trim()).success),
+    "Each Cc/Bcc address must be a valid email.",
+  );
+
+// Optional threading headers so a reply nests into its conversation.
+const composeSchema = z.object({
+  to: z.string().email().max(320),
+  cc: emailList,
+  bcc: emailList,
+  subject: z.string().min(1).max(500),
+  body: z.string().min(1).max(100_000),
+  threadId: z.string().max(64).optional(),
+  inReplyTo: z.string().max(998).optional(),
+  references: z.string().max(4096).optional(),
+});
+
 type Tenant = Awaited<ReturnType<typeof getTenant>>;
 const SYNC_CONCURRENCY = 10;
 const SYNC_PAGE_SIZE = 40;
+// The recency window the list view reads before sorting by date. Matches the
+// other cache reads (triage, syncNew) so every view sees the same messages.
+const MAIL_WINDOW = 300;
 
 // Gmail's messages.list returns only id/threadId stubs, so each id is hydrated
 // with metadata (from, subject, snippet, date) for the list view. Each get
@@ -70,78 +98,55 @@ async function setSyncCursor(tenantId: string, token: string | null) {
 }
 
 export const gmailRouter = createTRPCRouter({
+  // The cache pages by update recency, so opening, starring or syncing a
+  // message reshuffles any offset window — which made rows pop in and out.
+  // Instead we read a fixed recency window, then derive a STABLE list ordered
+  // by message date and serve a growing prefix of it. The same top-N comes
+  // back on every refetch, so the list never flickers.
   searchEmails: authedProcedure
     .input(
       z.object({
         query: z.string().max(256),
         folder: folderSchema,
-        cursor: z.number().min(0).default(0),
-        limit: z.number().min(1).max(50).default(25),
+        limit: z.number().min(1).max(MAIL_WINDOW).default(40),
       }),
     )
     .query(async ({ input }) => {
       const query = input.query.trim();
 
-      // One page of raw cache rows at a cursor. Search queries fan out per
-      // field (the cache ANDs filters together) and merge.
-      async function fetchPage(cursor: number) {
-        return listOrEmpty(async () => {
-          const tenant = await getTenant();
-          if (!query) {
-            return tenant.gmail.db.messages.list({
-              limit: input.limit,
-              offset: cursor,
-            });
-          }
-          const fields = [
-            { snippet: { contains: query } },
-            { subject: { contains: query } },
-            { from: { contains: query } },
-          ];
-          const results = await Promise.all(
-            fields.map((data) =>
-              tenant.gmail.db.messages.search({
-                data,
-                limit: input.limit,
-                offset: cursor,
-              }),
-            ),
-          );
-          return results.flat();
-        });
-      }
-
-      // Folder filtering can thin a raw page to nothing (a page of archived
-      // mail viewed from Starred), so keep walking the cache until the page
-      // fills or the cache ends — never hand the client an empty page with a
-      // live cursor.
-      const collected: MappedMessage[] = [];
-      const seen = new Set<string>();
-      let cursor = input.cursor;
-      let cacheHasMore = true;
-      for (let hop = 0; hop < 8 && collected.length < input.limit; hop++) {
-        const raw = await fetchPage(cursor);
-        cursor += input.limit;
-        cacheHasMore = raw.length >= input.limit;
-        const mapped = sortMessagesNewestFirst(
-          dedupeByEntityId(raw).map(mapMessage),
-        )
-          .filter((message) => message.hydrated)
-          .filter(FOLDER_FILTERS[input.folder]);
-        for (const message of mapped) {
-          if (seen.has(message.id)) continue;
-          seen.add(message.id);
-          collected.push(message);
+      const window = await listOrEmpty(async () => {
+        const tenant = await getTenant();
+        if (!query) {
+          return tenant.gmail.db.messages.list({ limit: MAIL_WINDOW, offset: 0 });
         }
-        if (!cacheHasMore) break;
-      }
+        // The cache ANDs filters, so match each field separately and merge —
+        // a query hits snippet, subject, or sender.
+        const fields = [
+          { snippet: { contains: query } },
+          { subject: { contains: query } },
+          { from: { contains: query } },
+        ];
+        const results = await Promise.all(
+          fields.map((data) =>
+            tenant.gmail.db.messages.search({ data, limit: MAIL_WINDOW, offset: 0 }),
+          ),
+        );
+        return results.flat();
+      });
 
-      // The whole final hop is returned (never trimmed): the cursor has
-      // already moved past its rows, so trimming would lose messages. The
-      // cache pages by update recency, not message date, so order the page
-      // before it ships.
-      const nextCursor = cacheHasMore ? cursor : null;
-      return { items: sortMessagesNewestFirst(collected), nextCursor };
+      const all = sortMessagesNewestFirst(
+        dedupeByEntityId(window).map(mapMessage),
+      )
+        .filter((message) => message.hydrated)
+        .filter(FOLDER_FILTERS[input.folder]);
+
+      return {
+        items: all.slice(0, input.limit),
+        // More already sitting in the window we can reveal by raising limit.
+        hasMore: all.length > input.limit,
+        // The recency window itself is full, so a deep sync may surface more.
+        windowFull: window.length >= MAIL_WINDOW,
+      };
     }),
 
   getMessage: authedProcedure
@@ -417,20 +422,15 @@ export const gmailRouter = createTRPCRouter({
       return {
         id: draft.id ?? input.id,
         to: getHeader(headers, "To"),
+        cc: getHeader(headers, "Cc"),
+        bcc: getHeader(headers, "Bcc"),
         subject: getHeader(headers, "Subject"),
         body: extractBodyFromPayload(draft.message?.payload),
       };
     }),
 
   updateDraft: authedProcedure
-    .input(
-      z.object({
-        draftId: z.string().min(1),
-        to: z.string().email().max(320),
-        subject: z.string().min(1).max(500),
-        body: z.string().min(1).max(100_000),
-      }),
-    )
+    .input(composeSchema.extend({ draftId: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
       const raw = encodeRawEmail(input);
@@ -452,18 +452,14 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   createDraft: authedProcedure
-    .input(
-      z.object({
-        to: z.string().email().max(320),
-        subject: z.string().min(1).max(500),
-        body: z.string().min(1).max(100_000),
-      }),
-    )
+    .input(composeSchema)
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
       const raw = encodeRawEmail(input);
       const draft = await tenant.gmail.api.drafts.create({
-        draft: { message: { raw } },
+        draft: {
+          message: input.threadId ? { raw, threadId: input.threadId } : { raw },
+        },
       });
       return {
         id: draft.id ?? "",
@@ -486,20 +482,75 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   sendEmail: authedProcedure
-    .input(
-      z.object({
-        to: z.string().email().max(320),
-        subject: z.string().min(1).max(500),
-        body: z.string().min(1).max(100_000),
-      }),
-    )
+    .input(composeSchema)
     .mutation(async ({ input }) => {
       const tenant = await getTenant();
       const raw = encodeRawEmail(input);
-      const message = await tenant.gmail.api.messages.send({ raw });
+      const message = await tenant.gmail.api.messages.send(
+        input.threadId ? { raw, threadId: input.threadId } : { raw },
+      );
       return {
         id: message.id ?? "",
         threadId: message.threadId ?? "",
       };
+    }),
+
+  // The signed-in user's own address (used to drop self from reply-all).
+  // The API doesn't expose the profile, so read the From of a Sent message.
+  profile: authedProcedure.query(async () => {
+    try {
+      const tenant = await getTenant();
+      const list = await tenant.gmail.api.messages.list({
+        labelIds: ["SENT"],
+        maxResults: 1,
+      });
+      const id = messageIds(list)[0];
+      if (!id) return { email: "" };
+      const message = await tenant.gmail.api.messages.get({
+        id,
+        format: "metadata",
+      });
+      const from = getHeader(message.payload?.headers, "From");
+      const email = /<([^>]+)>/.exec(from)?.[1] ?? from;
+      return { email: email.trim().toLowerCase() };
+    } catch (error) {
+      if (isNotConnectedError(error)) return { email: "" };
+      return { email: "" };
+    }
+  }),
+
+  // A whole conversation, oldest first, for the threaded reading pane.
+  getThread: authedProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .query(async ({ input }) => {
+      try {
+        const tenant = await getTenant();
+        const thread = await withRetry(() =>
+          tenant.gmail.api.threads.get({ id: input.id, format: "full" }),
+        );
+        const messages = (thread.messages ?? []).map((message) => {
+          const headers = message.payload?.headers;
+          const labels = message.labelIds ?? [];
+          return {
+            id: message.id ?? "",
+            from: getHeader(headers, "From"),
+            to: getHeader(headers, "To"),
+            cc: getHeader(headers, "Cc"),
+            subject: getHeader(headers, "Subject"),
+            messageIdHeader: getHeader(headers, "Message-ID"),
+            references: getHeader(headers, "References"),
+            date: message.internalDate != null ? String(message.internalDate) : null,
+            snippet: message.snippet ?? "",
+            body:
+              extractBodyFromPayload(message.payload) || (message.snippet ?? ""),
+            html: extractHtmlFromPayload(message.payload),
+            unread: labels.includes("UNREAD"),
+          };
+        });
+        return { id: thread.id ?? input.id, messages };
+      } catch (error) {
+        if (isNotConnectedError(error)) return null;
+        throw error;
+      }
     }),
 });

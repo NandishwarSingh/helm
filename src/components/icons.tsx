@@ -194,6 +194,14 @@ export const MailOpenIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const ReplyAllIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 17 2 12l5-5" />
+    <path d="M12 17 7 12l5-5" />
+    <path d="M22 18v-2a4 4 0 0 0-4-4H7" />
+  </Svg>
+);
+
 export const FlagIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M5 21V4" />

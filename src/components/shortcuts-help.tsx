@@ -43,6 +43,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { keys: ["S"], label: "Star / unstar" },
       { keys: ["⇧", "U"], label: "Mark unread / read" },
       { keys: ["R"], label: "Reply" },
+      { keys: ["⇧", "R"], label: "Reply all" },
       { keys: ["F"], label: "Forward" },
       { keys: ["T"], label: "Turn into calendar event" },
       { keys: ["U"], label: "Back / clear selection" },

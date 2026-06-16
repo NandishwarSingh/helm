@@ -19,11 +19,20 @@ export function encodeRawEmail(opts: {
   subject: string;
   body: string;
   from?: string;
+  cc?: string;
+  bcc?: string;
+  inReplyTo?: string;
+  references?: string;
 }): string {
   const lines = [
     ...(opts.from ? [`From: ${headerValue(opts.from)}`] : []),
     `To: ${headerValue(opts.to)}`,
+    ...(opts.cc?.trim() ? [`Cc: ${headerValue(opts.cc)}`] : []),
+    ...(opts.bcc?.trim() ? [`Bcc: ${headerValue(opts.bcc)}`] : []),
     `Subject: ${encodeSubject(opts.subject)}`,
+    // Threading headers tie a reply to its conversation so Gmail nests it.
+    ...(opts.inReplyTo ? [`In-Reply-To: ${headerValue(opts.inReplyTo)}`] : []),
+    ...(opts.references ? [`References: ${headerValue(opts.references)}`] : []),
     "Content-Type: text/plain; charset=utf-8",
     "MIME-Version: 1.0",
     "",
