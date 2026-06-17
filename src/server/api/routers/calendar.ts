@@ -1,16 +1,22 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { dayStartMs } from "@/lib/calendar";
+import { corsair } from "@/server/corsair";
 import { purgeCachedEntity } from "@/server/lib/cache";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
-import { getTenant } from "@/server/lib/tenant";
+import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
+import { resolveAccountTenant } from "@/server/lib/users";
 import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
 
 const paginationSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
   offset: z.number().min(0).default(0),
 });
+
+// Which account a per-event op targets; omitted => the session's active one.
+const accountInput = z.string().max(64).optional();
 
 // Timed events carry ISO datetimes; all-day events carry YYYY-MM-DD dates
 // (end exclusive, per the Google Calendar contract).
@@ -120,6 +126,26 @@ function filterEventsByWeek<
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
+/** Accounts a calendar READ spans: a specific owned account, or all of them. */
+async function readClients(account?: string): Promise<AccountClient[]> {
+  const all = await getAccountClients();
+  if (!account || account === "all") return all;
+  return all.filter((c) => c.accountId === account);
+}
+
+/** Resolve a per-event op to one owned account's calendar client + tenant id. */
+async function opAccount(
+  account?: string,
+): Promise<{ client: ReturnType<typeof corsair.withTenant>; tenantId: string }> {
+  const tenantId = account
+    ? await resolveAccountTenant(account)
+    : await getTenantId();
+  if (!tenantId) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "unknown account" });
+  }
+  return { client: corsair.withTenant(tenantId), tenantId };
+}
+
 export const calendarRouter = createTRPCRouter({
   searchEvents: authedProcedure
     .input(
@@ -127,37 +153,48 @@ export const calendarRouter = createTRPCRouter({
         query: z.string().max(256),
         weekStart: z.string().datetime(),
         weekEnd: z.string().datetime(),
+        account: accountInput,
       }),
     )
     .query(async ({ input }) => {
       const weekStart = new Date(input.weekStart);
       const weekEnd = new Date(input.weekEnd);
+      const clients = await readClients(input.account);
 
-      const events = await listOrEmpty(async () => {
-        const tenant = await getTenant();
-        return input.query.trim()
-          ? tenant.googlecalendar.db.events.search({
-              data: {
-                summary: { contains: input.query },
-              },
-              limit: 200,
-              offset: 0,
-            })
-          : tenant.googlecalendar.db.events.list({
-              limit: 200,
-              offset: 0,
-            });
-      });
+      const per = await Promise.all(
+        clients.map(async (c) => {
+          const events = await listOrEmpty(async () =>
+            input.query.trim()
+              ? c.client.googlecalendar.db.events.search({
+                  data: { summary: { contains: input.query } },
+                  limit: 200,
+                  offset: 0,
+                })
+              : c.client.googlecalendar.db.events.list({
+                  limit: 200,
+                  offset: 0,
+                }),
+          );
+          return {
+            items: dedupeByEntityId(events).map((e) => ({
+              ...mapEvent(e),
+              accountId: c.accountId,
+              accountEmail: c.email,
+            })),
+            full: events.length >= 200,
+          };
+        }),
+      );
 
       return {
         items: filterEventsByWeek(
-          dedupeByEntityId(events).map(mapEvent),
+          per.flatMap((p) => p.items),
           weekStart,
           weekEnd,
         ),
-        // The flat cache window itself is full, so events for this week may sit
-        // beyond it and got dropped — a live Google pull fills the gap.
-        windowFull: events.length >= 200,
+        // Any account's flat cache window being full means events for this week
+        // may sit beyond it — a live Google pull fills the gap.
+        windowFull: per.some((p) => p.full),
       };
     }),
 
@@ -169,18 +206,20 @@ export const calendarRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = await getTenant();
-      const result = await tenant.googlecalendar.api.events.getMany({
-        calendarId: "primary",
-        timeMin: input.weekStart,
-        timeMax: input.weekEnd,
-        maxResults: 100,
-        singleEvents: true,
-        orderBy: "startTime",
-      });
-      return {
-        synced: result.items?.length ?? 0,
-      };
+      const clients = await getAccountClients();
+      let synced = 0;
+      for (const c of clients) {
+        const result = await c.client.googlecalendar.api.events.getMany({
+          calendarId: "primary",
+          timeMin: input.weekStart,
+          timeMax: input.weekEnd,
+          maxResults: 100,
+          singleEvents: true,
+          orderBy: "startTime",
+        });
+        synced += result.items?.length ?? 0;
+      }
+      return { synced };
     }),
 
   createDraft: authedProcedure
@@ -191,12 +230,13 @@ export const calendarRouter = createTRPCRouter({
           description: z.string().max(5000).optional(),
           location: z.string().max(500).optional(),
           attendees: z.array(z.string().email().max(320)).max(50).optional(),
+          account: accountInput,
         })
         .and(whenSchema),
     )
     .mutation(async ({ input }) => {
-      const tenant = await getTenant();
-      const event = await tenant.googlecalendar.api.events.create({
+      const { client } = await opAccount(input.account);
+      const event = await client.googlecalendar.api.events.create({
         calendarId: "primary",
         sendUpdates: "none",
         event: {
@@ -225,12 +265,13 @@ export const calendarRouter = createTRPCRouter({
           attendees: z.array(z.string().email().max(320)).max(50),
           // Notify attendees about the change when any are present.
           notify: z.boolean().default(false),
+          account: accountInput,
         })
         .and(whenSchema),
     )
     .mutation(async ({ input }) => {
-      const tenant = await getTenant();
-      const event = await tenant.googlecalendar.api.events.update({
+      const { client } = await opAccount(input.account);
+      const event = await client.googlecalendar.api.events.update({
         calendarId: "primary",
         id: input.id,
         sendUpdates: input.notify ? "all" : "none",
@@ -250,17 +291,17 @@ export const calendarRouter = createTRPCRouter({
       z.object({
         id: z.string().min(1),
         notify: z.boolean().default(false),
+        account: accountInput,
       }),
     )
     .mutation(async ({ input }) => {
-      const tenant = await getTenant();
-      await tenant.googlecalendar.api.events.delete({
+      const { client, tenantId } = await opAccount(input.account);
+      await client.googlecalendar.api.events.delete({
         calendarId: "primary",
         id: input.id,
         sendUpdates: input.notify ? "all" : "none",
       });
-      const tenantId = await getTenantId();
-      if (tenantId) await purgeCachedEntity(tenantId, input.id);
+      await purgeCachedEntity(tenantId, input.id);
       return { ok: true };
     }),
 
@@ -272,12 +313,13 @@ export const calendarRouter = createTRPCRouter({
           description: z.string().max(5000).optional(),
           location: z.string().max(500).optional(),
           attendees: z.array(z.string().email().max(320)).min(1).max(50),
+          account: accountInput,
         })
         .and(whenSchema),
     )
     .mutation(async ({ input }) => {
-      const tenant = await getTenant();
-      const event = await tenant.googlecalendar.api.events.create({
+      const { client } = await opAccount(input.account);
+      const event = await client.googlecalendar.api.events.create({
         calendarId: "primary",
         sendUpdates: "all",
         event: {

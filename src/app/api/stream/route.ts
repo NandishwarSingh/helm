@@ -1,20 +1,24 @@
 import type { NextRequest } from "next/server";
 
 import { subscribeTenant } from "@/server/lib/realtime";
-import { getTenantId } from "@/server/lib/session";
+import { getUserAccounts } from "@/server/lib/users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
  * Server-Sent Events stream. The client opens one EventSource; whenever a
- * Corsair webhook reports a change for this tenant, a `changed` event is pushed
- * and the UI refetches — realtime updates without polling. A periodic comment
- * keeps the connection alive through nginx.
+ * Corsair webhook reports a change for ANY of the session's account-tenants, a
+ * `changed` event is pushed and the UI refetches — realtime for the unified
+ * inbox without polling. A periodic comment keeps the connection alive through
+ * nginx.
  */
 export async function GET(request: NextRequest) {
-  const tenantId = await getTenantId();
-  if (!tenantId) return new Response("unauthorized", { status: 401 });
+  const accounts = await getUserAccounts();
+  if (accounts.length === 0) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  const tenantIds = [...new Set(accounts.map((a) => a.tenantId))];
 
   const encoder = new TextEncoder();
   let unsubscribe = () => undefined as void;
@@ -30,9 +34,12 @@ export async function GET(request: NextRequest) {
         }
       };
       write("event: ready\ndata: ok\n\n");
-      unsubscribe = subscribeTenant(tenantId, (kind) => {
-        write(`event: changed\ndata: ${kind}\n\n`);
-      });
+      const unsubs = tenantIds.map((tenantId) =>
+        subscribeTenant(tenantId, (kind) => {
+          write(`event: changed\ndata: ${kind}\n\n`);
+        }),
+      );
+      unsubscribe = () => unsubs.forEach((u) => u());
       keepAlive = setInterval(() => write(": ping\n\n"), 25_000);
       request.signal.addEventListener("abort", () => {
         unsubscribe();
