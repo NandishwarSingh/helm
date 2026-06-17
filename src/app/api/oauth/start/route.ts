@@ -1,7 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
-import { buildAuthUrl } from "@/server/lib/google-oauth";
+import {
+  buildAuthUrl,
+  createPkcePair,
+  PKCE_COOKIE,
+} from "@/server/lib/google-oauth";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { ensureTenantId } from "@/server/lib/session";
 
@@ -23,5 +27,20 @@ export async function GET(request: NextRequest) {
     "/api/oauth/callback",
     env.NEXT_PUBLIC_SITE_URL,
   ).toString();
-  return NextResponse.redirect(buildAuthUrl(tenantId, redirectUri, Date.now()));
+
+  // PKCE: keep the verifier server-side in an httpOnly cookie and send only the
+  // challenge to Google. sameSite=lax still rides the top-level redirect back to
+  // /callback, where the verifier is replayed into the token exchange.
+  const { verifier, challenge } = createPkcePair();
+  const res = NextResponse.redirect(
+    buildAuthUrl(tenantId, redirectUri, Date.now(), challenge),
+  );
+  res.cookies.set(PKCE_COOKIE, verifier, {
+    httpOnly: true,
+    secure: env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 600,
+  });
+  return res;
 }

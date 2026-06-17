@@ -2,6 +2,12 @@ import "server-only";
 
 import ivm from "isolated-vm";
 
+import {
+  DESTRUCTIVE_BUDGET,
+  isAllowedPath,
+  isDestructive,
+} from "@/server/lib/agent-policy";
+
 /**
  * Runs the agent's `run_script` code inside an isolated-vm V8 isolate.
  *
@@ -15,24 +21,11 @@ import ivm from "isolated-vm";
  * back to the host through.
  */
 
-// Only these plugin operations may be invoked from a script.
-const ALLOWED_PATH = /^(gmail|googlecalendar)\.(api|db)\.[a-zA-Z0-9_.]+$/;
-
+// The allowlist + destructive-op policy live in agent-policy (pure + tested).
 const MEMORY_LIMIT_MB = 128;
 const SYNC_TIMEOUT_MS = 8_000; // CPU time for one synchronous turn in the isolate
 const OVERALL_TIMEOUT_MS = 20_000; // wall-clock ceiling incl. awaited Corsair calls
 const MAX_RESULT_BYTES = 256 * 1024; // per Corsair call; forces scripts to filter inline
-
-// Outward-facing or irreversible operations the agent must not perform without
-// the user's explicit confirmation — enforced server-side here, so a script
-// (e.g. one steered by injected email content) cannot send, trash, delete or
-// invite on its own. Reads and saving drafts are always allowed.
-const DESTRUCTIVE = [
-  /^gmail\.api\.messages\.(send|trash|delete|batchDelete)$/,
-  /^gmail\.api\.drafts\.send$/,
-  /^googlecalendar\.api\.events\.(insert|create|update|patch|delete|move)$/,
-];
-const isDestructive = (path: string) => DESTRUCTIVE.some((re) => re.test(path));
 
 /**
  * Builds a recursive `corsair` Proxy inside the isolate. Property access
@@ -88,13 +81,24 @@ export async function runScriptSandboxed(
   // boundary — that would surface as an uncaught host rejection); errors travel
   // as `{ ok: false, error }` and are re-thrown inside the isolate by the proxy.
   const fail = (error: string) => JSON.stringify({ ok: false, error });
+  // A confirmed message authorizes exactly DESTRUCTIVE_BUDGET destructive op(s);
+  // any further one in the same run must be confirmed on its own.
+  let destructiveUsed = 0;
   const hostCall = async (pathStr: string, argsJson: string): Promise<string> => {
     try {
-      if (!ALLOWED_PATH.test(pathStr)) return fail(`operation not allowed: ${pathStr}`);
-      if (!allowDestructive && isDestructive(pathStr)) {
-        return fail(
-          `CONFIRM_REQUIRED: "${pathStr}" sends or changes things on the user's account. Do not retry it now. First tell the user exactly what you will do, then ask them to reply "confirm".`,
-        );
+      if (!isAllowedPath(pathStr)) return fail(`operation not allowed: ${pathStr}`);
+      if (isDestructive(pathStr)) {
+        if (!allowDestructive) {
+          return fail(
+            `CONFIRM_REQUIRED: "${pathStr}" sends or changes things on the user's account. Do not retry it now. First tell the user exactly what you will do, then ask them to reply "confirm".`,
+          );
+        }
+        if (destructiveUsed >= DESTRUCTIVE_BUDGET) {
+          return fail(
+            `CONFIRM_REQUIRED: only one confirmed action is allowed per message, and "${pathStr}" would be another. Tell the user what remains and ask them to confirm it separately.`,
+          );
+        }
+        destructiveUsed += 1;
       }
       const parts = pathStr.split(".");
       const method = parts.pop()!;

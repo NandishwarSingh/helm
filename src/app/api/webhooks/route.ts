@@ -6,6 +6,7 @@ import { after, NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
+import { gmailPushEmail, tenantForEmail } from "@/server/lib/gmail-watch";
 import { syncNewMailForTenant } from "@/server/lib/mail-sync";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { notifyTenant } from "@/server/lib/realtime";
@@ -64,9 +65,10 @@ function syncAndNotify(tenantId: string): void {
 
 /**
  * Receives Google push notifications (Gmail watch, Calendar channels) and
- * hands them to Corsair, which validates and applies them to the cache.
- * Tenant routing is fixed until channels are registered per tenant at
- * deploy time — registration stamps each channel with its tenant id.
+ * hands them to Corsair, which validates and applies them to the cache. A Gmail
+ * push carries the mailbox address, so it routes to whichever tenant owns that
+ * address (see gmail-watch); Calendar channels and any unmapped address fall
+ * back to the pinned TENANT_ID (the original single-tenant deploy).
  */
 export async function POST(request: NextRequest) {
   const { ok } = await rateLimit(`webhook:${clientIp(request.headers)}`, 120, 60_000);
@@ -74,9 +76,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Too many requests." }, { status: 429 });
   }
 
-  // When a shared secret is configured, every caller must present it (header or
-  // query) before we run any side effect. Unset = check skipped, so the live
-  // Google push keeps working until the secret is rolled out.
+  // Every caller must present the shared secret (header or query) before we run
+  // any side effect. Fail closed in production: a missing secret would otherwise
+  // skip the check and accept unauthenticated pushes. Env validation requires it
+  // in prod, but a SKIP_ENV_VALIDATION build could slip through, so we also
+  // refuse at the edge. Locally (dev) an unset secret skips the check.
+  if (!isDev && !env.WEBHOOK_SECRET) {
+    return NextResponse.json(
+      { error: "Webhook auth not configured." },
+      { status: 503 },
+    );
+  }
   if (env.WEBHOOK_SECRET) {
     const provided =
       request.headers.get("x-webhook-secret") ??
@@ -102,8 +112,15 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Route the push to the tenant that owns the mailbox. A Gmail push carries
+    // the address; Calendar channels and any unmapped address fall back to the
+    // pinned tenant (the original single-tenant deploy).
+    const pushEmail = gmailPushEmail(body);
+    const routedTenant =
+      (pushEmail ? await tenantForEmail(pushEmail) : null) ?? env.TENANT_ID;
+
     const result = await processWebhook(corsair, headers, body, {
-      tenantId: env.TENANT_ID,
+      tenantId: routedTenant,
     });
 
     if (isDev) {
@@ -129,7 +146,7 @@ export async function POST(request: NextRequest) {
     // Google immediately and run it after the response — overlapping pushes are
     // coalesced so a retry storm can't pile up syncs.
     after(async () => {
-      syncAndNotify(env.TENANT_ID);
+      syncAndNotify(routedTenant);
     });
 
     return NextResponse.json(result.response, { headers: nextHeaders });

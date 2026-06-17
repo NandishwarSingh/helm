@@ -24,6 +24,7 @@ import {
   toDatetimeLocalValue,
 } from "@/lib/calendar";
 import { parseEmailAddress } from "@/lib/display";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { scrim, slideOver } from "@/lib/motion";
 import { formatWeekLabel, getWeekBounds } from "@/lib/week";
 import { api } from "@/trpc/react";
@@ -96,6 +97,8 @@ export function CalendarPanel({
   const [weekOffset, setWeekOffset] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
 
   const week = useMemo(() => getWeekBounds(weekOffset), [weekOffset]);
   const weekLabel = formatWeekLabel(week.start, week.end);
@@ -126,6 +129,8 @@ export function CalendarPanel({
 
   const dialogOpen = createOpen || editingId !== null;
   useOverlay(confirmEvent !== null);
+  useFocusTrap(dialogRef, dialogOpen);
+  useFocusTrap(confirmRef, confirmEvent !== null);
 
   const utils = api.useUtils();
 
@@ -140,6 +145,11 @@ export function CalendarPanel({
     // Reads hit the local cache; polling keeps the grid live.
     { staleTime: 10_000, refetchInterval: 45_000, refetchOnWindowFocus: true },
   );
+
+  // The cache read returns the week's events plus a flag: when the flat 200-row
+  // window was full, results may be incomplete, so a live Google pull is run.
+  const eventItems = events.data?.items;
+  const windowFull = events.data?.windowFull ?? false;
 
   const refreshEvents = api.calendar.refreshEvents.useMutation({
     onSuccess: async () => {
@@ -296,10 +306,21 @@ export function CalendarPanel({
   useEffect(() => {
     const key = week.start.toISOString();
     if (syncedWeeks.current.has(key)) return;
-    if (events.isLoading || !events.data || events.data.length > 0) return;
+    if (events.isLoading || !eventItems || eventItems.length > 0) return;
     syncedWeeks.current.add(key);
     refreshEvents.mutate({ weekStart: key, weekEnd: week.end.toISOString() });
-  }, [events.data, events.isLoading, week.start, week.end, refreshEvents]);
+  }, [eventItems, events.isLoading, week.start, week.end, refreshEvents]);
+
+  // When the cache window was full, this week's results may be missing events
+  // beyond the cap — pull the real week from Google once so nothing is dropped.
+  const filledWeeks = useRef(new Set<string>());
+  useEffect(() => {
+    if (!windowFull) return;
+    const key = week.start.toISOString();
+    if (filledWeeks.current.has(key)) return;
+    filledWeeks.current.add(key);
+    pullRef.current();
+  }, [windowFull, week.start]);
 
   // Scroll the grid to the working morning on mount and week change.
   useEffect(() => {
@@ -341,7 +362,7 @@ export function CalendarPanel({
   // The week, day by day, with timed events positioned.
   const days = useMemo(() => {
     const byDay = new Map<string, EventItem[]>();
-    for (const event of events.data ?? []) {
+    for (const event of eventItems ?? []) {
       if (!event.start) continue;
       const key = eventDayKey(event.start);
       const list = byDay.get(key) ?? [];
@@ -362,7 +383,7 @@ export function CalendarPanel({
         timed: layoutDay(all.filter((e) => !isAllDay(e))),
       };
     });
-  }, [events.data, week.start]);
+  }, [eventItems, week.start]);
 
   const hasAllDayLane = days.some((d) => d.allDay.length > 0);
 
@@ -388,68 +409,71 @@ export function CalendarPanel({
       ?.scrollIntoView({ block: "nearest" });
   }
 
-  // Calendar keyboard layer.
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (isTypingTarget(event.target)) {
-        if (event.key === "Escape" && event.target === searchRef.current) {
-          setSearch(activeSearch);
-          searchRef.current?.blur();
-        }
-        return;
+  // Calendar keyboard layer. The handler closes over render-fresh state, so it
+  // lives behind a ref reassigned every render (mirroring gmail-panel's
+  // syncNewRef / revealMoreRef); the listener then subscribes exactly once.
+  const onKeyRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  onKeyRef.current = (event: KeyboardEvent) => {
+    if (isTypingTarget(event.target)) {
+      if (event.key === "Escape" && event.target === searchRef.current) {
+        setSearch(activeSearch);
+        searchRef.current?.blur();
       }
-      if (hasOverlay()) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-
-      switch (event.key) {
-        case "h":
-        case "ArrowLeft":
-          setWeekOffset((w) => w - 1);
-          setSelectedEventId(null);
-          break;
-        case "l":
-        case "ArrowRight":
-          setWeekOffset((w) => w + 1);
-          setSelectedEventId(null);
-          break;
-        case "t":
-          setWeekOffset(0);
-          setSelectedEventId(null);
-          break;
-        case "j":
-        case "ArrowDown":
-          moveEventSelection(1);
-          break;
-        case "k":
-        case "ArrowUp":
-          moveEventSelection(-1);
-          break;
-        case "Enter":
-        case "e": {
-          const target = orderedEvents.find((ev) => ev.id === selectedEventId);
-          if (!target) return;
-          openEdit(target);
-          break;
-        }
-        case "#": {
-          const target = orderedEvents.find((ev) => ev.id === selectedEventId);
-          if (!target) return;
-          setConfirmEvent(target);
-          break;
-        }
-        case "Escape":
-          if (!selectedEventId) return;
-          setSelectedEventId(null);
-          break;
-        default:
-          return;
-      }
-      event.preventDefault();
+      return;
     }
+    if (hasOverlay()) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
 
+    switch (event.key) {
+      case "h":
+      case "ArrowLeft":
+        setWeekOffset((w) => w - 1);
+        setSelectedEventId(null);
+        break;
+      case "l":
+      case "ArrowRight":
+        setWeekOffset((w) => w + 1);
+        setSelectedEventId(null);
+        break;
+      case "t":
+        setWeekOffset(0);
+        setSelectedEventId(null);
+        break;
+      case "j":
+      case "ArrowDown":
+        moveEventSelection(1);
+        break;
+      case "k":
+      case "ArrowUp":
+        moveEventSelection(-1);
+        break;
+      case "Enter":
+      case "e": {
+        const target = orderedEvents.find((ev) => ev.id === selectedEventId);
+        if (!target) return;
+        openEdit(target);
+        break;
+      }
+      case "#": {
+        const target = orderedEvents.find((ev) => ev.id === selectedEventId);
+        if (!target) return;
+        setConfirmEvent(target);
+        break;
+      }
+      case "Escape":
+        if (!selectedEventId) return;
+        setSelectedEventId(null);
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => onKeyRef.current(event);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, []);
 
   useAction("focus-search", () => {
     searchRef.current?.focus();
@@ -624,7 +648,16 @@ export function CalendarPanel({
                 <div
                   className="calgrid-alldaycell"
                   key={day.key}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Create event"
                   onClick={() => openCreateAllDay(day.date)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      if (e.key === " ") e.preventDefault();
+                      openCreateAllDay(day.date);
+                    }
+                  }}
                 >
                   {day.allDay.map((event) => (
                     <button
@@ -664,9 +697,18 @@ export function CalendarPanel({
                 key={day.key}
                 className="calgrid-col"
                 data-today={day.isToday}
+                role="button"
+                tabIndex={0}
+                aria-label="Create event"
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   onSlotClick(day.date, e.clientY - rect.top);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    if (e.key === " ") e.preventDefault();
+                    openCreateAt(day.date);
+                  }
                 }}
               >
                 {Array.from({ length: 23 }, (_, i) => (
@@ -724,6 +766,7 @@ export function CalendarPanel({
               onClick={() => setConfirmEvent(null)}
             />
             <motion.div
+              ref={confirmRef}
               className="confirm"
               variants={slideOver}
               initial="initial"
@@ -783,6 +826,7 @@ export function CalendarPanel({
               onClick={closeDialog}
             />
             <motion.div
+              ref={dialogRef}
               className="compose"
               variants={slideOver}
               initial="initial"

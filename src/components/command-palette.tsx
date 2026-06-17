@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Command } from "cmdk";
 import { AnimatePresence, motion } from "motion/react";
 
@@ -17,6 +17,7 @@ import {
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { dispatchAction } from "@/lib/actions";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { paletteDrop, scrim } from "@/lib/motion";
 
 type Props = {
@@ -44,6 +45,9 @@ export function CommandPalette({
   onNewEvent,
   onHelp,
 }: Props) {
+  const paletteRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(paletteRef, open);
+
   useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
@@ -74,6 +78,7 @@ export function CommandPalette({
             onClick={() => onOpenChange(false)}
           />
           <motion.div
+            ref={paletteRef}
             className="palette"
             variants={paletteDrop}
             initial="initial"

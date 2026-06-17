@@ -10,7 +10,14 @@ import { env } from "@/env";
  * Identity is the signed cookie — no shared inbox, no separate account system.
  */
 const COOKIE = "helm_session";
-const ONE_YEAR = 60 * 60 * 24 * 365;
+// The cookie IS the identity in this passwordless, tenant-per-browser model, so
+// its lifetime doubles as the data-retention window. 90 days keeps a returning
+// user's mailbox from being silently orphaned while bounding how long a stolen
+// cookie stays useful. There's no server-side session store to revoke against —
+// a deliberate tradeoff of the anonymous-tenant model; clearing the cookie
+// (logout) is the only invalidation, and the cookie is httpOnly + secure (prod)
+// + sameSite=lax to make theft hard in the first place.
+const SESSION_MAX_AGE = 60 * 60 * 24 * 90;
 
 function sign(value: string): string {
   return createHmac("sha256", env.AUTH_SECRET).update(value).digest("base64url");
@@ -53,7 +60,7 @@ export async function ensureTenantId(): Promise<string> {
     secure: env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: ONE_YEAR,
+    maxAge: SESSION_MAX_AGE,
   });
   return id;
 }

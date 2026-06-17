@@ -6,9 +6,10 @@ import {
 } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { isAffirmation } from "@/server/lib/agent-policy";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
-import { clientIp, rateLimit } from "@/server/lib/rate-limit";
+import { rateLimit } from "@/server/lib/rate-limit";
 import { getTenantId } from "@/server/lib/session";
 
 export const maxDuration = 60;
@@ -85,11 +86,10 @@ export async function POST(request: NextRequest) {
   if (!tenantId) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
-  const { ok, retryAfterMs } = await rateLimit(
-    `agent:${clientIp(request.headers)}`,
-    15,
-    60_000,
-  );
+  // Key the limit on the authenticated tenant, not the client IP: the IP comes
+  // from a proxy-set header a caller could spoof, and the agent is the most
+  // expensive route (LLM + live Corsair), so the cost must be pinned per user.
+  const { ok, retryAfterMs } = await rateLimit(`agent:${tenantId}`, 15, 60_000);
   if (!ok) {
     return NextResponse.json(
       { error: `Too many requests. Try again in ${Math.ceil(retryAfterMs / 1000)}s.` },
@@ -107,21 +107,15 @@ export async function POST(request: NextRequest) {
   const recent = body.messages.slice(-24);
 
   // Destructive actions (send, trash, delete, calendar writes) are gated: the
-  // sandbox refuses them unless the user has explicitly confirmed. Treat a short
-  // affirmative as confirmation of the action the agent just proposed. ("send"
-  // is deliberately excluded so an initial "send an email…" request still gates.)
+  // sandbox refuses them unless the user has explicitly confirmed. A bare
+  // affirmation of the action the agent just proposed opens the gate for ONE op
+  // (see agent-policy.isAffirmation + the sandbox's per-run destructive budget).
   const lastUserText = [...recent]
     .reverse()
     .find((m) => m.role === "user")
     ?.parts.map((p) => (p.type === "text" ? p.text : ""))
-    .join(" ")
-    .trim()
-    .toLowerCase();
-  const confirmed =
-    !!lastUserText &&
-    /^(confirm|confirmed|yes|yep|yeah|ya|sure|ok|okay|go ahead|do it|proceed|approved?|sounds good|please do|go for it)\b/.test(
-      lastUserText,
-    );
+    .join(" ");
+  const confirmed = isAffirmation(lastUserText);
 
   // Spin up a tenant-scoped Corsair MCP server and bridge it to the AI SDK.
   // Every tool call the model makes now travels the real MCP protocol.

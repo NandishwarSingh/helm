@@ -149,11 +149,16 @@ export const calendarRouter = createTRPCRouter({
             });
       });
 
-      return filterEventsByWeek(
-        dedupeByEntityId(events).map(mapEvent),
-        weekStart,
-        weekEnd,
-      );
+      return {
+        items: filterEventsByWeek(
+          dedupeByEntityId(events).map(mapEvent),
+          weekStart,
+          weekEnd,
+        ),
+        // The flat cache window itself is full, so events for this week may sit
+        // beyond it and got dropped — a live Google pull fills the gap.
+        windowFull: events.length >= 200,
+      };
     }),
 
   refreshEvents: authedProcedure

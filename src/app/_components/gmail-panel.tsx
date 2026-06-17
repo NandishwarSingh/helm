@@ -36,6 +36,7 @@ import { SyncingState } from "@/components/morph-loader";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
 import { parseQuery, queryChips } from "@/lib/search-operators";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import {
   formatMessageDate,
   formatSender,
@@ -289,6 +290,10 @@ export function GmailPanel({
   const searchRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const readRef = useRef<HTMLElement>(null);
+  const composeRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(composeRef, composeOpen);
+  useFocusTrap(confirmRef, confirm !== null);
 
   const utils = api.useUtils();
 
@@ -1912,6 +1917,7 @@ export function GmailPanel({
               onClick={() => setConfirm(null)}
             />
             <motion.div
+              ref={confirmRef}
               className="confirm"
               variants={slideOver}
               initial="initial"
@@ -1992,6 +1998,7 @@ export function GmailPanel({
               onClick={closeCompose}
             />
             <motion.div
+              ref={composeRef}
               className="compose"
               variants={slideOver}
               initial="initial"

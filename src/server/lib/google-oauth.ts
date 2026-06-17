@@ -1,5 +1,5 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { env } from "@/env";
@@ -41,7 +41,22 @@ type TokenSet = {
   scope?: string;
 };
 
-export function buildAuthUrl(tenantId: string, redirectUri: string, nowMs: number): string {
+/** Cookie holding the PKCE code_verifier between /oauth/start and /callback. */
+export const PKCE_COOKIE = "helm_pkce";
+
+/** A PKCE (S256) verifier/challenge pair — proves the callback came from us. */
+export function createPkcePair(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  return { verifier, challenge };
+}
+
+export function buildAuthUrl(
+  tenantId: string,
+  redirectUri: string,
+  nowMs: number,
+  codeChallenge: string,
+): string {
   const url = new URL(AUTH_ENDPOINT);
   url.searchParams.set("client_id", env.GOOGLE_CLIENT_ID);
   url.searchParams.set("redirect_uri", redirectUri);
@@ -49,6 +64,10 @@ export function buildAuthUrl(tenantId: string, redirectUri: string, nowMs: numbe
   url.searchParams.set("scope", SCOPES.join(" "));
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
+  // PKCE: bind this authorization to a secret only we hold, so an intercepted
+  // code can't be redeemed without the verifier (defense-in-depth atop state).
+  url.searchParams.set("code_challenge", codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("state", signState(tenantId, nowMs));
   return url.toString();
 }
@@ -56,6 +75,7 @@ export function buildAuthUrl(tenantId: string, redirectUri: string, nowMs: numbe
 export async function exchangeCode(
   code: string,
   redirectUri: string,
+  codeVerifier: string,
 ): Promise<TokenSet> {
   const body = new URLSearchParams({
     code,
@@ -63,6 +83,7 @@ export async function exchangeCode(
     client_secret: env.GOOGLE_CLIENT_SECRET,
     redirect_uri: redirectUri,
     grant_type: "authorization_code",
+    code_verifier: codeVerifier,
   }).toString();
 
   let lastError: unknown;
