@@ -65,7 +65,7 @@ async function loadVeil(opts) {
       }
       return new URL(path, opts.baseUrl).href;
     },
-    print: (t) => console.log("[veil]", t),
+    print: () => {},
     printErr: (t) => console.error("[veil]", t)
   };
   if (device) moduleArg.preinitializedWebGPUDevice = device;

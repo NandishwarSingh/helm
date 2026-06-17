@@ -5,6 +5,7 @@ import "@/styles/globals.css";
 import { type Metadata, type Viewport } from "next";
 import { Playfair_Display } from "next/font/google";
 
+import { ConsoleEgg } from "@/components/console-egg";
 import { siteConfig } from "@/config/site";
 import { TRPCReactProvider } from "@/trpc/react";
 
@@ -68,6 +69,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body className={serif.variable}>
+        <ConsoleEgg />
         <TRPCReactProvider>{children}</TRPCReactProvider>
       </body>
     </html>
