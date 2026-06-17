@@ -74,6 +74,22 @@ function textResponse(text: string): Response {
   return createUIMessageStreamResponse({ stream });
 }
 
+// Consumed confirm tokens (process-local): a confirmation executes EXACTLY once,
+// so a replayed token can't fire the same send/delete twice. Tokens already
+// expire in 10 minutes, so entries are pruned past that; a restart only reopens
+// that brief window. Single-instance deploy (mirrors realtime.ts's bus).
+const CONFIRM_TTL_MS = 10 * 60 * 1000;
+const consumedConfirms = new Map<string, number>();
+function consumeConfirmOnce(token: string, nowMs: number): boolean {
+  for (const [sig, exp] of consumedConfirms) {
+    if (exp <= nowMs) consumedConfirms.delete(sig);
+  }
+  const sig = token.slice(token.lastIndexOf(".") + 1);
+  if (consumedConfirms.has(sig)) return false;
+  consumedConfirms.set(sig, nowMs + CONFIRM_TTL_MS);
+  return true;
+}
+
 function systemPrompt() {
   const now = new Date();
   return `You are the Helm agent: a fast, precise assistant inside the user's Gmail and Google Calendar command center. You act on their real account through the Corsair MCP server.
@@ -177,10 +193,18 @@ export async function POST(request: NextRequest) {
   // the card showed, never a different write the model might pick. The token is
   // HMAC-signed, tenant-bound, and expires (see agent-action).
   if (typeof body.confirm === "string") {
-    const action = verifyAction(env.AUTH_SECRET, body.confirm, Date.now());
+    const now = Date.now();
+    const action = verifyAction(env.AUTH_SECRET, body.confirm, now);
     if (action?.tenantId !== tenantId) {
       return textResponse(
         "That confirmation expired or didn't match — ask me again and I'll re-stage it.",
+      );
+    }
+    // One-time: a confirmation runs exactly once, so a replayed token (double
+    // submit, refresh) can't fire the same action twice.
+    if (!consumeConfirmOnce(body.confirm, now)) {
+      return textResponse(
+        "That action was already confirmed — nothing else to do.",
       );
     }
     // Defense in depth: only ever replay an allowlisted, destructive op.

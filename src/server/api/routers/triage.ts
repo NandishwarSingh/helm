@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 
 import { db } from "@/server/db";
 import { mailTriage } from "@/server/db/schema";
@@ -50,11 +51,22 @@ async function inboxFor(c: AccountClient): Promise<AccountMessage[]> {
     }));
 }
 
+/** Accounts a triage read/run spans: a specific owned account, or all of them. */
+async function readClients(account?: string): Promise<AccountClient[]> {
+  const all = await getAccountClients();
+  if (!account || account === "all") return all;
+  return all.filter((c) => c.accountId === account);
+}
+
+// Which account a triage op targets; omitted/"all" => every connected account.
+const accountInput = z.object({ account: z.string().max(64).optional() }).optional();
+
 export const triageRouter = createTRPCRouter({
-  // The Priority view: cached verdicts joined onto the inbox of every account,
-  // grouped by priority, plus how many inbox messages still await classification.
-  overview: authedProcedure.query(async () => {
-    const clients = await getAccountClients();
+  // The Priority view: cached verdicts joined onto the inbox of the active
+  // account(s), grouped by priority, plus how many inbox messages still await
+  // classification. Scoped to the active account so switching is instant.
+  overview: authedProcedure.input(accountInput).query(async ({ input }) => {
+    const clients = await readClients(input?.account);
     const per = await mapLimit(clients, 4, async (c) => {
       const [messages, verdicts] = await Promise.all([
         inboxFor(c),
@@ -90,10 +102,11 @@ export const triageRouter = createTRPCRouter({
     return { groups, pendingCount };
   }),
 
-  // Classify the next slice of untriaged inbox mail for every account. Verdicts
-  // are written once and never recomputed — that cache keeps this affordable.
-  run: authedProcedure.mutation(async () => {
-    const clients = await getAccountClients();
+  // Classify the next slice of untriaged inbox mail for the active account(s).
+  // Verdicts are written once and never recomputed (the cache dedupes by
+  // messageId), so this only ever touches NEW mail — a switch never re-classifies.
+  run: authedProcedure.input(accountInput).mutation(async ({ input }) => {
+    const clients = await readClients(input?.account);
     let classified = 0;
     let remaining = 0;
     for (const c of clients) {

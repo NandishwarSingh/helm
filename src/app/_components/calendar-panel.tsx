@@ -51,6 +51,16 @@ type EventItem = {
   accountEmail?: string;
 };
 
+/**
+ * Stable per-event key. Two connected calendars can carry the SAME Google event
+ * id (an invite reuses its id across attendees' calendars), so selection state
+ * and React keys are keyed by (account, id) to stay distinct and target the
+ * right calendar.
+ */
+function eventKey(ev: { accountId?: string; id: string }): string {
+  return `${ev.accountId ?? ""}:${ev.id}`;
+}
+
 function formatHour(hour: number) {
   if (hour === 0) return "12 AM";
   if (hour < 12) return `${hour} AM`;
@@ -425,16 +435,18 @@ export function CalendarPanel({
 
   function moveEventSelection(step: 1 | -1) {
     if (orderedEvents.length === 0) return;
-    const index = orderedEvents.findIndex((ev) => ev.id === selectedEventId);
+    const index = orderedEvents.findIndex(
+      (ev) => eventKey(ev) === selectedEventId,
+    );
     const next =
       index === -1
         ? 0
         : Math.min(Math.max(index + step, 0), orderedEvents.length - 1);
     const target = orderedEvents[next];
     if (!target) return;
-    setSelectedEventId(target.id);
+    setSelectedEventId(eventKey(target));
     document
-      .querySelector(`[data-event-id="${target.id}"]`)
+      .querySelector(`[data-event-id="${eventKey(target)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }
 
@@ -478,13 +490,17 @@ export function CalendarPanel({
         break;
       case "Enter":
       case "e": {
-        const target = orderedEvents.find((ev) => ev.id === selectedEventId);
+        const target = orderedEvents.find(
+          (ev) => eventKey(ev) === selectedEventId,
+        );
         if (!target) return;
         openEdit(target);
         break;
       }
       case "#": {
-        const target = orderedEvents.find((ev) => ev.id === selectedEventId);
+        const target = orderedEvents.find(
+          (ev) => eventKey(ev) === selectedEventId,
+        );
         if (!target) return;
         setConfirmEvent(target);
         break;
@@ -697,11 +713,11 @@ export function CalendarPanel({
                 >
                   {day.allDay.map((event) => (
                     <button
-                      key={event.id}
+                      key={eventKey(event)}
                       type="button"
                       className="calgrid-alldaychip"
-                      data-active={selectedEventId === event.id}
-                      data-event-id={event.id}
+                      data-active={selectedEventId === eventKey(event)}
+                      data-event-id={eventKey(event)}
                       style={
                         showAcct
                           ? {
@@ -712,7 +728,7 @@ export function CalendarPanel({
                       title={showAcct ? event.accountEmail : undefined}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedEventId(event.id);
+                        setSelectedEventId(eventKey(event));
                         openEdit(event);
                       }}
                     >
@@ -765,11 +781,11 @@ export function CalendarPanel({
                 {day.isToday && <NowLine />}
                 {day.timed.map(({ event, top, height, lane, lanes }) => (
                   <button
-                    key={event.id}
+                    key={eventKey(event)}
                     type="button"
                     className="calgrid-event"
-                    data-active={selectedEventId === event.id}
-                    data-event-id={event.id}
+                    data-active={selectedEventId === eventKey(event)}
+                    data-event-id={eventKey(event)}
                     style={{
                       top,
                       height,
@@ -784,7 +800,7 @@ export function CalendarPanel({
                     title={showAcct ? event.accountEmail : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSelectedEventId(event.id);
+                      setSelectedEventId(eventKey(event));
                       openEdit(event);
                     }}
                   >

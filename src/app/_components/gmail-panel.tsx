@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { keepPreviousData } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 
 // One page worth of rows revealed at a time, up to the server's window cap.
@@ -179,6 +178,24 @@ function rowKey(row: { accountId?: string; id: string }): string {
   return `${row.accountId ?? ""}:${row.id}`;
 }
 
+/**
+ * True when a list query's PREVIOUS result was for the same account + folder, so
+ * `placeholderData` can keep rows across limit/poll refetches yet drop them the
+ * moment the account or folder changes (no flashing the other mailbox's mail).
+ */
+function sameScope(
+  prevQuery: { queryKey?: unknown } | undefined,
+  account: string,
+  folder: string,
+): boolean {
+  const input = (
+    prevQuery?.queryKey as
+      | [unknown, { input?: { account?: string; folder?: string } }]
+      | undefined
+  )?.[1]?.input;
+  return input?.account === account && input?.folder === folder;
+}
+
 function undoLabel(undo: Undo) {
   const count = undo.items.length;
   const what = count === 1 ? "message" : `${count} messages`;
@@ -344,7 +361,11 @@ export function GmailPanel({
     { query: "", folder, limit, account },
     {
       enabled: inMessages && !isPriority,
-      placeholderData: keepPreviousData,
+      // Keep prior rows only across limit/poll changes (same account + folder) so
+      // scrolling never blanks the list — but on an account OR folder switch, drop
+      // them instead of flashing the other mailbox's mail (the switch is instant).
+      placeholderData: (prev, prevQuery) =>
+        sameScope(prevQuery, account, folder) ? prev : undefined,
       // Reads hit the local cache, so polling is cheap — folders stay live
       // without a manual refresh. Pause while a label mutation is in flight
       // so a refetch can never land between the optimistic update and its
@@ -363,7 +384,8 @@ export function GmailPanel({
     { query: activeSearch, folder, limit: 50, account },
     {
       enabled: searching,
-      placeholderData: keepPreviousData,
+      placeholderData: (prev, prevQuery) =>
+        sameScope(prevQuery, account, folder) ? prev : undefined,
       staleTime: 15_000,
     },
   );
@@ -384,12 +406,16 @@ export function GmailPanel({
     };
   }, []);
 
-  // LLM triage verdicts: drive the Priority view, and badge the inbox.
-  const overview = api.triage.overview.useQuery(undefined, {
-    enabled: view === "inbox" || isPriority,
-    staleTime: 10_000,
-    refetchInterval: 60_000,
-  });
+  // LLM triage verdicts: drive the Priority view, and badge the inbox. Scoped to
+  // the active account so the Priority list + pending count switch instantly.
+  const overview = api.triage.overview.useQuery(
+    { account },
+    {
+      enabled: view === "inbox" || isPriority,
+      staleTime: 10_000,
+      refetchInterval: 60_000,
+    },
+  );
   const overviewGroups = overview.data?.groups;
   const pendingTriage = overview.data?.pendingCount ?? 0;
 
@@ -569,18 +595,28 @@ export function GmailPanel({
     { enabled: view === "drafts", staleTime: 10_000, refetchInterval: 60_000 },
   );
   // The mailbox a draft lives in, so its edit/send/delete hit the right account.
+  // In a single-account view that's the active account; in the unified view it's
+  // the draft's own account. Always resolved (so the server's requireAccount
+  // guard never trips for a real op).
   const draftAccountOf = (id: string | null): string | undefined =>
-    id ? drafts.data?.find((d) => d.id === id)?.accountId : undefined;
+    account === "all"
+      ? id
+        ? drafts.data?.find((d) => d.id === id)?.accountId
+        : undefined
+      : account;
 
   // Triage runs classify untriaged inbox mail in capped slices; the loop
   // continues until the backlog is clear (bounded per visit).
   const triageRuns = useRef(0);
+  // Accounts already classified this Priority session — so a switch never re-runs
+  // a settled mailbox. Cleared when re-entering Priority or after a manual sync.
+  const triagedAccounts = useRef<Set<string>>(new Set());
   const triageRun = api.triage.run.useMutation({
     onSuccess: async (result) => {
       await utils.triage.overview.invalidate();
       if (result.remaining > 0 && triageRuns.current < 5) {
         triageRuns.current += 1;
-        triageRun.mutate();
+        triageRun.mutate({ account });
       }
     },
   });
@@ -589,6 +625,7 @@ export function GmailPanel({
     onSuccess: async () => {
       setCanSyncMore(true);
       triageRuns.current = 0;
+      triagedAccounts.current.clear();
       await utils.gmail.searchEmails.invalidate();
       await utils.gmail.listDrafts.invalidate();
       await utils.triage.overview.invalidate();
@@ -1317,17 +1354,43 @@ export function GmailPanel({
     setBulkIds(new Set());
     setConfirmDeleteId(null);
     setSelectedDraftId(null);
-    if (view === "priority") triageRuns.current = 0;
+    if (view === "priority") {
+      triageRuns.current = 0;
+      triagedAccounts.current.clear();
+    }
   }, [view]);
 
-  // Opening Priority kicks off classification of whatever is untriaged.
+  // Account switches (the unified-view selector) reset the same transient state,
+  // so the list, selection and optimistic edits never carry across mailboxes —
+  // the switch is instant and clean. Triage is left alone here (its own per-
+  // account gating lives below) so a switch never re-classifies settled mail.
+  const prevAccount = useRef(account);
+  useEffect(() => {
+    if (prevAccount.current === account) return;
+    prevAccount.current = account;
+    setSelectedId(null);
+    setBulkIds(new Set());
+    setConfirmDeleteId(null);
+    setSelectedDraftId(null);
+    setLocalEdits(new Map());
+    setLimit(MAIL_PAGE);
+  }, [account]);
+
+  // Opening Priority (or switching to an account) classifies that account's
+  // untriaged mail once. The server skips already-classified mail, so this only
+  // ever touches NEW mail — a switch never re-classifies settled verdicts.
   useEffect(() => {
     if (!isPriority || overview.isLoading) return;
-    if (pendingTriage > 0 && !triageRun.isPending && triageRuns.current === 0) {
-      triageRuns.current = 1;
-      triageRun.mutate();
+    if (
+      pendingTriage > 0 &&
+      !triageRun.isPending &&
+      !triagedAccounts.current.has(account)
+    ) {
+      triagedAccounts.current.add(account);
+      triageRuns.current = 0;
+      triageRun.mutate({ account });
     }
-  }, [isPriority, overview.isLoading, pendingTriage, triageRun]);
+  }, [isPriority, overview.isLoading, pendingTriage, triageRun, account]);
 
   // Full sync cadence: once per page visit, then every 24 hours while the page
   // stays open. First connect is handled by the sync veil, so this stands down
@@ -1780,7 +1843,7 @@ export function GmailPanel({
             ) : (
               drafts.data.map((draft) => (
                 <div
-                  key={draft.id}
+                  key={rowKey(draft)}
                   className="draft-row"
                   data-active={selectedDraftId === draft.id}
                   data-draft-id={draft.id}

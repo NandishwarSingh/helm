@@ -667,7 +667,9 @@ export const gmailRouter = createTRPCRouter({
   updateDraft: authedProcedure
     .input(composeSchema.extend({ draftId: z.string().min(1), account: accountInput }))
     .mutation(async ({ input }) => {
-      const { tenant } = await opAccount(input.account);
+      const { tenant } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       const raw = encodeRawEmail(input);
       const draft = await tenant.gmail.api.drafts.update({
         id: input.draftId,
@@ -679,7 +681,9 @@ export const gmailRouter = createTRPCRouter({
   deleteDraft: authedProcedure
     .input(z.object({ draftId: z.string().min(1), account: accountInput }))
     .mutation(async ({ input }) => {
-      const { tenant, tenantId } = await opAccount(input.account);
+      const { tenant, tenantId } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       await tenant.gmail.api.drafts.delete({ id: input.draftId });
       await purgeCachedEntity(tenantId, input.draftId);
       return { ok: true };
@@ -704,7 +708,9 @@ export const gmailRouter = createTRPCRouter({
   sendDraft: authedProcedure
     .input(z.object({ draftId: z.string().min(1), account: accountInput }))
     .mutation(async ({ input }) => {
-      const { tenant, tenantId } = await opAccount(input.account);
+      const { tenant, tenantId } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       const message = await tenant.gmail.api.drafts.send({ id: input.draftId });
       // Gmail deletes the draft on send; mirror that in the cache.
       await purgeCachedEntity(tenantId, input.draftId);

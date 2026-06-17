@@ -86,9 +86,14 @@ export type ActionSummary = {
 };
 
 /** Decode a base64url MIME blob and split it into headers + body. */
-function parseMime(
-  raw: string,
-): { to: string; cc: string; subject: string; body: string } | null {
+function parseMime(raw: string): {
+  to: string;
+  cc: string;
+  bcc: string;
+  replyTo: string;
+  subject: string;
+  body: string;
+} | null {
   let text: string;
   try {
     text = Buffer.from(
@@ -110,6 +115,8 @@ function parseMime(
   return {
     to: header("To"),
     cc: header("Cc"),
+    bcc: header("Bcc"),
+    replyTo: header("Reply-To"),
     subject: header("Subject"),
     body,
   };
@@ -154,6 +161,10 @@ export function summarizeAction(op: string, args: unknown): ActionSummary {
     const mime = typeof a.raw === "string" ? parseMime(a.raw) : null;
     const fields: ActionField[] = [{ label: "To", value: pick("—", mime?.to) }];
     if (mime?.cc) fields.push({ label: "Cc", value: mime.cc });
+    // Bcc and Reply-To change WHO receives the mail — surface them so the card
+    // is faithful to the raw that will actually be sent.
+    if (mime?.bcc) fields.push({ label: "Bcc", value: mime.bcc });
+    if (mime?.replyTo) fields.push({ label: "Reply-To", value: mime.replyTo });
     fields.push({ label: "Subject", value: pick("(no subject)", mime?.subject) });
     const body = mime ? mime.body.trim().slice(0, 800) : "";
     return {
