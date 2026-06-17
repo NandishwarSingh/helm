@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "@/server/db";
-import { gmailWatch, userAccounts } from "@/server/db/schema";
+import { userAccounts } from "@/server/db/schema";
+import { teardownTenant } from "@/server/lib/accounts";
 import { getSession, setActiveAccountCookie } from "@/server/lib/session";
 import { getActiveAccount, getUserAccounts } from "@/server/lib/users";
 import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
@@ -53,19 +54,21 @@ export const accountsRouter = createTRPCRouter({
       if (!accounts.some((a) => a.id === input.accountId)) {
         throw new TRPCError({ code: "FORBIDDEN", message: "unknown account" });
       }
-      await db
-        .update(userAccounts)
-        .set({ isPrimary: false })
-        .where(eq(userAccounts.userId, session.id));
-      await db
-        .update(userAccounts)
-        .set({ isPrimary: true })
-        .where(
-          and(
-            eq(userAccounts.userId, session.id),
-            eq(userAccounts.id, input.accountId),
-          ),
-        );
+      await db.transaction(async (tx) => {
+        await tx
+          .update(userAccounts)
+          .set({ isPrimary: false })
+          .where(eq(userAccounts.userId, session.id));
+        await tx
+          .update(userAccounts)
+          .set({ isPrimary: true })
+          .where(
+            and(
+              eq(userAccounts.userId, session.id),
+              eq(userAccounts.id, input.accountId),
+            ),
+          );
+      });
       return { ok: true };
     }),
 
@@ -95,8 +98,9 @@ export const accountsRouter = createTRPCRouter({
             eq(userAccounts.id, input.accountId),
           ),
         );
-      // Stop routing pushes to a mailbox we no longer show.
-      await db.delete(gmailWatch).where(eq(gmailWatch.tenantId, target.tenantId));
+      // Revoke the grant + purge the removed mailbox's data entirely (incl. its
+      // watch routing), so nothing token-bearing lingers.
+      await teardownTenant(target.tenantId);
       // If the primary was removed, promote whatever remains.
       if (target.isPrimary) {
         const [next] = await db

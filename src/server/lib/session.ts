@@ -1,5 +1,5 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 
@@ -39,6 +39,29 @@ function cookieOpts() {
   };
 }
 
+// The active-account cookie is HMAC-signed so it can't be tampered into
+// pointing at a different account (defense-in-depth atop the ownership check).
+function signActive(accountId: string): string {
+  const sig = createHmac("sha256", env.AUTH_SECRET)
+    .update(accountId)
+    .digest("base64url");
+  return `${accountId}.${sig}`;
+}
+function unsignActive(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const dot = raw.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const id = raw.slice(0, dot);
+  const sig = Buffer.from(raw.slice(dot + 1));
+  const expected = Buffer.from(
+    createHmac("sha256", env.AUTH_SECRET).update(id).digest("base64url"),
+  );
+  if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) {
+    return null;
+  }
+  return id;
+}
+
 /** The raw session (a single-account tenant, or a multi-account user), or null. */
 export async function getSession(): Promise<Session | null> {
   const store = await cookies();
@@ -66,7 +89,7 @@ export async function getTenantId(): Promise<string | null> {
     .where(eq(userAccounts.userId, s.id));
   if (accounts.length === 0) return null;
   const store = await cookies();
-  const activeId = store.get(ACTIVE_COOKIE)?.value;
+  const activeId = unsignActive(store.get(ACTIVE_COOKIE)?.value);
   const active =
     accounts.find((a) => a.id === activeId) ??
     accounts.find((a) => a.isPrimary) ??
@@ -105,12 +128,12 @@ export async function issueUserCookie(userId: string): Promise<void> {
 /** Persist which account a multi-account user is viewing. */
 export async function setActiveAccountCookie(accountId: string): Promise<void> {
   const store = await cookies();
-  store.set(ACTIVE_COOKIE, accountId, cookieOpts());
+  store.set(ACTIVE_COOKIE, signActive(accountId), cookieOpts());
 }
 
 export async function getActiveAccountCookie(): Promise<string | null> {
   const store = await cookies();
-  return store.get(ACTIVE_COOKIE)?.value ?? null;
+  return unsignActive(store.get(ACTIVE_COOKIE)?.value);
 }
 
 /** Clears the session, signing the user out of this browser. */

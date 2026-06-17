@@ -12,5 +12,16 @@ export default {
   migrations: {
     prefix: "timestamp",
   },
-  tablesFilter: ["corsair_*", "mail_sync", "mail_triage", "users", "user_accounts"],
+  // Must list EVERY Drizzle-managed table in schema.ts (mail_embeddings is the
+  // one deliberate exception — it's raw SQL). NEVER run `db:push` against prod:
+  // push diffs live-vs-schema and a table missing here could emit a DROP. Prod
+  // only ever runs `db:migrate`.
+  tablesFilter: [
+    "corsair_*",
+    "mail_sync",
+    "mail_triage",
+    "gmail_watch",
+    "users",
+    "user_accounts",
+  ],
 } satisfies Config;
