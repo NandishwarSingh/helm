@@ -26,6 +26,7 @@ export async function getTenantForAccount(accountId: string) {
 
 export type AccountClient = {
   accountId: string;
+  tenantId: string;
   email: string;
   client: ReturnType<typeof corsair.withTenant>;
 };
@@ -39,6 +40,7 @@ export async function getAccountClients(): Promise<AccountClient[]> {
   const accounts = await getUserAccounts();
   return accounts.map((a) => ({
     accountId: a.id,
+    tenantId: a.tenantId,
     email: a.email,
     client: corsair.withTenant(a.tenantId),
   }));

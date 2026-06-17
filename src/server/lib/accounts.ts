@@ -82,8 +82,9 @@ export async function linkAddedAccount(opts: {
 
   // Single-account (tenant) session → materialize a user owning old + new.
   const oldEmail = await emailForTenant(ownerId);
-  // Re-consenting the SAME mailbox: nothing to add, keep the simple model.
-  if (oldEmail && oldEmail.toLowerCase() === email.toLowerCase()) return;
+  // Re-consenting the SAME mailbox (oldEmail is "" when unknown, which never
+  // matches the new non-empty email): nothing to add, keep the simple model.
+  if (oldEmail.toLowerCase() === email.toLowerCase()) return;
 
   const userId = randomUUID();
   await db.insert(users).values({ id: userId });
