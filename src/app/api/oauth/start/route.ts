@@ -22,7 +22,7 @@ function appUrl(request: NextRequest, path: string): URL {
 async function startConsent(request: NextRequest): Promise<NextResponse> {
   const { ok } = await rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
   if (!ok) {
-    return NextResponse.redirect(appUrl(request, "/?error=rate_limited"));
+    return NextResponse.redirect(appUrl(request, "/?error=rate_limited"), 303);
   }
 
   const tenantId = await ensureTenantId();
@@ -38,8 +38,12 @@ async function startConsent(request: NextRequest): Promise<NextResponse> {
   // challenge to Google. sameSite=lax still rides the top-level redirect back to
   // /callback, where the verifier is replayed into the token exchange.
   const { verifier, challenge } = createPkcePair();
+  // 303 See Other: this is reached via the Turnstile-gated POST form, and a 307
+  // would re-POST to Google's auth endpoint (which expects a GET). 303 makes the
+  // browser GET the consent URL. Harmless for the dev GET path too.
   const res = NextResponse.redirect(
     buildAuthUrl(tenantId, redirectUri, Date.now(), challenge),
+    303,
   );
   res.cookies.set(PKCE_COOKIE, verifier, {
     httpOnly: true,
@@ -68,7 +72,7 @@ export async function POST(request: NextRequest) {
 
   const passed = await verifyTurnstile(token, clientIp(request.headers));
   if (!passed) {
-    return NextResponse.redirect(appUrl(request, "/?error=verify"));
+    return NextResponse.redirect(appUrl(request, "/?error=verify"), 303);
   }
   return startConsent(request);
 }
