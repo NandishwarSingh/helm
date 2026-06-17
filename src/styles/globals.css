@@ -2072,11 +2072,11 @@
     z-index: -1;
     pointer-events: none;
     -webkit-mask-image: radial-gradient(
-      58% 60% at 34% 16%,
-      #000 28%,
+      42% 46% at 32% 17%,
+      #000 38%,
       transparent 80%
     );
-    mask-image: radial-gradient(58% 60% at 34% 16%, #000 28%, transparent 80%);
+    mask-image: radial-gradient(42% 46% at 32% 17%, #000 38%, transparent 80%);
   }
   .lp-mote {
     position: absolute;

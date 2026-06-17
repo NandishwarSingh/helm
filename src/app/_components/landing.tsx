@@ -484,13 +484,19 @@ type Mote = {
 function buildMotes(count: number): Mote[] {
   const rand = moteRng(7138);
   const motes: Mote[] = [];
+  // Cluster centre + radii — sits on the spotlight's bright core (upper-left).
+  const CX = 32;
+  const CY = 17;
+  const RX = 27;
+  const RY = 19;
   for (let i = 0; i < count; i++) {
-    // Bias toward the upper-left, where the spotlight blooms brightest.
-    const bx = Math.pow(rand(), 1.5);
-    const by = Math.pow(rand(), 1.5);
+    // Radial scatter around the beam centre, denser toward the middle, so the
+    // motes read as concentrated in the light rather than spread across the hero.
+    const a = rand() * Math.PI * 2;
+    const r = Math.pow(rand(), 0.6);
     motes.push({
-      x: +(4 + bx * 62).toFixed(2),
-      y: +(2 + by * 44).toFixed(2),
+      x: +Math.max(2, Math.min(70, CX + Math.cos(a) * r * RX)).toFixed(2),
+      y: +Math.max(1, Math.min(46, CY + Math.sin(a) * r * RY)).toFixed(2),
       s: +(2 + rand() * 3.5).toFixed(1),
       o: +(0.25 + rand() * 0.4).toFixed(2),
       dur: +(6 + rand() * 7).toFixed(1),
@@ -504,7 +510,7 @@ function buildMotes(count: number): Mote[] {
   return motes;
 }
 
-const MOTES = buildMotes(22);
+const MOTES = buildMotes(28);
 
 // Fine motes drifting in the spotlight — dust caught in a sunbeam. Pure CSS,
 // seeded for SSR safety, masked to the beam so they only glow where it's lit.
