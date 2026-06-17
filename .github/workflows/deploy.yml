@@ -5,11 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Build the image in CI (never on the RAM-tight VPS), push to GHCR, then pull +
-# restart on the box over SSH.
+# Build the image in CI (never on the RAM-tight VPS), push to GHCR, then migrate
+# the DB, pull + restart on the box over SSH, and gate on a real health check.
 permissions:
   contents: read
   packages: write
+
+# Serialize deploys so two pushes can't race the VPS restart.
+concurrency:
+  group: deploy-helm
+  cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/nandishwarsingh/helm
@@ -25,13 +30,28 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Runtime app image (standalone), tagged latest + the commit SHA so a bad
+      # deploy can roll back to the previous SHA.
       - uses: docker/build-push-action@v6
         with:
           context: .
+          target: runner
           push: true
-          tags: ${{ env.IMAGE }}:latest
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_SITE_URL=https://helm.houndcode.com
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # One-shot migrator image (full deps + source) to apply DB migrations on
+      # the box, where Postgres lives.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrate
+          push: true
+          tags: ${{ env.IMAGE }}:migrate
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -39,21 +59,42 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Pull + restart on the VPS
+      - name: Migrate + deploy + health-gate on the VPS
         uses: appleboy/ssh-action@v1.2.0
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
+          SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_TOKEN,GHCR_USER
+          envs: GHCR_TOKEN,GHCR_USER,SHA
+          command_timeout: 15m
           script: |
+            set -e
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             cd /opt/helm
-            docker compose pull
-            docker compose up -d
+            docker pull "ghcr.io/nandishwarsingh/helm:migrate"
+            docker pull "ghcr.io/nandishwarsingh/helm:$SHA"
+            # Apply Drizzle migrations + pgvector setup BEFORE swapping the app
+            # (both are idempotent, so a no-op on an up-to-date schema).
+            docker run --rm --network host --env-file /opt/helm/.env \
+              "ghcr.io/nandishwarsingh/helm:migrate"
+            # Swap to the new image, pinned by SHA.
+            IMAGE_TAG="$SHA" docker compose up -d
+            # Real health gate: poll the app, roll back to the previous SHA on failure.
+            ok=0
+            for i in $(seq 1 12); do
+              if curl -fsS -o /dev/null "http://127.0.0.1:3002"; then ok=1; break; fi
+              sleep 4
+            done
+            if [ "$ok" != "1" ]; then
+              echo "health check FAILED — rolling back"
+              PREV="$(cat /opt/helm/.deploy-prev 2>/dev/null || echo latest)"
+              IMAGE_TAG="$PREV" docker compose up -d || true
+              exit 1
+            fi
+            echo "$SHA" > /opt/helm/.deploy-prev
             docker image prune -f
-            sleep 5
-            curl -fsS -o /dev/null -w "helm local health: %{http_code}\n" http://127.0.0.1:3002 || echo "app not up yet"
+            echo "deployed $SHA OK"

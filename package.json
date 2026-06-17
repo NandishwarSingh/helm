@@ -41,9 +41,11 @@
     "ai": "^6.0.202",
     "cmdk": "^1.1.1",
     "corsair": "^0.1.74",
+    "dompurify": "^3.4.10",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.41.0",
     "ioredis": "^5.11.1",
+    "isolated-vm": "^7.0.0",
     "motion": "^12.40.0",
     "next": "^15.2.3",
     "postgres": "^3.4.4",
@@ -57,6 +59,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
     "@tailwindcss/postcss": "^4.0.15",
+    "@types/dompurify": "^3.2.0",
     "@types/node": "^20.14.10",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -72,5 +75,10 @@
     "typescript-eslint": "^8.27.0",
     "vitest": "^4.1.8"
   },
-  "packageManager": "pnpm@10.11.1"
+  "packageManager": "pnpm@10.11.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "isolated-vm"
+    ]
+  }
 }

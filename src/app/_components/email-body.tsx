@@ -1,24 +1,30 @@
 "use client";
 
+import DOMPurify from "dompurify";
 import { useRef, useState } from "react";
 
 import { LinkifiedText } from "@/lib/display";
 
 /**
  * Renders an email body. HTML emails are shown in a sandboxed, auto-sized
- * iframe (no scripts run) on a white sheet so they read correctly in both
- * light and dark themes; plain-text emails fall back to linkified text.
+ * iframe on a white sheet so they read correctly in both light and dark themes;
+ * plain-text emails fall back to linkified text. Defence in depth: the markup is
+ * run through DOMPurify (a real allowlist parser, not a regex), the iframe omits
+ * `allow-scripts` so nothing executes, and the framed document carries a strict
+ * Content-Security-Policy. `allow-same-origin` is kept only so the parent can
+ * read the body height for auto-sizing — harmless without `allow-scripts`.
  */
 function sanitize(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
+  // Guarded for SSR — the email body only renders after the user opens a
+  // message, so the server pass is a no-op and DOMPurify runs in the browser.
+  if (typeof window === "undefined") return "";
+  return DOMPurify.sanitize(html, { ADD_ATTR: ["target"] });
 }
 
 function wrap(html: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src https: data:; media-src https: data:">
+<base target="_blank">
 <style>
   html,body{margin:0;padding:0;background:#fff;color:#17170f;
     font-family:-apple-system,system-ui,"Segoe UI",sans-serif;font-size:14px;line-height:1.55;

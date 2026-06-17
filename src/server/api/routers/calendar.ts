@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dayStartMs } from "@/lib/calendar";
 import { purgeCachedEntity } from "@/server/lib/cache";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
@@ -48,7 +49,9 @@ function eventStartTimestamp(event: {
 }): number {
   const start = event.data.start?.dateTime ?? event.data.start?.date;
   if (!start) return 0;
-  return new Date(start).getTime();
+  // Date-only all-day starts are pinned to LOCAL midnight (not UTC), so the
+  // week-window filter buckets them on the correct side of a day boundary.
+  return dayStartMs(start);
 }
 
 function mapEvent(event: {
@@ -111,7 +114,7 @@ function filterEventsByWeek<
         return event.timestamp >= startMs && event.timestamp < endMs;
       }
       if (!event.start) return false;
-      const ts = new Date(event.start).getTime();
+      const ts = dayStartMs(event.start);
       return ts >= startMs && ts < endMs;
     })
     .sort((a, b) => a.timestamp - b.timestamp);

@@ -1,0 +1,19 @@
+# Runtime topology for the Helm container on the VPS (lives at /opt/helm). The
+# deploy pulls the image tagged with the commit SHA and starts it with
+# `IMAGE_TAG=<sha> docker compose up -d`; IMAGE_TAG defaults to latest for a
+# manual start. Secrets come from /opt/helm/.env (kept off the repo).
+services:
+  helm:
+    image: ghcr.io/nandishwarsingh/helm:${IMAGE_TAG:-latest}
+    container_name: helm
+    restart: always
+    network_mode: host
+    env_file: /opt/helm/.env
+    environment:
+      - PORT=3002
+      - HOSTNAME=127.0.0.1
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -45,19 +45,46 @@ export async function upsertMessageEmbeddings(
   if (todo.length === 0) return 0;
 
   const vectors = await embedTexts(todo.map((item) => item.text));
-  for (let i = 0; i < todo.length; i++) {
-    const item = todo[i]!;
-    const literal = toVectorLiteral(vectors[i]!);
-    await conn`
-      insert into mail_embeddings (tenant_id, message_id, content_hash, embedding, updated_at)
-      values (${tenantId}, ${item.messageId}, ${item.hash}, ${literal}::vector, now())
-      on conflict (tenant_id, message_id) do update
-        set content_hash = excluded.content_hash,
-            embedding = excluded.embedding,
-            updated_at = now()
-    `;
+  // Guard against a misaligned provider response: storing a vector that doesn't
+  // belong to its message_id would silently corrupt search. Better to fail loud.
+  if (vectors.length !== todo.length) {
+    throw new Error(
+      `embeddings count mismatch: expected ${todo.length}, got ${vectors.length}`,
+    );
   }
+  // All-or-nothing: a partial batch would leave content_hash/embedding pairs in
+  // an inconsistent state, so commit every row together or none.
+  await conn.begin(async (sql) => {
+    for (let i = 0; i < todo.length; i++) {
+      const item = todo[i]!;
+      const literal = toVectorLiteral(vectors[i]!);
+      await sql`
+        insert into mail_embeddings (tenant_id, message_id, content_hash, embedding, updated_at)
+        values (${tenantId}, ${item.messageId}, ${item.hash}, ${literal}::vector, now())
+        on conflict (tenant_id, message_id) do update
+          set content_hash = excluded.content_hash,
+              embedding = excluded.embedding,
+              updated_at = now()
+      `;
+    }
+  });
   return todo.length;
+}
+
+/**
+ * Drop embeddings for messages that were permanently deleted, so the semantic
+ * index can't surface rows that no longer exist in the cache. Empty input is a
+ * no-op (an empty `in ()` would be invalid SQL).
+ */
+export async function deleteMessageEmbeddings(
+  tenantId: string,
+  messageIds: string[],
+): Promise<void> {
+  if (messageIds.length === 0) return;
+  await conn`
+    delete from mail_embeddings
+    where tenant_id = ${tenantId} and message_id in ${conn(messageIds)}
+  `;
 }
 
 /** Cosine-KNN the query against this tenant's embedded mail. */

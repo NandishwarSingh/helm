@@ -4,7 +4,28 @@
  */
 import "./src/env.js";
 
+// App-level Content-Security-Policy. Permissive where the app genuinely needs it
+// (Next's inline bootstrap/hydration scripts, the veil WebAssembly loader, blob
+// workers) but it blocks external scripts, plugins, base-uri/form-action hijacks
+// and cross-origin connections — the client only ever talks to its own origin.
+const csp = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "worker-src 'self' blob:",
+  "media-src 'self' https: data:",
+].join("; ");
+
 const securityHeaders = [
+  { key: "Content-Security-Policy", value: csp },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -26,6 +47,10 @@ const config = {
   // Lets a production build target a separate output dir (NEXT_DIST_DIR) so it
   // never clobbers the turbopack dev cache in .next.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // isolated-vm is a native addon (.node) that powers the run_script sandbox.
+  // It must never be bundled by webpack — require it at runtime so Next's file
+  // tracing copies the compiled binary into the standalone output instead.
+  serverExternalPackages: ["isolated-vm"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

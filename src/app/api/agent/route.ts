@@ -43,7 +43,7 @@ Read one email in full (live):
   const h = n => (m.payload?.headers||[]).find(x=>(x.name||"").toLowerCase()===n)?.value || "";
   return { from:h("from"), to:h("to"), subject:h("subject"), snippet:m.snippet };
 
-Send an email (only when the user clearly asked to send):
+Send an email (ONLY after the user replied "confirm"; otherwise the tool refuses with CONFIRM_REQUIRED):
   const mime = ["To: "+TO, "Subject: "+SUBJECT, "MIME-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "", BODY].join("\\r\\n");
   const raw = Buffer.from(mime,"utf8").toString("base64").replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
   const r = await corsair.gmail.api.messages.send({ raw });
@@ -63,7 +63,7 @@ List calendar events in a window:
   const r = await corsair.googlecalendar.api.events.getMany({ calendarId:"primary", timeMin:"ISO", timeMax:"ISO", maxResults:25, singleEvents:true, orderBy:"startTime" });
   return (r.items||[]).map(e=>({ id:e.id, summary:e.summary, start:e.start?.dateTime||e.start?.date, end:e.end?.dateTime||e.end?.date }));
 
-Create an event and invite people (attendees receive a real invite):
+Create an event and invite people (ONLY after the user replied "confirm"; attendees receive a real invite):
   const e = await corsair.googlecalendar.api.events.create({ calendarId:"primary", sendUpdates:"all", event:{ summary:SUMMARY, start:{dateTime:"START_ISO+05:30"}, end:{dateTime:"END_ISO+05:30"}, attendees:[{email:"a@b.com"}] } });
   return { created:true, id:e.id, link:e.htmlLink };
 
@@ -72,7 +72,7 @@ Create an event and invite people (attendees receive a real invite):
 - Do NOT narrate between tool calls. Call tools silently; all prose belongs in ONE final answer after the work is done.
 - In run_script, ALWAYS filter and map to the few fields you need and cap lists at about 10 items — never return whole API responses.
 - To locate mail prefer the cached \`gmail.db\` search; use \`gmail.api\` for reading one message in full and for every write.
-- Sending email or invites is allowed only when the user asked for it in this conversation. If the instruction is ambiguous about sending, save a draft instead and say so. Default meeting length is 30 minutes when only a start time is given.
+- Confirmation gate: sending email, sending calendar invites, trashing or deleting mail, and creating or changing calendar events all REQUIRE the user's explicit confirmation — and the tools enforce this, refusing with "CONFIRM_REQUIRED" until the user confirms. So when the user asks for one of these, do NOT call the write yet: first state exactly what you will do (recipient, subject and a one-line summary of the body; or the event title, time and attendees) and ask them to reply "confirm". Perform it only once they have confirmed. Saving a draft and all reads never need confirmation, so prefer a draft when the user only wants to prepare something. Default meeting length is 30 minutes when only a start time is given.
 - run_script is for Gmail and Calendar through \`corsair\` only. Never read process or environment variables, touch the filesystem, or make unrelated network requests.
 - Be concise: short paragraphs; hyphen or numbered lists and **bold** are fine; never headings, tables, code blocks, nested lists, horizontal rules or emojis.
 - Never invent ids, addresses, events or results. If an operation returns nothing, say so plainly.
@@ -106,11 +106,28 @@ export async function POST(request: NextRequest) {
   // Keep context bounded but roomy enough for multi-step follow-ups.
   const recent = body.messages.slice(-24);
 
+  // Destructive actions (send, trash, delete, calendar writes) are gated: the
+  // sandbox refuses them unless the user has explicitly confirmed. Treat a short
+  // affirmative as confirmation of the action the agent just proposed. ("send"
+  // is deliberately excluded so an initial "send an email…" request still gates.)
+  const lastUserText = [...recent]
+    .reverse()
+    .find((m) => m.role === "user")
+    ?.parts.map((p) => (p.type === "text" ? p.text : ""))
+    .join(" ")
+    .trim()
+    .toLowerCase();
+  const confirmed =
+    !!lastUserText &&
+    /^(confirm|confirmed|yes|yep|yeah|ya|sure|ok|okay|go ahead|do it|proceed|approved?|sounds good|please do|go for it)\b/.test(
+      lastUserText,
+    );
+
   // Spin up a tenant-scoped Corsair MCP server and bridge it to the AI SDK.
   // Every tool call the model makes now travels the real MCP protocol.
   let mcp: Awaited<ReturnType<typeof createCorsairMcp>>;
   try {
-    mcp = await createCorsairMcp(tenantId);
+    mcp = await createCorsairMcp(tenantId, confirmed);
   } catch (error) {
     console.error(
       "corsair mcp init failed:",

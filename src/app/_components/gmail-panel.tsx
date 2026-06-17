@@ -1285,6 +1285,7 @@ export function GmailPanel({
         data-unread={email.unread}
         data-checked={bulkIds.has(email.id)}
         data-mail-id={email.id}
+        aria-current={selectedId === email.id || undefined}
         onClick={() => setSelectedId(email.id)}
         onKeyDown={(e) => {
           if (e.key === "Enter") setSelectedId(email.id);
@@ -1295,11 +1296,13 @@ export function GmailPanel({
         custom={i}
       >
         <span className="row-lead">
-          <span
+          <button
+            type="button"
             className="row-check"
-            role="checkbox"
-            aria-checked={bulkIds.has(email.id)}
-            aria-label="Select message"
+            aria-pressed={bulkIds.has(email.id)}
+            aria-label={
+              bulkIds.has(email.id) ? "Deselect message" : "Select message"
+            }
             data-checked={bulkIds.has(email.id)}
             onClick={(e) => {
               e.stopPropagation();
@@ -1307,7 +1310,7 @@ export function GmailPanel({
             }}
           >
             <CheckIcon size={11} />
-          </span>
+          </button>
         </span>
         <span className="row-inner">
           <span className="row-top">

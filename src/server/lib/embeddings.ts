@@ -47,6 +47,13 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
     if (!json.data) {
       throw new Error(`embeddings: no data (${JSON.stringify(json).slice(0, 160)})`);
     }
+    // A short response would misalign every embedding after the gap with the
+    // wrong input, so reject any batch that didn't come back one-to-one.
+    if (json.data.length !== batch.length) {
+      throw new Error(
+        `embeddings: expected ${batch.length} vectors, got ${json.data.length}`,
+      );
+    }
     // The API may return items out of order; sort by index before collecting.
     for (const item of [...json.data].sort((a, b) => a.index - b.index)) {
       out.push(item.embedding);

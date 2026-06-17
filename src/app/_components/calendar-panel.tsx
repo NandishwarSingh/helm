@@ -17,6 +17,7 @@ import {
   DAY_MINUTES,
   HOUR_PX,
   dayKey,
+  eventDayKey,
   isAllDay,
   layoutDay,
   shiftDateString,
@@ -342,7 +343,7 @@ export function CalendarPanel({
     const byDay = new Map<string, EventItem[]>();
     for (const event of events.data ?? []) {
       if (!event.start) continue;
-      const key = isAllDay(event) ? event.start : dayKey(new Date(event.start));
+      const key = eventDayKey(event.start);
       const list = byDay.get(key) ?? [];
       list.push(event);
       byDay.set(key, list);

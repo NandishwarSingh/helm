@@ -23,6 +23,7 @@ import {
 } from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
 import {
+  deleteMessageEmbeddings,
   embedText,
   semanticSearchIds,
   upsertMessageEmbeddings,
@@ -387,7 +388,12 @@ export const gmailRouter = createTRPCRouter({
       if (input.action === "deleteForever") {
         await withRetry(() => tenant.gmail.api.messages.delete({ id: input.id }));
         const tenantId = await getTenantId();
-        if (tenantId) await purgeCachedEntity(tenantId, input.id);
+        if (tenantId) {
+          await purgeCachedEntity(tenantId, input.id);
+          // Best-effort: drop the orphaned embedding, but never let a failed
+          // index cleanup surface as a failed delete.
+          await deleteMessageEmbeddings(tenantId, [input.id]).catch(() => undefined);
+        }
         return { ok: true };
       }
       const change: Record<
@@ -470,6 +476,11 @@ export const gmailRouter = createTRPCRouter({
       for (const id of input.ids) {
         await withRetry(() => tenant.gmail.api.messages.delete({ id }));
         if (tenantId) await purgeCachedEntity(tenantId, id);
+      }
+      // Best-effort: clear the deleted messages' embeddings so search can't
+      // return rows that no longer exist; a failure here never breaks the delete.
+      if (tenantId) {
+        await deleteMessageEmbeddings(tenantId, input.ids).catch(() => undefined);
       }
       return { ok: true, count: input.ids.length };
     }),

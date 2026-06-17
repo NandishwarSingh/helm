@@ -70,7 +70,6 @@ export function SyncingState({
   return (
     <div className="syncing">
       <div className="syncing-head">
-        <MorphLoader size={20} />
         <span className="syncing-text tnum" role="status">
           {label}
         </span>

@@ -23,6 +23,13 @@ export const env = createEnv({
     GOOGLE_CLIENT_SECRET: z.string().min(1),
     // Fallback tenant for CLI/local use when no session cookie is present.
     TENANT_ID: z.string().min(1).default("dev"),
+    // Shared secret gating /api/webhooks: callers must present it via the
+    // `x-webhook-secret` header or `?secret=` query. Required in production so
+    // the webhook is never an unauthenticated trigger; optional in development.
+    WEBHOOK_SECRET:
+      process.env.NODE_ENV === "production"
+        ? z.string().min(16)
+        : z.string().min(16).optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -49,6 +56,7 @@ export const env = createEnv({
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     TENANT_ID: process.env.TENANT_ID,
+    WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
   },

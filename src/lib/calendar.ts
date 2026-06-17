@@ -45,6 +45,36 @@ export function isAllDay(event: { start: string }): boolean {
   return Boolean(event.start) && !event.start.includes("T");
 }
 
+/**
+ * The LOCAL `YYYY-MM-DD` key for an event start, whether it is a date-only
+ * all-day value ("2026-06-12") or an ISO datetime. Date-only strings are
+ * parsed in LOCAL time, NOT via `new Date(str)` (which reads them as UTC
+ * midnight and drifts a day in negative-offset zones), so an all-day event and
+ * a timed event on the same calendar day always land in the same column.
+ */
+export function eventDayKey(start: string): string {
+  if (!start.includes("T")) {
+    const [y, m, d] = start.split("-").map(Number);
+    if (y && m && d) return dayKey(new Date(y, m - 1, d));
+    return start;
+  }
+  return dayKey(new Date(start));
+}
+
+/**
+ * The LOCAL-midnight timestamp (ms) for an event start. Mirrors `eventDayKey`:
+ * date-only all-day values are pinned to local midnight rather than UTC, so
+ * week-window boundary comparisons put all-day events in the correct week.
+ */
+export function dayStartMs(start: string): number {
+  if (!start.includes("T")) {
+    const [y, m, d] = start.split("-").map(Number);
+    if (y && m && d) return new Date(y, m - 1, d).getTime();
+    return new Date(start).getTime();
+  }
+  return new Date(start).getTime();
+}
+
 /** Minutes from local midnight for an ISO datetime. */
 export function minutesIntoDay(iso: string): number {
   const d = new Date(iso);
