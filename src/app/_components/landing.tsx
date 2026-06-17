@@ -11,7 +11,7 @@ import {
 import Lenis from "lenis";
 
 import { ConnectGoogle } from "@/app/_components/connect-google";
-import { LpDots } from "@/app/_components/lp-dots";
+import { LpMotifs } from "@/app/_components/lp-motifs";
 import { BrandMark } from "@/components/brand-mark";
 import { HelmGlyph } from "@/components/helm-glyph";
 import {
@@ -453,7 +453,7 @@ export function Landing() {
 
   return (
     <div className="lp">
-      <LpDots />
+      <LpMotifs />
 
       <nav className="lp-nav" ref={navRef} data-scrolled="false">
         <span className="lp-brand">
