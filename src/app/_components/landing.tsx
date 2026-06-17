@@ -474,12 +474,11 @@ type Mote = {
   x: number;
   y: number;
   s: number;
-  dx: number;
-  dy: number;
   o: number;
   dur: number;
   tw: number;
   delay: number;
+  w: number;
 };
 
 function buildMotes(count: number): Mote[] {
@@ -493,12 +492,13 @@ function buildMotes(count: number): Mote[] {
       x: +(4 + bx * 62).toFixed(2),
       y: +(2 + by * 44).toFixed(2),
       s: +(2 + rand() * 3.5).toFixed(1),
-      dx: +((rand() - 0.5) * 26).toFixed(1),
-      dy: +(-6 - rand() * 16).toFixed(1),
       o: +(0.25 + rand() * 0.4).toFixed(2),
-      dur: +(8 + rand() * 8).toFixed(1),
-      tw: +(3 + rand() * 4).toFixed(1),
-      delay: +(rand() * 8).toFixed(1),
+      dur: +(6 + rand() * 7).toFixed(1),
+      tw: +(2.5 + rand() * 3.5).toFixed(1),
+      // Negative: each mote starts mid-cycle, so the field is already drifting
+      // (and desynced) on load instead of snapping out of a shared origin.
+      delay: +(-(rand() * 12)).toFixed(1),
+      w: i % 5,
     });
   }
   return motes;
@@ -521,8 +521,7 @@ function Motes() {
               left: `${m.x}%`,
               width: m.s,
               height: m.s,
-              "--dx": `${m.dx}px`,
-              "--dy": `${m.dy}px`,
+              "--wander": `lp-mote-w${m.w}`,
               "--o": m.o,
               animationDuration: `${m.dur}s, ${m.tw}s`,
               animationDelay: `${m.delay}s, ${m.delay}s`,

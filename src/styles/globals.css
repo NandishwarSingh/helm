@@ -2087,25 +2087,52 @@
       rgba(186, 230, 253, 0) 70%
     );
     opacity: 0;
-    animation-name: lp-mote-drift, lp-mote-twinkle;
+    animation-name: var(--wander, lp-mote-w0), lp-mote-twinkle;
     animation-timing-function: ease-in-out, ease-in-out;
     animation-iteration-count: infinite, infinite;
-    animation-direction: alternate, normal;
     will-change: transform, opacity;
   }
-  @keyframes lp-mote-drift {
-    to {
-      transform: translate(var(--dx), var(--dy));
-    }
+  /* Five organic, closed-loop wander paths — motes circulate in the beam. */
+  @keyframes lp-mote-w0 {
+    0% { transform: translate(0, 0) scale(1); }
+    25% { transform: translate(14px, -12px) scale(1.1); }
+    50% { transform: translate(5px, -26px) scale(1); }
+    75% { transform: translate(-12px, -14px) scale(0.92); }
+    100% { transform: translate(0, 0) scale(1); }
+  }
+  @keyframes lp-mote-w1 {
+    0% { transform: translate(0, 0); }
+    20% { transform: translate(-10px, -9px); }
+    45% { transform: translate(7px, -20px); }
+    70% { transform: translate(16px, -8px); }
+    100% { transform: translate(0, 0); }
+  }
+  @keyframes lp-mote-w2 {
+    0% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(-18px, -16px) scale(1.12); }
+    66% { transform: translate(13px, -28px) scale(0.95); }
+    100% { transform: translate(0, 0) scale(1); }
+  }
+  @keyframes lp-mote-w3 {
+    0% { transform: translate(0, 0); }
+    25% { transform: translate(9px, -7px); }
+    50% { transform: translate(-6px, -18px); }
+    75% { transform: translate(11px, -9px); }
+    100% { transform: translate(0, 0); }
+  }
+  @keyframes lp-mote-w4 {
+    0% { transform: translate(0, 0) scale(1); }
+    30% { transform: translate(-22px, -10px) scale(1.08); }
+    55% { transform: translate(-4px, -30px) scale(1); }
+    80% { transform: translate(15px, -16px) scale(0.9); }
+    100% { transform: translate(0, 0) scale(1); }
   }
   @keyframes lp-mote-twinkle {
-    0%,
-    100% {
-      opacity: calc(var(--o) * 0.22);
-    }
-    50% {
-      opacity: var(--o);
-    }
+    0% { opacity: calc(var(--o) * 0.3); }
+    25% { opacity: var(--o); }
+    50% { opacity: calc(var(--o) * 0.45); }
+    75% { opacity: calc(var(--o) * 0.85); }
+    100% { opacity: calc(var(--o) * 0.3); }
   }
   :root[data-theme="light"] .lp-motes {
     display: none;
