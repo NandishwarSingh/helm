@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
+import { syncNewMailForTenant } from "@/server/lib/mail-sync";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { notifyTenant } from "@/server/lib/realtime";
 
@@ -38,9 +39,21 @@ export async function POST(request: NextRequest) {
       tenantId: env.TENANT_ID,
     });
 
-    // A handled push means the cache just changed — wake every open SSE
-    // connection for this tenant so the UI refetches instantly (no polling).
-    if (result.response) notifyTenant(env.TENANT_ID);
+    console.log("[webhook] matched handler:", Boolean(result.response));
+    if (result.response) {
+      // Gmail's push only carries a historyId, so pull the new mail into the
+      // cache BEFORE notifying — otherwise the client refetches stale data and
+      // the user still has to hit refresh.
+      const synced = await syncNewMailForTenant(env.TENANT_ID).catch((error) => {
+        console.error(
+          "[webhook] sync failed:",
+          error instanceof Error ? error.message : error,
+        );
+        return -1;
+      });
+      console.log("[webhook] synced", synced, "msgs -> notify", env.TENANT_ID);
+      notifyTenant(env.TENANT_ID);
+    }
 
     const nextHeaders = new Headers();
     if (result.responseHeaders) {

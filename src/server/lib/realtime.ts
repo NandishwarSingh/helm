@@ -15,6 +15,12 @@ bus.setMaxListeners(0); // many concurrent SSE clients
 globalForBus.mailBus = bus;
 
 export function notifyTenant(tenantId: string, kind = "mail"): void {
+  console.log(
+    "[realtime] notify",
+    tenantId,
+    "listeners:",
+    bus.listenerCount(tenantId),
+  );
   bus.emit(tenantId, kind);
 }
 
