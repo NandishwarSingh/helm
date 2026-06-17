@@ -3,21 +3,9 @@
 import { useEffect } from "react";
 
 /**
- * Console easter egg: clears the console, then prints a detailed ASCII Helm —
- * an eight-spoke ship's wheel with a ⎈ hub, above the HELM wordmark.
+ * Console easter egg: clears the console, then prints the HELM wordmark in
+ * ASCII for anyone who opens DevTools.
  */
-const WHEEL = String.raw`
-             o   o   o
-              \  |  /
-               \ | /
-                \|/
-    o ─────────( ⎈ )───────── o
-                /|\
-               / | \
-              /  |  \
-             o   o   o
-`;
-
 const WORDMARK = [
   "",
   "  ██╗  ██╗███████╗██╗     ███╗   ███╗",
@@ -35,7 +23,6 @@ export function ConsoleEgg() {
     w.__helmEgg = true;
 
     console.clear();
-    console.log("%c" + WHEEL, "color:#38bdf8");
     console.log("%c" + WORDMARK, "color:#38bdf8;font-weight:bold");
     console.log(
       "%c  keyboard-first command center  ·  helm.houndcode.com",
