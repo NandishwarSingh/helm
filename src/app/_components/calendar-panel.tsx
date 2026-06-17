@@ -245,6 +245,18 @@ export function CalendarPanel({
     onCreateOpenChange(false);
   }
 
+  // Account switches reset selection and close any open dialog, so the calendar
+  // never carries a selected event or half-edited form across mailboxes — the
+  // switch is instant and clean (mirrors the mail panel).
+  const prevAccount = useRef(account);
+  useEffect(() => {
+    if (prevAccount.current === account) return;
+    prevAccount.current = account;
+    setSelectedEventId(null);
+    closeDialog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
+
   const createDraft = api.calendar.createDraft.useMutation({
     onSuccess: async () => {
       await utils.calendar.searchEvents.invalidate();
