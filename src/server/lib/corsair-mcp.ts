@@ -13,6 +13,7 @@ import {
   type DestructiveGate,
   runScriptSandboxed,
 } from "@/server/lib/run-script-sandbox";
+import type { AccountClient } from "@/server/lib/tenant";
 
 /**
  * Bridges Corsair's MCP server into the Vercel AI SDK, in-process.
@@ -29,8 +30,14 @@ import {
  * pair, so the agent route receives ordinary AI SDK tools while every call
  * still travels the real MCP protocol. Everything is scoped to `tenantId`.
  */
-export async function createCorsairMcp(tenantId: string) {
+export async function createCorsairMcp(
+  tenantId: string,
+  accounts: AccountClient[] = [],
+) {
   const tenant = corsair.withTenant(tenantId);
+  // The connected accounts the script may target via corsair.account("email")
+  // — the session's own list, so the sandbox can never reach a foreign tenant.
+  const bridges = accounts.map((a) => ({ email: a.email, client: a.client }));
 
   // The LLM loop never EXECUTES a destructive op — it STAGES one, which the
   // sandbox captures into `gate.proposed`. The user approves it on a card and
@@ -49,7 +56,7 @@ export async function createCorsairMcp(tenantId: string) {
     args: Record<string, unknown>,
   ): Promise<CallToolResult> => {
     const code = typeof args.code === "string" ? args.code : "";
-    const result = await runScriptSandboxed(tenant, code, gate);
+    const result = await runScriptSandboxed(tenant, code, gate, bridges);
     if (!result.ok) {
       return { isError: true, content: [{ type: "text", text: `Error: ${result.error}` }] };
     }

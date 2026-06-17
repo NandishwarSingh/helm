@@ -4,7 +4,11 @@ import { z } from "zod";
 import { dayStartMs } from "@/lib/calendar";
 import { corsair } from "@/server/corsair";
 import { purgeCachedEntity } from "@/server/lib/cache";
-import { forEachAccount, mapLimit } from "@/server/lib/concurrency";
+import {
+  forEachAccount,
+  mapLimit,
+  requireExplicitAccount,
+} from "@/server/lib/concurrency";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
 import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
@@ -143,11 +147,14 @@ async function opAccount(
   // has more than one account — refuse rather than silently using the active
   // one (the panel captures the event's own account; a missing one is a bug).
   // Single-account sessions keep the active fallback unchanged.
-  if (!account && opts.requireAccount && (await getUserAccounts()).length > 1) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "account must be specified for this operation",
-    });
+  if (!account && opts.requireAccount) {
+    const accountCount = (await getUserAccounts()).length;
+    if (requireExplicitAccount(account, opts.requireAccount, accountCount)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "account must be specified for this operation",
+      });
+    }
   }
   const tenantId = account
     ? await resolveAccountTenant(account)

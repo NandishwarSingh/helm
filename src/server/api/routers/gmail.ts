@@ -14,7 +14,11 @@ import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
-import { forEachAccount, mapLimit } from "@/server/lib/concurrency";
+import {
+  forEachAccount,
+  mapLimit,
+  requireExplicitAccount,
+} from "@/server/lib/concurrency";
 import {
   isNotConnectedError,
   listOrEmpty,
@@ -159,11 +163,14 @@ async function opAccount(
   // has more than one mailbox — refuse rather than silently falling back to the
   // active mailbox (the client always names it for these; a missing one is a
   // bug, not intent). Single-account sessions keep the active fallback as-is.
-  if (!account && opts.requireAccount && (await getUserAccounts()).length > 1) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "account must be specified for this operation",
-    });
+  if (!account && opts.requireAccount) {
+    const accountCount = (await getUserAccounts()).length;
+    if (requireExplicitAccount(account, opts.requireAccount, accountCount)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "account must be specified for this operation",
+      });
+    }
   }
   const tenantId = account
     ? await resolveAccountTenant(account)

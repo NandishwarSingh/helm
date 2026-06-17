@@ -21,6 +21,7 @@ import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { rateLimit } from "@/server/lib/rate-limit";
 import { getTenantId } from "@/server/lib/session";
+import { getAccountClients } from "@/server/lib/tenant";
 
 export const maxDuration = 60;
 
@@ -90,12 +91,20 @@ function consumeConfirmOnce(token: string, nowMs: number): boolean {
   return true;
 }
 
-function systemPrompt() {
+function systemPrompt(accounts: string[]) {
   const now = new Date();
-  return `You are the Helm agent: a fast, precise assistant inside the user's Gmail and Google Calendar command center. You act on their real account through the Corsair MCP server.
+  const multiAccount =
+    accounts.length > 1
+      ? `
+# Your connected accounts
+This user has ${accounts.length} mailboxes connected: ${accounts.join(", ")}.
+By default \`corsair.gmail.*\` and \`corsair.googlecalendar.*\` act on the ACTIVE account (${accounts[0]}). To read or act on a SPECIFIC mailbox, scope the SAME operations onto it: \`corsair.account("${accounts[1] ?? accounts[0]}").gmail.db.messages.list({ limit: 20, offset: 0 })\`. \`corsair.accounts\` returns the list of connected emails. When the user says "all my accounts" / "every inbox", loop \`corsair.accounts\` and use \`corsair.account(email)\` for each (tag each result with its email); when they name or imply one mailbox, target just that one. A staged write runs on whichever account you called it on — so call it on the right one.
+`
+      : "";
+  return `You are the Helm agent: a fast, precise assistant inside the user's Gmail and Google Calendar command center. You act on their real account(s) through the Corsair MCP server.
 
 Current date and time: ${now.toISOString()} (UTC). The user's local timezone is Asia/Kolkata (+05:30) — when they say "tomorrow 9am" they mean their local time; produce ISO datetimes with an explicit +05:30 offset unless they specify otherwise.
-
+${multiAccount}
 # Your tools (Corsair MCP)
 - list_operations — discover available operations. Optional filters: plugin ('gmail' | 'googlecalendar') and type ('api' | 'db'). Use only when you need an operation the playbook below does not cover.
 - get_schema — inspect one operation's exact inputs and outputs by dot-path (e.g. 'gmail.api.messages.send'). Use before an unfamiliar operation.
@@ -211,9 +220,25 @@ export async function POST(request: NextRequest) {
     if (!isAllowedPath(action.op) || !isDestructive(action.op)) {
       return textResponse("That action can't be run.");
     }
+    // Replay on the account the card named (ownership-checked against the user's
+    // own connected accounts), else the active one.
+    let targetTenantId = tenantId;
+    if (action.targetAccount) {
+      const owned = (await getAccountClients()).find(
+        (a) => a.email === action.targetAccount,
+      );
+      if (!owned) {
+        return textResponse("That account is no longer connected.");
+      }
+      targetTenantId = owned.tenantId;
+    }
     const summary = summarizeAction(action.op, action.args);
     try {
-      await callTenantOp(corsair.withTenant(tenantId), action.op, action.args);
+      await callTenantOp(
+        corsair.withTenant(targetTenantId),
+        action.op,
+        action.args,
+      );
       return textResponse(confirmedOutcome(summary));
     } catch (error) {
       return textResponse(
@@ -233,11 +258,15 @@ export async function POST(request: NextRequest) {
     }))
     .filter((m) => m.parts.length > 0);
 
+  // The user's connected accounts — the agent can read/act across all of them
+  // via corsair.account("email"), and they're listed in the prompt.
+  const accounts = await getAccountClients();
+
   // Spin up a tenant-scoped Corsair MCP server and bridge it to the AI SDK.
   // Every tool call the model makes now travels the real MCP protocol.
   let mcp: Awaited<ReturnType<typeof createCorsairMcp>>;
   try {
-    mcp = await createCorsairMcp(tenantId);
+    mcp = await createCorsairMcp(tenantId, accounts);
   } catch (error) {
     console.error(
       "corsair mcp init failed:",
@@ -255,7 +284,7 @@ export async function POST(request: NextRequest) {
     // Bounds each step's generation so a single request can't run away on
     // tokens; a run_script snippet plus a recap fits comfortably under this.
     maxOutputTokens: 1500,
-    system: systemPrompt(),
+    system: systemPrompt(accounts.map((a) => a.email)),
     messages: await convertToModelMessages(recent),
     tools: mcp.tools,
     // If the client disconnects mid-stream, stop generating and let onAbort tear
@@ -295,13 +324,26 @@ export async function POST(request: NextRequest) {
       if (proposed && isAllowedPath(proposed.op) && isDestructive(proposed.op)) {
         const token = signAction(
           env.AUTH_SECRET,
-          { tenantId, op: proposed.op, args: proposed.args },
+          {
+            tenantId,
+            op: proposed.op,
+            args: proposed.args,
+            targetAccount: proposed.targetAccount,
+          },
           Date.now(),
         );
+        const summary = summarizeAction(proposed.op, proposed.args);
+        // Show which mailbox the action runs on, so the card stays faithful.
+        if (proposed.targetAccount) {
+          summary.fields.unshift({
+            label: "Account",
+            value: proposed.targetAccount,
+          });
+        }
         writer.write({
           type: "data-pendingAction",
           id: `pa-${token.slice(-12)}`,
-          data: { token, summary: summarizeAction(proposed.op, proposed.args) },
+          data: { token, summary },
         });
       }
     },

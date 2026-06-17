@@ -31,6 +31,21 @@ export async function mapLimit<T, R>(
 export const MAX_ACCOUNTS = 6;
 
 /**
+ * Whether a destructive op on an EXISTING entity must NAME its account: true only
+ * when no account was given, the op requires one, AND the user has more than one
+ * mailbox. A single-account session keeps the active-mailbox fallback (false), so
+ * this never trips for them — it only refuses a genuinely ambiguous multi-account
+ * write that arrived without an account (a client bug, not intent).
+ */
+export function requireExplicitAccount(
+  account: string | undefined,
+  requireAccount: boolean,
+  accountCount: number,
+): boolean {
+  return !account && requireAccount && accountCount > 1;
+}
+
+/**
  * Run `fn` for each account sequentially, ISOLATING failures: one account whose
  * grant is revoked/expired or transiently errors is logged and skipped instead
  * of aborting the whole sync. Use for the live-API sync loops (refresh/syncNew/

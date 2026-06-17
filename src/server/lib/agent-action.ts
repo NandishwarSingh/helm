@@ -19,6 +19,12 @@ export type ProposedAction = {
   tenantId: string;
   op: string;
   args: unknown;
+  /**
+   * Email of the mailbox/calendar the op targets, when the agent named one via
+   * `corsair.account("…")`. Undefined ⇒ the session's active account. Carried in
+   * the signed token so the confirmed action replays on the right mailbox.
+   */
+  targetAccount?: string;
 };
 
 function sign(secret: string, value: string): string {
@@ -32,7 +38,13 @@ export function signAction(
   nowMs: number,
 ): string {
   const payload = Buffer.from(
-    JSON.stringify({ t: action.tenantId, o: action.op, a: action.args ?? null, n: nowMs }),
+    JSON.stringify({
+      t: action.tenantId,
+      o: action.op,
+      a: action.args ?? null,
+      ta: action.targetAccount ?? null,
+      n: nowMs,
+    }),
   ).toString("base64url");
   return `${payload}.${sign(secret, payload)}`;
 }
@@ -57,11 +69,12 @@ export function verifyAction(
       t?: string;
       o?: string;
       a?: unknown;
+      ta?: string | null;
       n?: number;
     };
     if (!o.t || !o.o || typeof o.n !== "number") return null;
     if (nowMs - o.n > ACTION_MAX_AGE_MS) return null;
-    return { tenantId: o.t, op: o.o, args: o.a };
+    return { tenantId: o.t, op: o.o, args: o.a, targetAccount: o.ta ?? undefined };
   } catch {
     return null;
   }

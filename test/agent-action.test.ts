@@ -71,6 +71,32 @@ describe("agent-action token", () => {
     const token = signAction(SECRET, action, NOW);
     expect(verifyAction(SECRET, token, NOW)).toEqual(action);
   });
+
+  it("round-trips the target account for a multi-account write", () => {
+    const action: ProposedAction = {
+      tenantId: "t1",
+      op: "gmail.api.messages.send",
+      args: { raw: "x" },
+      targetAccount: "work@acme.com",
+    };
+    const token = signAction(SECRET, action, NOW);
+    expect(verifyAction(SECRET, token, NOW)).toEqual(action);
+  });
+
+  it("treats a tampered target account as a forgery (sig covers it)", () => {
+    const token = signAction(
+      SECRET,
+      { ...SEND, targetAccount: "mine@x.com" },
+      NOW,
+    );
+    const forged = signAction(
+      SECRET,
+      { ...SEND, targetAccount: "victim@x.com" },
+      NOW,
+    );
+    const spliced = token.split(".")[0] + "." + forged.split(".")[1];
+    expect(verifyAction(SECRET, spliced, NOW)).toBeNull();
+  });
 });
 
 describe("summarizeAction", () => {
@@ -97,6 +123,23 @@ describe("summarizeAction", () => {
     const raw = mime(["To: a@b.com", "Cc: c@d.com", "Subject: Hi", "", "Body"]);
     const s = summarizeAction("gmail.api.messages.send", { raw });
     expect(s.fields).toContainEqual({ label: "Cc", value: "c@d.com" });
+  });
+
+  it("surfaces Bcc and Reply-To so the card matches what is sent (no hidden recipients)", () => {
+    const raw = mime([
+      "To: a@b.com",
+      "Bcc: secret@x.com",
+      "Reply-To: replies@x.com",
+      "Subject: Hi",
+      "",
+      "Body",
+    ]);
+    const s = summarizeAction("gmail.api.messages.send", { raw });
+    expect(s.fields).toContainEqual({ label: "Bcc", value: "secret@x.com" });
+    expect(s.fields).toContainEqual({
+      label: "Reply-To",
+      value: "replies@x.com",
+    });
   });
 
   it("summarizes a trash by message id", () => {

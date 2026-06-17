@@ -31,16 +31,25 @@ const MAX_RESULT_BYTES = 256 * 1024; // per Corsair call; forces scripts to filt
  */
 const BOOTSTRAP = `
 globalThis.corsair = (function () {
-  function make(path) {
+  var accounts = JSON.parse(__corsairAccountsJson || "[]");
+  function make(path, account) {
     return new Proxy(function () {}, {
       get: function (_t, prop) {
         if (typeof prop !== "string") return undefined;
-        return make(path ? path + "." + prop : prop);
+        // corsair.account("email") -> the same ops scoped to that connected
+        // mailbox/calendar; corsair.accounts -> the list of connected emails.
+        if (path === "" && prop === "account") {
+          return function (email) { return make("", String(email)); };
+        }
+        if (path === "" && prop === "accounts") {
+          return accounts.slice();
+        }
+        return make(path ? path + "." + prop : prop, account);
       },
       apply: function (_t, _this, args) {
         var argsJson = JSON.stringify(args.length ? args[0] : {});
         return __corsairCall
-          .apply(undefined, [path, argsJson], {
+          .apply(undefined, [path, argsJson, account || ""], {
             result: { promise: true, copy: true },
             arguments: { copy: true },
           })
@@ -52,12 +61,15 @@ globalThis.corsair = (function () {
       },
     });
   }
-  return make("");
+  return make("", "");
 })();
 void 0;
 `;
 
 type TenantCorsair = Record<string, unknown>;
+
+/** A connected account the sandbox may target by email via corsair.account(). */
+export type AccountBridge = { email: string; client: TenantCorsair };
 
 type ScriptResult =
   | { ok: true; value: unknown }
@@ -78,13 +90,14 @@ export type DestructiveGate = {
    * for the confirmation card. Set only on a preview turn (confirmed === false);
    * the route signs it, the user approves it, and the action is replayed verbatim.
    */
-  proposed?: { op: string; args: unknown };
+  proposed?: { op: string; args: unknown; targetAccount?: string };
 };
 
 export async function runScriptSandboxed(
   tenant: TenantCorsair,
   code: string,
   gate: DestructiveGate = { confirmed: false, budget: { remaining: 0 } },
+  accounts: AccountBridge[] = [],
 ): Promise<ScriptResult> {
   const isolate = new ivm.Isolate({ memoryLimit: MEMORY_LIMIT_MB });
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -95,9 +108,26 @@ export async function runScriptSandboxed(
   // boundary — that would surface as an uncaught host rejection); errors travel
   // as `{ ok: false, error }` and are re-thrown inside the isolate by the proxy.
   const fail = (error: string) => JSON.stringify({ ok: false, error });
-  const hostCall = async (pathStr: string, argsJson: string): Promise<string> => {
+  const hostCall = async (
+    pathStr: string,
+    argsJson: string,
+    accountEmail: string,
+  ): Promise<string> => {
     try {
       if (!isAllowedPath(pathStr)) return fail(`operation not allowed: ${pathStr}`);
+      // Resolve the target mailbox. A named account (corsair.account("email"))
+      // must be one the user OWNS — `accounts` is the session's own list, so the
+      // sandbox can never reach a tenant outside it. Empty => the active account.
+      let target = tenant;
+      if (accountEmail) {
+        const match = accounts.find((a) => a.email === accountEmail);
+        if (!match) {
+          return fail(
+            `unknown account: "${accountEmail}" is not one of your connected accounts`,
+          );
+        }
+        target = match.client;
+      }
       if (isDestructive(pathStr)) {
         if (!gate.confirmed) {
           // Capture the first staged action for the confirmation card, then
@@ -108,9 +138,14 @@ export async function runScriptSandboxed(
               gate.proposed = {
                 op: pathStr,
                 args: argsJson ? (JSON.parse(argsJson) as unknown) : {},
+                targetAccount: accountEmail || undefined,
               };
             } catch {
-              gate.proposed = { op: pathStr, args: {} };
+              gate.proposed = {
+                op: pathStr,
+                args: {},
+                targetAccount: accountEmail || undefined,
+              };
             }
           }
           return fail(
@@ -129,7 +164,7 @@ export async function runScriptSandboxed(
       }
       const parts = pathStr.split(".");
       const method = parts.pop()!;
-      let parent: unknown = tenant;
+      let parent: unknown = target;
       for (const key of parts) {
         parent = (parent as Record<string, unknown> | undefined)?.[key];
         if (parent == null) return fail(`unknown operation: ${pathStr}`);
@@ -151,6 +186,12 @@ export async function runScriptSandboxed(
   try {
     const context = await isolate.createContext();
     await context.global.set("__corsairCall", new ivm.Reference(hostCall));
+    // The user's connected account emails, so the script can list them
+    // (corsair.accounts) and target one (corsair.account("email")).
+    await context.global.set(
+      "__corsairAccountsJson",
+      JSON.stringify(accounts.map((a) => a.email)),
+    );
     await (await isolate.compileScript(BOOTSTRAP)).run(context);
 
     // Wrap the model's code so its return value is serialized out as JSON. The

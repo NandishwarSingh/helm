@@ -4,6 +4,7 @@ import {
   forEachAccount,
   mapLimit,
   MAX_ACCOUNTS,
+  requireExplicitAccount,
 } from "@/server/lib/concurrency";
 
 const tick = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -103,5 +104,26 @@ describe("forEachAccount", () => {
 describe("MAX_ACCOUNTS", () => {
   it("bounds fan-out width to a sane cap", () => {
     expect(MAX_ACCOUNTS).toBe(6);
+  });
+});
+
+describe("requireExplicitAccount (destructive-write guard)", () => {
+  it("refuses an omitted account ONLY when the user is multi-account", () => {
+    expect(requireExplicitAccount(undefined, true, 3)).toBe(true);
+    expect(requireExplicitAccount(undefined, true, 2)).toBe(true);
+  });
+
+  it("lets a single-account session fall back to its one mailbox", () => {
+    expect(requireExplicitAccount(undefined, true, 1)).toBe(false);
+    expect(requireExplicitAccount(undefined, true, 0)).toBe(false);
+  });
+
+  it("never trips when an explicit account is given", () => {
+    expect(requireExplicitAccount("acc-1", true, 5)).toBe(false);
+  });
+
+  it("never trips for non-guarded ops (reads, new-compose)", () => {
+    expect(requireExplicitAccount(undefined, false, 5)).toBe(false);
+    expect(requireExplicitAccount("acc-1", false, 5)).toBe(false);
   });
 });
