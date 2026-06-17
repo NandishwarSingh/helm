@@ -34,6 +34,7 @@ import {
 import { Kbd } from "@/components/kbd";
 import { SyncingState } from "@/components/morph-loader";
 import { MailRowsSkeleton, ReadingSkeleton } from "@/components/skeleton";
+import { parseQuery, queryChips } from "@/lib/search-operators";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import {
   formatMessageDate,
@@ -231,6 +232,9 @@ export function GmailPanel({
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
+  // Keyword (Corsair `.db` filter search) is the default; Smart is the pgvector
+  // semantic path. The toggle lets the user pick per query.
+  const [searchMode, setSearchMode] = useState<"keyword" | "smart">("keyword");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canSyncMore, setCanSyncMore] = useState(true);
 
@@ -325,11 +329,27 @@ export function GmailPanel({
     },
   );
 
-  // Semantic search: a query embeds + cosine-KNNs the mailbox (sub-second,
-  // local). keepPreviousData so results don't blank while the next query runs.
+  // Keyword search via Corsair's `.db` search API: Gmail-style operators
+  // (from:/to:/subject:/is:unread…) compile to gmail.db.messages.search filters.
+  // Instant + exact over the local cache, no embeddings — the default mode.
+  const keyword = api.gmail.keywordSearch.useQuery(
+    { query: activeSearch, folder, limit: 50 },
+    {
+      enabled: searching && searchMode === "keyword",
+      placeholderData: keepPreviousData,
+      staleTime: 15_000,
+    },
+  );
+
+  // Smart search: a query embeds + cosine-KNNs the mailbox (sub-second, local).
+  // keepPreviousData so results don't blank while the next query runs.
   const semantic = api.gmail.semanticSearch.useQuery(
     { query: activeSearch, limit: 50 },
-    { enabled: searching, placeholderData: keepPreviousData, staleTime: 30_000 },
+    {
+      enabled: searching && searchMode === "smart",
+      placeholderData: keepPreviousData,
+      staleTime: 30_000,
+    },
   );
 
   // Keep the semantic index warm in the background — embeds only new/changed
@@ -372,7 +392,13 @@ export function GmailPanel({
   // here, surface rows that just moved in, and overlay unread/star flips. In
   // the Priority view the source is the triage groups, most urgent first.
   const items = inbox.data?.items;
-  const searchItems = semantic.data?.items;
+  const searchItems =
+    searchMode === "keyword" ? keyword.data?.items : semantic.data?.items;
+  // Chips showing how a keyword query parsed into Corsair `.db` search filters.
+  const operatorChips =
+    searching && searchMode === "keyword"
+      ? queryChips(parseQuery(activeSearch)).filter((chip) => chip.key !== "text")
+      : [];
   const emails = useMemo(() => {
     // A search query → semantic results, ranked by relevance and cross-folder.
     // Overlay local unread/star edits but keep similarity order (no folder drop).
@@ -1266,7 +1292,9 @@ export function GmailPanel({
     updateDraft.isPending ||
     sendDraft.isPending;
   const listBusy = searching
-    ? semantic.isLoading
+    ? searchMode === "keyword"
+      ? keyword.isLoading
+      : semantic.isLoading
     : inbox.isLoading || (syncFolder.isPending && emails.length === 0);
   const bulkList = [...bulkIds];
 
@@ -1469,9 +1497,34 @@ export function GmailPanel({
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder={`Search ${view}`}
+                  placeholder={`Search ${view} — from:, subject:, is:unread…`}
                 />
-                <Kbd>/</Kbd>
+                {searching ? (
+                  <div
+                    className="search-mode"
+                    role="group"
+                    aria-label="Search mode"
+                  >
+                    <button
+                      type="button"
+                      data-on={searchMode === "keyword"}
+                      onClick={() => setSearchMode("keyword")}
+                      title="Exact keyword search via Corsair"
+                    >
+                      Keyword
+                    </button>
+                    <button
+                      type="button"
+                      data-on={searchMode === "smart"}
+                      onClick={() => setSearchMode("smart")}
+                      title="Semantic search via pgvector"
+                    >
+                      Smart
+                    </button>
+                  </div>
+                ) : (
+                  <Kbd>/</Kbd>
+                )}
               </div>
             ) : (
               <span className="mail-search-label">
@@ -1495,6 +1548,17 @@ export function GmailPanel({
               <RefreshIcon size={15} />
             </button>
           </form>
+        )}
+
+        {operatorChips.length > 0 && (
+          <div className="search-chips" role="note">
+            <span className="search-chips-label">Corsair filter</span>
+            {operatorChips.map((chip) => (
+              <span key={chip.key} className="search-chip">
+                {chip.label}
+              </span>
+            ))}
+          </div>
         )}
 
         <div className="mail-rows" data-bulk={bulkIds.size > 0}>

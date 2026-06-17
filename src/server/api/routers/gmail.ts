@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { buildFilters, matchesFlags, parseQuery } from "@/lib/search-operators";
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
@@ -159,6 +160,52 @@ export const gmailRouter = createTRPCRouter({
         // More already sitting in the window we can reveal by raising limit.
         hasMore: all.length > input.limit,
         // The recency window itself is full, so a deep sync may surface more.
+        windowFull: window.length >= MAIL_WINDOW,
+      };
+    }),
+
+  // Keyword search through Corsair's `.db` search API — Gmail-style operators
+  // (from:, to:, subject:, is:unread/read/starred/unstarred) compile straight to
+  // `gmail.db.messages.search` filters, and free text matches subject/snippet/from.
+  // Instant + exact over the local cache, no embeddings (the semantic path is the
+  // separate semanticSearch query). Status flags post-filter on labels, which
+  // aren't a searchable field.
+  keywordSearch: authedProcedure
+    .input(
+      z.object({
+        query: z.string().max(256),
+        folder: folderSchema,
+        limit: z.number().min(1).max(MAIL_WINDOW).default(40),
+      }),
+    )
+    .query(async ({ input }) => {
+      const parsed = parseQuery(input.query.trim());
+      const filters = buildFilters(parsed);
+
+      const window = await listOrEmpty(async () => {
+        const tenant = await getTenant();
+        if (filters.length === 0) {
+          // Only status flags (or nothing) — scan the window; flags applied below.
+          return tenant.gmail.db.messages.list({ limit: MAIL_WINDOW, offset: 0 });
+        }
+        const results = await Promise.all(
+          filters.map((data) =>
+            tenant.gmail.db.messages.search({ data, limit: MAIL_WINDOW, offset: 0 }),
+          ),
+        );
+        return results.flat();
+      });
+
+      const all = sortMessagesNewestFirst(
+        dedupeByEntityId(window).map(mapMessage),
+      )
+        .filter((message) => message.hydrated)
+        .filter((message) => matchesFlags(message, parsed))
+        .filter(FOLDER_FILTERS[input.folder]);
+
+      return {
+        items: all.slice(0, input.limit),
+        hasMore: all.length > input.limit,
         windowFull: window.length >= MAIL_WINDOW,
       };
     }),
