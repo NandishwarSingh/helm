@@ -34,6 +34,8 @@ type Props = {
   onCreateOpenChange: (open: boolean) => void;
   seed: EventSeed | null;
   onSeedConsumed: () => void;
+  // Active account selection from the shell: a specific account id, or "all".
+  account: string;
 };
 
 type EventItem = {
@@ -45,6 +47,8 @@ type EventItem = {
   end: string;
   attendees: string[];
   htmlLink: string;
+  accountId?: string;
+  accountEmail?: string;
 };
 
 function formatHour(hour: number) {
@@ -91,6 +95,7 @@ export function CalendarPanel({
   onCreateOpenChange,
   seed,
   onSeedConsumed,
+  account,
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
@@ -141,6 +146,7 @@ export function CalendarPanel({
       weekEnd: week.end.toISOString(),
       limit: 50,
       offset: 0,
+      account,
     },
     // Reads hit the local cache; polling keeps the grid live.
     { staleTime: 10_000, refetchInterval: 45_000, refetchOnWindowFocus: true },
@@ -150,6 +156,9 @@ export function CalendarPanel({
   // window was full, results may be incomplete, so a live Google pull is run.
   const eventItems = events.data?.items;
   const windowFull = events.data?.windowFull ?? false;
+  // The calendar an event lives in, so update/delete hit the right account.
+  const eventAccountOf = (id: string | null): string | undefined =>
+    id ? eventItems?.find((e) => e.id === id)?.accountId : undefined;
 
   const refreshEvents = api.calendar.refreshEvents.useMutation({
     onSuccess: async () => {
@@ -351,6 +360,7 @@ export function CalendarPanel({
         deleteEvent.mutate({
           id: confirmEvent!.id,
           notify: confirmEvent!.attendees.length > 0,
+          account: eventAccountOf(confirmEvent!.id),
         });
       }
     }
@@ -503,6 +513,13 @@ export function CalendarPanel({
     start: allDay ? start : new Date(start).toISOString(),
     end: allDay ? shiftDateString(end, 1) : new Date(end).toISOString(),
     attendees: parseAttendees(),
+    // New events go on the active calendar (the primary in the unified view);
+    // an edit stays on the calendar the event already lives in.
+    account: editingId
+      ? eventAccountOf(editingId)
+      : account === "all"
+        ? undefined
+        : account,
   };
 
   const canSubmit = Boolean(summary && start && end);
@@ -802,6 +819,7 @@ export function CalendarPanel({
                     deleteEvent.mutate({
                       id: confirmEvent.id,
                       notify: confirmEvent.attendees.length > 0,
+                      account: eventAccountOf(confirmEvent.id),
                     })
                   }
                   disabled={deleteEvent.isPending}
@@ -949,6 +967,7 @@ export function CalendarPanel({
                         ? deleteEvent.mutate({
                             id: editingId,
                             notify: parseAttendees().length > 0,
+                            account: eventAccountOf(editingId),
                           })
                         : setConfirmingDelete(true)
                     }

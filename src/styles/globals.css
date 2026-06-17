@@ -350,6 +350,123 @@
     padding-left: 0.15rem;
   }
 
+  /* ---- account switcher (rail foot) ---- */
+  .acct-switch {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+  .acct-current {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0.35rem 0.4rem;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-ink-2);
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    text-align: left;
+  }
+  .acct-current:hover {
+    background: var(--color-paper-sunken);
+    border-color: var(--color-line);
+  }
+  .acct-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .acct-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .acct-chev {
+    flex: none;
+    color: var(--color-ink-3);
+  }
+  .acct-menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+  }
+  .acct-menu {
+    position: absolute;
+    bottom: calc(100% + 0.35rem);
+    left: 0;
+    right: 0;
+    z-index: 31;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0.3rem;
+    border: 1px solid var(--color-line);
+    border-radius: 10px;
+    background: var(--color-paper-raised);
+    box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.35);
+  }
+  .acct-opt {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    width: 100%;
+    padding: 0.4rem 0.45rem;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-ink-2);
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    text-align: left;
+  }
+  .acct-opt:hover {
+    background: var(--color-paper-sunken);
+    color: var(--color-ink);
+  }
+  .acct-opt[data-on="true"] {
+    color: var(--color-ink);
+    font-weight: 550;
+  }
+  .acct-opt-email {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .acct-tag {
+    flex: none;
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+  .acct-add-form {
+    margin: 2px 0 0;
+    border-top: 1px solid var(--color-line);
+    padding-top: 2px;
+  }
+  .acct-add {
+    color: var(--color-accent);
+  }
+  /* Per-row account dot in the unified ("all accounts") mail list. */
+  .row-acct {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-left: 0.1rem;
+  }
+
   .frame {
     display: grid;
     grid-template-rows: auto 1fr;

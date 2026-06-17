@@ -57,6 +57,9 @@ type Props = {
   composeOpen: boolean;
   onComposeOpenChange: (open: boolean) => void;
   onAddToCalendar: (seed: EventSeed) => void;
+  // The active account selection from the shell: a specific account id, or
+  // "all" for the unified inbox across every connected account.
+  account: string;
   // False while the first-sync veil is driving the initial refresh, so the
   // panel doesn't fire a duplicate sync underneath it.
   autoSync?: boolean;
@@ -122,6 +125,9 @@ type EmailRow = {
   timestamp: number;
   reason: string;
   priority: PriorityKey | undefined;
+  // Present in the unified ("all") view so per-message ops hit the right mailbox.
+  accountId?: string;
+  accountEmail?: string;
 };
 
 type LocalEdit = { row: EmailRow; state: LabelState };
@@ -229,6 +235,7 @@ export function GmailPanel({
   composeOpen,
   onComposeOpenChange,
   onAddToCalendar,
+  account,
   autoSync = true,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -297,6 +304,16 @@ export function GmailPanel({
 
   const utils = api.useUtils();
 
+  // The session's accounts — for per-row badges, the compose "from", and whether
+  // the unified view + switcher apply.
+  const accountsQuery = api.accounts.list.useQuery(undefined, {
+    staleTime: 30_000,
+  });
+  const accountList = accountsQuery.data?.accounts ?? [];
+  const multiAccount = accountsQuery.data?.multi ?? false;
+  const accountColor = (id: string | undefined): string | null =>
+    id ? (accountList.find((a) => a.id === id)?.color ?? null) : null;
+
   const isPriority = view === "priority";
   const folder: Folder =
     view === "drafts" || view === "priority" ? "inbox" : view;
@@ -316,7 +333,7 @@ export function GmailPanel({
   // query routes to semantic (vector) search instead of substring matching.
   const searching = inMessages && !isPriority && activeSearch.trim().length > 0;
   const inbox = api.gmail.searchEmails.useQuery(
-    { query: "", folder, limit },
+    { query: "", folder, limit, account },
     {
       enabled: inMessages && !isPriority,
       placeholderData: keepPreviousData,
@@ -335,7 +352,7 @@ export function GmailPanel({
   // and free text is ranked server-side by semantic similarity + an adaptive
   // keyword boost — one query, best of both worlds (an offline eval picked it).
   const smart = api.gmail.smartSearch.useQuery(
-    { query: activeSearch, folder, limit: 50 },
+    { query: activeSearch, folder, limit: 50, account },
     {
       enabled: searching,
       placeholderData: keepPreviousData,
@@ -470,6 +487,23 @@ export function GmailPanel({
     folder,
   ]);
 
+  // Which account a per-message op targets: in the unified ("all") view it's the
+  // row's own account; otherwise the single selected account.
+  const accountOf = (id: string): string | undefined =>
+    account === "all" ? emails.find((e) => e.id === id)?.accountId : account;
+  // Group ids by owning account so a bulk action over the unified view fires one
+  // Gmail call per mailbox.
+  function groupByAccount(ids: string[]): Map<string | undefined, string[]> {
+    const groups = new Map<string | undefined, string[]>();
+    for (const id of ids) {
+      const acct = accountOf(id);
+      const list = groups.get(acct) ?? [];
+      list.push(id);
+      groups.set(acct, list);
+    }
+    return groups;
+  }
+
   // Debounced read target: the highlight moves instantly; the (slow, live)
   // message fetch fires only once the selection settles.
   const [readId, setReadId] = useState<string | null>(null);
@@ -482,8 +516,9 @@ export function GmailPanel({
     return () => window.clearTimeout(id);
   }, [selectedId]);
 
+  const readAccount = readId ? accountOf(readId) : undefined;
   const selectedEmail = api.gmail.getMessage.useQuery(
-    { id: readId! },
+    { id: readId!, account: readAccount },
     {
       enabled: !!readId,
       refetchOnWindowFocus: false,
@@ -496,7 +531,7 @@ export function GmailPanel({
   // thread when it holds more than one message.
   const threadId = selectedEmail.data?.threadId ?? "";
   const thread = api.gmail.getThread.useQuery(
-    { id: threadId },
+    { id: threadId, account: readAccount },
     {
       enabled: !!threadId,
       refetchOnWindowFocus: false,
@@ -508,18 +543,24 @@ export function GmailPanel({
   const isThread = threadMessages.length > 1;
 
   // The user's own address, so reply-all never cc's them back to themselves.
-  const myEmail = api.gmail.profile.useQuery(undefined, {
-    enabled: inMessages,
-    staleTime: 60 * 60 * 1000,
-  }).data?.email;
+  const myEmail = api.gmail.profile.useQuery(
+    { account: account === "all" ? undefined : account },
+    {
+      enabled: inMessages,
+      staleTime: 60 * 60 * 1000,
+    },
+  ).data?.email;
 
   const readPending =
     selectedId !== readId || (!!readId && selectedEmail.isLoading);
 
   const drafts = api.gmail.listDrafts.useQuery(
-    { limit: 50, offset: 0 },
+    { limit: 50, offset: 0, account },
     { enabled: view === "drafts", staleTime: 10_000, refetchInterval: 60_000 },
   );
+  // The mailbox a draft lives in, so its edit/send/delete hit the right account.
+  const draftAccountOf = (id: string | null): string | undefined =>
+    id ? drafts.data?.find((d) => d.id === id)?.accountId : undefined;
 
   // Triage runs classify untriaged inbox mail in capped slices; the loop
   // continues until the backlog is clear (bounded per visit).
@@ -656,6 +697,14 @@ export function GmailPanel({
     onComposeOpenChange(false);
   }
 
+  // The mailbox a compose sends from: a reply goes from the account its thread
+  // lives in; a fresh compose from the active account (or the primary in "all").
+  function composeAccountId(): string | undefined {
+    if (replyThread) return selectedId ? accountOf(selectedId) : undefined;
+    if (account !== "all") return account;
+    return accountList.find((a) => a.isPrimary)?.id ?? accountList[0]?.id;
+  }
+
   // Fields shared by send/draft/update, including Cc/Bcc and any reply thread.
   function composePayload() {
     return {
@@ -664,6 +713,7 @@ export function GmailPanel({
       bcc: bcc.trim() || undefined,
       subject,
       body,
+      account: composeAccountId(),
       ...(replyThread ?? {}),
     };
   }
@@ -741,19 +791,23 @@ export function GmailPanel({
     // Read-state flips fire on every J/K; they never move a message, so
     // they stay untracked and trigger no reconciling refetch.
     const tracked = action !== "read" && action !== "unread";
-    if (tracked) inFlight.current += 1;
     const callbacks = tracked ? trackedCallbacks : undefined;
 
-    if (action === "deleteForever") {
-      if (ids.length === 1) {
-        modifyMessage.mutate({ id: ids[0]!, action }, callbacks);
+    // One Gmail call per owning account — a multiselect over the unified view
+    // can span mailboxes; each group is tracked independently.
+    for (const [acct, gids] of groupByAccount(ids)) {
+      if (tracked) inFlight.current += 1;
+      if (action === "deleteForever") {
+        if (gids.length === 1) {
+          modifyMessage.mutate({ id: gids[0]!, account: acct, action }, callbacks);
+        } else {
+          bulkDelete.mutate({ ids: gids, account: acct }, callbacks);
+        }
+      } else if (gids.length === 1) {
+        modifyMessage.mutate({ id: gids[0]!, account: acct, action }, callbacks);
       } else {
-        bulkDelete.mutate({ ids }, callbacks);
+        bulkModify.mutate({ ids: gids, account: acct, action }, callbacks);
       }
-    } else if (ids.length === 1) {
-      modifyMessage.mutate({ id: ids[0]!, action }, callbacks);
-    } else {
-      bulkModify.mutate({ ids, action }, callbacks);
     }
     setBulkIds(new Set());
 
@@ -767,11 +821,19 @@ export function GmailPanel({
     if (!undo) return;
     const reverse = UNDO_REVERSE[undo.action];
     applyLocal(undo.ids, reverse);
-    inFlight.current += 1;
-    if (undo.ids.length === 1) {
-      modifyMessage.mutate({ id: undo.ids[0]!, action: reverse }, trackedCallbacks);
-    } else {
-      bulkModify.mutate({ ids: undo.ids, action: reverse }, trackedCallbacks);
+    for (const [acct, gids] of groupByAccount(undo.ids)) {
+      inFlight.current += 1;
+      if (gids.length === 1) {
+        modifyMessage.mutate(
+          { id: gids[0]!, account: acct, action: reverse },
+          trackedCallbacks,
+        );
+      } else {
+        bulkModify.mutate(
+          { ids: gids, account: acct, action: reverse },
+          trackedCallbacks,
+        );
+      }
     }
     if (undoTimer.current) window.clearTimeout(undoTimer.current);
     setUndo(null);
@@ -790,7 +852,7 @@ export function GmailPanel({
       const draftId = confirm.ids[0];
       if (draftId) {
         if (selectedDraftId === draftId) setSelectedDraftId(null);
-        deleteDraft.mutate({ draftId });
+        deleteDraft.mutate({ draftId, account: draftAccountOf(draftId) });
       }
     } else {
       performAction(
@@ -858,7 +920,7 @@ export function GmailPanel({
     const meta = emails.find((email) => email.id === readId);
     if (meta?.unread) {
       applyLocal([readId], "read");
-      modifyMessage.mutate({ id: readId, action: "read" });
+      modifyMessage.mutate({ id: readId, account: accountOf(readId), action: "read" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readId, selectedEmail.data]);
@@ -961,7 +1023,10 @@ export function GmailPanel({
     setOpeningDraftId(draftId);
     setDraftsNotice(null);
     try {
-      const draft = await utils.gmail.getDraft.fetch({ id: draftId });
+      const draft = await utils.gmail.getDraft.fetch({
+        id: draftId,
+        account: draftAccountOf(draftId),
+      });
       setEditingDraftId(draftId);
       setTo(draft.to);
       setCc(draft.cc);
@@ -979,14 +1044,23 @@ export function GmailPanel({
 
   async function sendEditedDraft() {
     if (!editingDraftId) return;
-    await updateDraft.mutateAsync({ draftId: editingDraftId, ...composePayload() });
-    await sendDraft.mutateAsync({ draftId: editingDraftId });
+    const draftAccount = draftAccountOf(editingDraftId);
+    await updateDraft.mutateAsync({
+      ...composePayload(),
+      draftId: editingDraftId,
+      account: draftAccount,
+    });
+    await sendDraft.mutateAsync({ draftId: editingDraftId, account: draftAccount });
     closeCompose();
   }
 
   async function saveEditedDraft() {
     if (!editingDraftId) return;
-    await updateDraft.mutateAsync({ draftId: editingDraftId, ...composePayload() });
+    await updateDraft.mutateAsync({
+      ...composePayload(),
+      draftId: editingDraftId,
+      account: draftAccountOf(editingDraftId),
+    });
     await utils.gmail.listDrafts.invalidate();
     closeCompose();
   }
@@ -1335,6 +1409,16 @@ export function GmailPanel({
                 ? senderLabel(email.to)
                 : senderLabel(email.from)}
             </span>
+            {account === "all" && multiAccount && email.accountId && (
+              <span
+                className="row-acct"
+                style={{
+                  background:
+                    accountColor(email.accountId) ?? "var(--color-accent)",
+                }}
+                title={email.accountEmail}
+              />
+            )}
             {chip && (
               <span className="row-pri" data-pri={email.priority}>
                 {chip}
@@ -1681,7 +1765,12 @@ export function GmailPanel({
                   <button
                     type="button"
                     className="link"
-                    onClick={() => sendDraft.mutate({ draftId: draft.id })}
+                    onClick={() =>
+                      sendDraft.mutate({
+                        draftId: draft.id,
+                        account: draft.accountId,
+                      })
+                    }
                     disabled={sendDraft.isPending}
                   >
                     Send
@@ -1691,7 +1780,10 @@ export function GmailPanel({
                     className="link draft-delete"
                     onClick={() =>
                       confirmDeleteId === draft.id
-                        ? deleteDraft.mutate({ draftId: draft.id })
+                        ? deleteDraft.mutate({
+                            draftId: draft.id,
+                            account: draft.accountId,
+                          })
                         : setConfirmDeleteId(draft.id)
                     }
                     disabled={deleteDraft.isPending}

@@ -72,6 +72,27 @@ const MAIL_FOLDERS: {
   { id: "drafts", label: "Drafts", chord: "D", icon: <ComposeIcon size={15} /> },
 ];
 
+function ChevronIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className="acct-chev"
+    >
+      <path
+        d="M4 6l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function AppShell() {
   const [view, setView] = useState<View>("mail");
   const [mailView, setMailView] = useState<MailView>("inbox");
@@ -106,8 +127,37 @@ export function AppShell() {
   useOverlay(helpOpen);
 
   const status = api.connection.status.useQuery();
-  const connected = Boolean(status.data?.gmail ?? status.data?.calendar);
   const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
+
+  // Multi-account: the switcher's selection ("all" or a specific account id) is
+  // threaded into every panel so reads fan out / scope and per-op calls land on
+  // the right mailbox.
+  const utils = api.useUtils();
+  const accounts = api.accounts.list.useQuery(undefined, { staleTime: 30_000 });
+  const accountList = accounts.data?.accounts ?? [];
+  const multiAccount = accounts.data?.multi ?? false;
+  const [activeAccount, setActiveAccount] = useState<string>("all");
+  const [acctMenuOpen, setAcctMenuOpen] = useState(false);
+  const setActiveAccountM = api.accounts.setActive.useMutation();
+  function pickAccount(id: string) {
+    setActiveAccount(id);
+    setAcctMenuOpen(false);
+    if (id !== "all") setActiveAccountM.mutate({ accountId: id });
+    void utils.gmail.invalidate();
+    void utils.triage.invalidate();
+    void utils.calendar.invalidate();
+  }
+  const activeLabel =
+    activeAccount === "all"
+      ? multiAccount
+        ? "All accounts"
+        : (accountList[0]?.email ?? "Google connected")
+      : (accountList.find((a) => a.id === activeAccount)?.email ?? "Account");
+  const activeDot =
+    activeAccount === "all"
+      ? "var(--color-accent)"
+      : (accountList.find((a) => a.id === activeAccount)?.color ??
+        "var(--color-accent)");
 
   // G-chords: G then a second key jumps anywhere. Runs in the capture phase
   // so a consumed chord key never reaches the panel handlers.
@@ -279,9 +329,70 @@ export function AppShell() {
           </nav>
 
           <div className="rail-foot">
-            <span className="rail-status">
-              {connected ? "Google connected" : "Not connected"}
-            </span>
+            <div className="acct-switch">
+              <button
+                type="button"
+                className="acct-current"
+                onClick={() => setAcctMenuOpen((o) => !o)}
+                aria-expanded={acctMenuOpen}
+                title={activeLabel}
+              >
+                <span className="acct-dot" style={{ background: activeDot }} />
+                <span className="acct-label">{activeLabel}</span>
+                <ChevronIcon />
+              </button>
+              {acctMenuOpen && (
+                <>
+                  <div
+                    className="acct-menu-scrim"
+                    onClick={() => setAcctMenuOpen(false)}
+                  />
+                  <div className="acct-menu" role="menu">
+                    {multiAccount && (
+                      <button
+                        type="button"
+                        className="acct-opt"
+                        data-on={activeAccount === "all"}
+                        onClick={() => pickAccount("all")}
+                      >
+                        <span
+                          className="acct-dot"
+                          style={{ background: "var(--color-accent)" }}
+                        />
+                        <span className="acct-opt-email">All accounts</span>
+                      </button>
+                    )}
+                    {accountList.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        className="acct-opt"
+                        data-on={activeAccount === a.id}
+                        onClick={() => pickAccount(a.id)}
+                      >
+                        <span
+                          className="acct-dot"
+                          style={{ background: a.color ?? "var(--color-accent)" }}
+                        />
+                        <span className="acct-opt-email">{a.email}</span>
+                        {a.isPrimary && <span className="acct-tag">primary</span>}
+                      </button>
+                    ))}
+                    <form
+                      action="/api/oauth/start"
+                      method="post"
+                      className="acct-add-form"
+                    >
+                      <input type="hidden" name="intent" value="add" />
+                      <button type="submit" className="acct-opt acct-add">
+                        <PlusIcon size={13} />
+                        Add account
+                      </button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </div>
             <ThemeToggle />
             <form action="/api/auth/logout" method="post">
               <button
@@ -362,6 +473,7 @@ export function AppShell() {
                     onViewChange={setMailView}
                     composeOpen={composeOpen}
                     onComposeOpenChange={setComposeOpen}
+                    account={activeAccount}
                     autoSync={!firstRun}
                     onAddToCalendar={(seed) => {
                       setEventSeed(seed);
@@ -375,6 +487,7 @@ export function AppShell() {
                     onCreateOpenChange={setCreateOpen}
                     seed={eventSeed}
                     onSeedConsumed={() => setEventSeed(null)}
+                    account={activeAccount}
                   />
                 )}
               </motion.div>
