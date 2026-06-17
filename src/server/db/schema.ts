@@ -1,4 +1,4 @@
-import { pgTable, primaryKey, index, text, jsonb, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, primaryKey, index, text, jsonb, timestamp, uniqueIndex, boolean } from 'drizzle-orm/pg-core';
 
 export const corsairIntegrations = pgTable('corsair_integrations', {
     id: text('id').primaryKey(),
@@ -81,4 +81,34 @@ export const gmailWatch = pgTable('gmail_watch', {
     primaryKey({ columns: [table.email, table.tenantId] }),
     // The renewal cron and watch teardown scan by tenant.
     index('gmail_watch_tenant_idx').on(table.tenantId),
+]);
+
+// ── Multi-account identity ──────────────────────────────────────────────────
+// A durable user that owns one or more connected Google accounts. A user stays
+// on the legacy single-tenant cookie until they connect a SECOND account, at
+// which point a user row is materialized here and every account is linked. Each
+// account remains its own Corsair tenant, so per-account mail/calendar data is
+// isolated exactly as before — this layer only sits ABOVE tenants.
+export const users = pgTable('users', {
+    id: text('id').primaryKey(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One row per connected Google account. `tenantId` is that account's Corsair
+// tenant; `email` is the verified address; `isPrimary` marks the default
+// "from"/active account. Unique (user, email) blocks linking the same mailbox
+// twice; unique tenant keeps one account row per tenant.
+export const userAccounts = pgTable('user_accounts', {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull().references(() => users.id),
+    tenantId: text('tenant_id').notNull(),
+    email: text('email').notNull(),
+    label: text('label'),
+    color: text('color'),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+    uniqueIndex('user_accounts_user_email_uniq').on(table.userId, table.email),
+    uniqueIndex('user_accounts_tenant_uniq').on(table.tenantId),
+    index('user_accounts_user_idx').on(table.userId),
 ]);

@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { packToken, unpackToken } from "@/server/lib/session-token";
+import { packToken, packUserToken, unpackToken } from "@/server/lib/session-token";
 
 const SECRET = "test-secret-please-ignore";
 const NOW = 1_700_000_000_000;
@@ -15,13 +15,29 @@ function legacyToken(secret: string, tenantId: string): string {
 }
 
 describe("session-token codec", () => {
-  it("round-trips a freshly issued, exp-bound token", () => {
+  it("round-trips a freshly issued, exp-bound tenant token", () => {
     const token = packToken(SECRET, "tenant-abc", NOW + HOUR);
-    expect(unpackToken(SECRET, token, NOW)).toBe("tenant-abc");
+    expect(unpackToken(SECRET, token, NOW)).toEqual({
+      kind: "tenant",
+      id: "tenant-abc",
+    });
+  });
+
+  it("round-trips a multi-account user token", () => {
+    const token = packUserToken(SECRET, "user-123", NOW + HOUR);
+    expect(unpackToken(SECRET, token, NOW)).toEqual({
+      kind: "user",
+      id: "user-123",
+    });
   });
 
   it("rejects a token past its embedded expiry", () => {
     const token = packToken(SECRET, "tenant-abc", NOW + HOUR);
+    expect(unpackToken(SECRET, token, NOW + 2 * HOUR)).toBeNull();
+  });
+
+  it("rejects an expired user token too", () => {
+    const token = packUserToken(SECRET, "user-123", NOW + HOUR);
     expect(unpackToken(SECRET, token, NOW + 2 * HOUR)).toBeNull();
   });
 
@@ -36,9 +52,12 @@ describe("session-token codec", () => {
     expect(unpackToken("other-secret", token, NOW)).toBeNull();
   });
 
-  it("still accepts a legacy bare-id token (backward compat)", () => {
+  it("still accepts a legacy bare-id token as a tenant (backward compat)", () => {
     const token = legacyToken(SECRET, "tenant-legacy");
-    expect(unpackToken(SECRET, token, NOW)).toBe("tenant-legacy");
+    expect(unpackToken(SECRET, token, NOW)).toEqual({
+      kind: "tenant",
+      id: "tenant-legacy",
+    });
   });
 
   it("rejects a forged legacy token", () => {
