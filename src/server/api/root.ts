@@ -1,3 +1,4 @@
+import { accountsRouter } from "@/server/api/routers/accounts";
 import { calendarRouter } from "@/server/api/routers/calendar";
 import { connectionRouter } from "@/server/api/routers/connection";
 import { gmailRouter } from "@/server/api/routers/gmail";
@@ -13,6 +14,7 @@ export const appRouter = createTRPCRouter({
   calendar: calendarRouter,
   connection: connectionRouter,
   triage: triageRouter,
+  accounts: accountsRouter,
 });
 
 export type AppRouter = typeof appRouter;

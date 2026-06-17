@@ -6,7 +6,7 @@ import { env } from "@/env";
 import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
 import { corsairAccounts, corsairIntegrations } from "@/server/db/schema";
-import { signState } from "@/server/lib/oauth-state";
+import { signState, type OAuthState } from "@/server/lib/oauth-state";
 
 export { verifyState } from "@/server/lib/oauth-state";
 
@@ -52,7 +52,7 @@ export function createPkcePair(): { verifier: string; challenge: string } {
 }
 
 export function buildAuthUrl(
-  tenantId: string,
+  state: OAuthState,
   redirectUri: string,
   nowMs: number,
   codeChallenge: string,
@@ -68,7 +68,7 @@ export function buildAuthUrl(
   // code can't be redeemed without the verifier (defense-in-depth atop state).
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set("state", signState(tenantId, nowMs));
+  url.searchParams.set("state", signState(state, nowMs));
   return url.toString();
 }
 
