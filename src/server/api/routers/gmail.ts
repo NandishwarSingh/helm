@@ -14,7 +14,7 @@ import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
-import { mapLimit } from "@/server/lib/concurrency";
+import { forEachAccount, mapLimit } from "@/server/lib/concurrency";
 import {
   isNotConnectedError,
   listOrEmpty,
@@ -401,7 +401,7 @@ export const gmailRouter = createTRPCRouter({
   refreshInbox: authedProcedure.mutation(async () => {
     const clients = await getAccountClients();
     let synced = 0;
-    for (const c of clients) {
+    await forEachAccount(clients, async (c) => {
       const CAP = 120;
       let pageToken: string | undefined;
       let seen = 0;
@@ -416,7 +416,7 @@ export const gmailRouter = createTRPCRouter({
         pageToken = result.nextPageToken ?? undefined;
       } while (pageToken && seen < CAP);
       await setSyncCursor(c.tenantId, pageToken ?? null);
-    }
+    });
     return { synced };
   }),
 
@@ -425,7 +425,7 @@ export const gmailRouter = createTRPCRouter({
   syncNew: authedProcedure.mutation(async () => {
     const clients = await getAccountClients();
     let found = 0;
-    for (const c of clients) {
+    await forEachAccount(clients, async (c) => {
       const result = await c.client.gmail.api.messages.list({
         maxResults: SYNC_PAGE_SIZE,
       });
@@ -441,7 +441,7 @@ export const gmailRouter = createTRPCRouter({
       const fresh = messageIds(result).filter((id) => !hydratedIds.has(id));
       await hydrateMessages(c.client, fresh);
       found += fresh.length;
-    }
+    });
     return { found };
   }),
 
@@ -451,22 +451,23 @@ export const gmailRouter = createTRPCRouter({
     const clients = await getAccountClients();
     let synced = 0;
     let hasMore = false;
-    for (const c of clients) {
+    await forEachAccount(clients, async (c) => {
       const [state] = await db
         .select()
         .from(mailSync)
         .where(eq(mailSync.tenantId, c.tenantId));
       const token = state?.nextPageToken;
-      if (!token) continue;
+      if (!token) return;
       const result = await c.client.gmail.api.messages.list({
         maxResults: SYNC_PAGE_SIZE,
         pageToken: token,
       });
-      await hydrateMessages(c.client, messageIds(result));
+      const ids = messageIds(result);
+      await hydrateMessages(c.client, ids);
       await setSyncCursor(c.tenantId, result.nextPageToken ?? null);
-      synced += messageIds(result).length;
+      synced += ids.length;
       if (result.nextPageToken) hasMore = true;
-    }
+    });
     return { synced, hasMore };
   }),
 
@@ -615,7 +616,7 @@ export const gmailRouter = createTRPCRouter({
             : "SENT";
       const clients = await getAccountClients();
       let synced = 0;
-      for (const c of clients) {
+      await forEachAccount(clients, async (c) => {
         const result = await c.client.gmail.api.messages.list({
           maxResults: 30,
           labelIds: [label],
@@ -624,7 +625,7 @@ export const gmailRouter = createTRPCRouter({
         const ids = messageIds(result);
         await hydrateMessages(c.client, ids);
         synced += ids.length;
-      }
+      });
       return { synced };
     }),
 

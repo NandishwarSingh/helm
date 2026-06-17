@@ -15,6 +15,7 @@ import {
   users,
 } from "@/server/db/schema";
 import { stopCalendarWatch } from "@/server/lib/calendar-watch";
+import { MAX_ACCOUNTS } from "@/server/lib/concurrency";
 import { getGmailEmail } from "@/server/lib/gmail-watch";
 import { issueUserCookie, setActiveAccountCookie } from "@/server/lib/session";
 
@@ -51,18 +52,28 @@ async function emailForTenant(tenantId: string): Promise<string> {
  * the freshly-minted tenant (dedupe) and when a user removes an account, so no
  * orphaned, token-bearing tenant is ever left behind. Best-effort + idempotent.
  */
-export async function teardownTenant(tenantId: string): Promise<void> {
-  // Revoke the grant — revoking the access token revokes the whole grant.
-  try {
-    const token = await corsair.withTenant(tenantId).gmail.keys.get_access_token();
-    if (token) {
-      await fetch(
-        `https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`,
-        { method: "POST" },
-      ).catch(() => undefined);
+export async function teardownTenant(
+  tenantId: string,
+  opts: { revoke?: boolean } = {},
+): Promise<void> {
+  // Revoking an access token revokes the WHOLE Google grant. Only do it for a
+  // genuine account removal — never for an "add" dedupe, where the orphan tenant
+  // shares its grant with an account the user is keeping (revoking would break
+  // that kept account).
+  if (opts.revoke ?? true) {
+    try {
+      const token = await corsair
+        .withTenant(tenantId)
+        .gmail.keys.get_access_token();
+      if (token) {
+        await fetch(
+          `https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`,
+          { method: "POST" },
+        ).catch(() => undefined);
+      }
+    } catch {
+      /* no token / not connected — nothing to revoke */
     }
-  } catch {
-    /* no token / not connected — nothing to revoke */
   }
   // Purge Corsair's cache (entities/events reference the account rows).
   const accounts = await db
@@ -113,6 +124,13 @@ export async function linkAddedAccount(opts: {
       .select({ id: userAccounts.id })
       .from(userAccounts)
       .where(eq(userAccounts.userId, ownerId));
+    // Re-enforce the cap here too: /oauth/start checks it, but two concurrent
+    // add flows could each pass that check and then both land here. A genuinely
+    // over-cap account is a distinct mailbox/grant, so revoke it as we drop it.
+    if (existing.length >= MAX_ACCOUNTS) {
+      await teardownTenant(newTenantId);
+      return;
+    }
     await db
       .insert(userAccounts)
       .values({
@@ -138,7 +156,8 @@ export async function linkAddedAccount(opts: {
       await setActiveAccountCookie(added[0].id);
     } else {
       // The (user, email) dedupe rejected it → the fresh tenant is orphaned.
-      await teardownTenant(newTenantId);
+      // Don't revoke: the duplicate shares its grant with the kept account.
+      await teardownTenant(newTenantId, { revoke: false });
     }
     return;
   }
@@ -148,7 +167,8 @@ export async function linkAddedAccount(opts: {
   // Re-consenting the SAME mailbox (oldEmail is "" when unknown, which never
   // matches the new non-empty email): nothing to add, tear the new tenant down.
   if (oldEmail.toLowerCase() === email.toLowerCase()) {
-    await teardownTenant(newTenantId);
+    // Same grant as the account they're already on — purge but DON'T revoke.
+    await teardownTenant(newTenantId, { revoke: false });
     return;
   }
 
@@ -185,5 +205,5 @@ export async function linkAddedAccount(opts: {
     .limit(1);
   await issueUserCookie(userId);
   if (newRow[0]) await setActiveAccountCookie(newRow[0].id);
-  else await teardownTenant(newTenantId);
+  else await teardownTenant(newTenantId, { revoke: false });
 }

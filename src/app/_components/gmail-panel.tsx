@@ -819,20 +819,32 @@ export function GmailPanel({
     const tracked = action !== "read" && action !== "unread";
     const callbacks = tracked ? trackedCallbacks : undefined;
 
-    // One Gmail call per owning account — a multiselect over the unified view
-    // can span mailboxes; each group is tracked independently.
+    // One Gmail call per owning account, chunked to the server's per-call caps
+    // (bulkModify 50 / bulkDelete 25) so a select-all over a big window doesn't
+    // overflow the Zod limit. A multiselect can span mailboxes; each chunk is
+    // tracked independently.
+    const cap = action === "deleteForever" ? 25 : 50;
     for (const [acct, gids] of groupByPairs(items)) {
-      if (tracked) inFlight.current += 1;
-      if (action === "deleteForever") {
-        if (gids.length === 1) {
-          modifyMessage.mutate({ id: gids[0]!, account: acct, action }, callbacks);
+      for (let i = 0; i < gids.length; i += cap) {
+        const slice = gids.slice(i, i + cap);
+        if (tracked) inFlight.current += 1;
+        if (action === "deleteForever") {
+          if (slice.length === 1) {
+            modifyMessage.mutate(
+              { id: slice[0]!, account: acct, action },
+              callbacks,
+            );
+          } else {
+            bulkDelete.mutate({ ids: slice, account: acct }, callbacks);
+          }
+        } else if (slice.length === 1) {
+          modifyMessage.mutate(
+            { id: slice[0]!, account: acct, action },
+            callbacks,
+          );
         } else {
-          bulkDelete.mutate({ ids: gids, account: acct }, callbacks);
+          bulkModify.mutate({ ids: slice, account: acct, action }, callbacks);
         }
-      } else if (gids.length === 1) {
-        modifyMessage.mutate({ id: gids[0]!, account: acct, action }, callbacks);
-      } else {
-        bulkModify.mutate({ ids: gids, account: acct, action }, callbacks);
       }
     }
     setBulkIds(new Set());
@@ -848,17 +860,20 @@ export function GmailPanel({
     const reverse = UNDO_REVERSE[undo.action];
     applyLocal(undo.items, reverse);
     for (const [acct, gids] of groupByPairs(undo.items)) {
-      inFlight.current += 1;
-      if (gids.length === 1) {
-        modifyMessage.mutate(
-          { id: gids[0]!, account: acct, action: reverse },
-          trackedCallbacks,
-        );
-      } else {
-        bulkModify.mutate(
-          { ids: gids, account: acct, action: reverse },
-          trackedCallbacks,
-        );
+      for (let i = 0; i < gids.length; i += 50) {
+        const slice = gids.slice(i, i + 50);
+        inFlight.current += 1;
+        if (slice.length === 1) {
+          modifyMessage.mutate(
+            { id: slice[0]!, account: acct, action: reverse },
+            trackedCallbacks,
+          );
+        } else {
+          bulkModify.mutate(
+            { ids: slice, account: acct, action: reverse },
+            trackedCallbacks,
+          );
+        }
       }
     }
     if (undoTimer.current) window.clearTimeout(undoTimer.current);

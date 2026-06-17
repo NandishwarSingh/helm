@@ -4,7 +4,7 @@ import { z } from "zod";
 import { dayStartMs } from "@/lib/calendar";
 import { corsair } from "@/server/corsair";
 import { purgeCachedEntity } from "@/server/lib/cache";
-import { mapLimit } from "@/server/lib/concurrency";
+import { forEachAccount, mapLimit } from "@/server/lib/concurrency";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
 import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
@@ -207,7 +207,7 @@ export const calendarRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       const clients = await getAccountClients();
       let synced = 0;
-      for (const c of clients) {
+      await forEachAccount(clients, async (c) => {
         const result = await c.client.googlecalendar.api.events.getMany({
           calendarId: "primary",
           timeMin: input.weekStart,
@@ -217,7 +217,7 @@ export const calendarRouter = createTRPCRouter({
           orderBy: "startTime",
         });
         synced += result.items?.length ?? 0;
-      }
+      });
       return { synced };
     }),
 

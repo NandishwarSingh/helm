@@ -200,6 +200,13 @@ export function AppShell() {
     const timeout = window.setTimeout(() => setChordPending(false), 1600);
     function onChordKey(event: KeyboardEvent) {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // If focus moved into an input or an overlay opened after G was pressed,
+      // let this keystroke through and quietly drop the chord — never hijack
+      // what the user is now typing.
+      if (isTypingTarget(event.target) || hasOverlay()) {
+        setChordPending(false);
+        return;
+      }
       // Holding G produces key repeats; swallow them without cancelling.
       if (event.repeat && event.key.toLowerCase() === "g") {
         event.preventDefault();

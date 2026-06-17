@@ -29,3 +29,26 @@ export async function mapLimit<T, R>(
 
 /** Max Google accounts one user may connect — bounds every fan-out's width. */
 export const MAX_ACCOUNTS = 6;
+
+/**
+ * Run `fn` for each account sequentially, ISOLATING failures: one account whose
+ * grant is revoked/expired or transiently errors is logged and skipped instead
+ * of aborting the whole sync. Use for the live-API sync loops (refresh/syncNew/
+ * syncMore/syncFolder/refreshEvents) so a single dead mailbox can't freeze the
+ * others.
+ */
+export async function forEachAccount<T>(
+  items: readonly T[],
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  for (const item of items) {
+    try {
+      await fn(item);
+    } catch (error) {
+      console.error(
+        "[fan-out] account op failed (skipped):",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}

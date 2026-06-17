@@ -109,6 +109,15 @@ export async function POST(request: NextRequest) {
   // the client live-pulls the calendar on the SSE event.
   const calendarChannelId = headers["x-goog-channel-id"];
   if (calendarChannelId) {
+    // We set X-Goog-Channel-Token = WEBHOOK_SECRET at watch time; verify it so a
+    // forged channel id alone can't nudge a tenant (the ?secret= already gated
+    // us, but this binds the push to a channel we actually armed).
+    if (
+      env.WEBHOOK_SECRET &&
+      !secretMatches(headers["x-goog-channel-token"] ?? "", env.WEBHOOK_SECRET)
+    ) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
     const state = headers["x-goog-resource-state"];
     const tenant =
       (await calendarTenantForChannel(calendarChannelId)) ?? env.TENANT_ID;
