@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { env } from "@/env";
 import {
   exchangeCode,
   storeGoogleTokens,
@@ -43,7 +44,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/?error=bad_state", request.url));
   }
 
-  const redirectUri = new URL("/api/oauth/callback", request.url).toString();
+  // Must be byte-identical to the redirect_uri sent in /oauth/start — build it
+  // from the canonical site URL, not the proxied request.url.
+  const redirectUri = new URL(
+    "/api/oauth/callback",
+    env.NEXT_PUBLIC_SITE_URL,
+  ).toString();
   try {
     const tokens = await exchangeCode(code, redirectUri);
     await storeGoogleTokens(tenantId, tokens);
