@@ -9,8 +9,4 @@ node_modules
 .DS_Store
 .vscode
 .idea
-.claude
-.cursor
-AGENT_PROMPT.md
-CLAUDE.md
 coverage

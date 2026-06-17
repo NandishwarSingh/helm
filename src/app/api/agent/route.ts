@@ -131,14 +131,20 @@ export async function POST(request: NextRequest) {
     system: systemPrompt(),
     messages: await convertToModelMessages(recent),
     tools: mcp.tools,
+    // If the client disconnects mid-stream, stop generating and let onAbort tear
+    // the MCP bridge down — otherwise the server/client/transport leak.
+    abortSignal: request.signal,
     stopWhen: stepCountIs(16),
     // Near the budget, withdraw the tools so the model must write its final
     // answer instead of dying mid-loop.
     prepareStep: ({ stepNumber }) =>
       stepNumber >= 12 ? { activeTools: [] } : undefined,
-    // Tear the MCP bridge down once the run is over (success or error). close()
-    // is idempotent, so firing from both callbacks is safe.
+    // Tear the MCP bridge down once the run is over (success, error, or abort).
+    // close() is idempotent, so firing from several callbacks is safe.
     onFinish: () => {
+      void mcp.close();
+    },
+    onAbort: () => {
       void mcp.close();
     },
     onError: ({ error }) => {
