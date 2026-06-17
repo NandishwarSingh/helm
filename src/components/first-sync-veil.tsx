@@ -50,16 +50,30 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
   const elRef = useRef<HTMLElement | null>(null);
   const [phase, setPhase] = useState<Phase>("syncing");
   const entered = useRef(false);
+  const originalTitle = useRef("");
 
   const utils = api.useUtils();
 
   const enter = () => {
     if (entered.current) return;
     entered.current = true;
+    // The veil engine renames the tab to "Veil"; put the app title back the
+    // instant the user tears through (not only on the next refresh).
+    if (originalTitle.current) document.title = originalTitle.current;
     onEnter();
   };
 
   const arm = () => setPhase((p) => (p === "syncing" ? "armed" : p));
+
+  // Remember the real document title BEFORE the veil WASM overwrites it with
+  // "Veil", and restore it whenever the overlay goes away (tear-through or
+  // unmount) so the tab never stays stuck on "Veil".
+  useEffect(() => {
+    originalTitle.current = document.title;
+    return () => {
+      if (originalTitle.current) document.title = originalTitle.current;
+    };
+  }, []);
 
   // Drive the one first sync through the vanilla client (not useMutation):
   // its promise resolves independently of this component's lifecycle, so a
