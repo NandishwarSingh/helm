@@ -42,6 +42,7 @@ jobs:
             ${{ env.IMAGE }}:${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_SITE_URL=https://helm.houndcode.com
+            NEXT_PUBLIC_TURNSTILE_SITE_KEY=0x4AAAAAADk8OMSszoUtyCEU
           cache-from: type=gha
           cache-to: type=gha,mode=max
       # One-shot migrator image (full deps + source) to apply DB migrations on

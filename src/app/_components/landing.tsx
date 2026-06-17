@@ -4,12 +4,27 @@ import { useEffect, useRef, useState } from "react";
 import {
   motion,
   useInView,
+  useScroll,
   useSpring,
   useTransform,
 } from "motion/react";
+import Lenis from "lenis";
 
+import { ConnectGoogle } from "@/app/_components/connect-google";
+import { LpDots } from "@/app/_components/lp-dots";
 import { BrandMark } from "@/components/brand-mark";
-import { ArchiveIcon, ReplyIcon, StarIcon } from "@/components/icons";
+import { HelmGlyph } from "@/components/helm-glyph";
+import {
+  AgentIcon,
+  ArchiveIcon,
+  CalendarIcon,
+  ComposeIcon,
+  ContrastIcon,
+  MailIcon,
+  ReplyIcon,
+  SendIcon,
+  StarIcon,
+} from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { siteConfig } from "@/config/site";
 
@@ -19,16 +34,339 @@ const ERRORS: Record<string, string> = {
   bad_state: "Your sign-in link expired. Please try again.",
   oauth_callback: "Couldn't finish connecting. Please try again.",
   rate_limited: "Too many attempts. Please wait a moment and try again.",
+  verify: "Couldn't verify you're human. Please try again.",
 };
 
-const rise = {
-  initial: { opacity: 0, y: 12 },
-  whileInView: { opacity: 1, y: 0 },
-  viewport: { once: true, margin: "-70px" },
-  transition: { duration: 0.45, ease: [0.2, 0, 0, 1] as const },
-};
+/* ---------------------------------------------------------------- */
 
-/* ---- animated stat counter (FieldMind-style, brand spring) ------------- */
+function useLenis() {
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const lenis = new Lenis({
+      duration: 0.7,
+      easing: (t) => 1 - Math.pow(1 - t, 3),
+    });
+    let raf = 0;
+    const loop = (time: number) => {
+      lenis.raf(time);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(raf);
+      lenis.destroy();
+    };
+  }, []);
+}
+
+function LandingThemeToggle() {
+  const [dark, setDark] = useState(true);
+  useEffect(() => {
+    setDark(document.documentElement.getAttribute("data-theme") !== "light");
+  }, []);
+  return (
+    <button
+      type="button"
+      className="lp-iconbtn"
+      aria-label="Toggle colour theme"
+      onClick={() => {
+        const next = dark ? "light" : "dark";
+        setDark(!dark);
+        document.documentElement.setAttribute("data-theme", next);
+        try {
+          localStorage.setItem("helm-theme", next);
+        } catch {
+          // ignore (private mode)
+        }
+      }}
+    >
+      <ContrastIcon size={16} />
+    </button>
+  );
+}
+
+/* ---- product mocks ---- */
+
+const INBOX = [
+  { from: "Priya Nair", subject: "Q3 roadmap review", time: "9:24", unread: true, star: false },
+  { from: "GitHub", subject: "PR #214 approved and merged", time: "9:02", unread: true, star: false },
+  { from: "Dev Jain", subject: "Re: Corsair webhook setup", time: "8:41", unread: false, star: true },
+  { from: "Linear", subject: "Cycle 12 starts Monday", time: "8:30", unread: false, star: false },
+  { from: "Ana Souza", subject: "Design tokens handoff", time: "Tue", unread: false, star: false },
+];
+
+const COMMANDS = [
+  { icon: <CalendarIcon size={15} />, label: "Go to Calendar", keys: ["G", "C"], key: "cal" },
+  { icon: <ComposeIcon size={15} />, label: "Compose new message", keys: ["C"], key: "compose" },
+  { icon: <AgentIcon size={15} />, label: "Ask the agent", keys: ["G", "A"], key: "agent" },
+  { icon: <ArchiveIcon size={15} />, label: "Archive selected", keys: ["E"], key: "archive" },
+];
+
+function MailRow({
+  m,
+  active,
+}: {
+  m: (typeof INBOX)[number];
+  active: boolean;
+}) {
+  return (
+    <div className="lp-row" data-unread={m.unread} data-active={active}>
+      <span className="lp-row-dot" />
+      <span className="lp-row-main">
+        <span className="lp-row-top">
+          <span className="lp-row-from">{m.from}</span>
+          <span className="lp-row-time tnum">{m.time}</span>
+        </span>
+        <span className="lp-row-sub">
+          {m.star && <StarIcon size={12} filled />}
+          {m.subject}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** The hero centrepiece: an alive Helm window — the inbox with a moving J/K
+ *  selection, and a ⌘K palette that types "cal" and surfaces Calendar. */
+function HeroWindow() {
+  const [sel, setSel] = useState(0);
+  const [typed, setTyped] = useState("");
+
+  useEffect(() => {
+    const selId = setInterval(() => setSel((s) => (s + 1) % INBOX.length), 1500);
+    const word = "cal";
+    let i = 0;
+    let dir = 1;
+    let t: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      setTyped(word.slice(0, i));
+      if (dir > 0) {
+        if (i < word.length) {
+          i += 1;
+          t = setTimeout(tick, 220);
+        } else {
+          dir = -1;
+          t = setTimeout(tick, 2200);
+        }
+      } else if (i > 0) {
+        i -= 1;
+        t = setTimeout(tick, 110);
+      } else {
+        dir = 1;
+        t = setTimeout(tick, 900);
+      }
+    };
+    t = setTimeout(tick, 1100);
+    return () => {
+      clearInterval(selId);
+      clearTimeout(t);
+    };
+  }, []);
+
+  const typing = typed.length > 0;
+
+  return (
+    <div className="lp-win" aria-hidden="true">
+      <div className="lp-win-bar">
+        <span className="lp-win-brand">
+          <BrandMark size={15} />
+          {siteConfig.name}
+        </span>
+        <span className="lp-win-search">
+          <span className="lp-win-search-ph">Search inbox</span>
+          <Kbd>/</Kbd>
+        </span>
+        <span className="lp-win-cmd">
+          Commands <Kbd>⌘</Kbd>
+          <Kbd>K</Kbd>
+        </span>
+      </div>
+      <div className="lp-win-body">
+        <div className="lp-win-rail">
+          <span className="lp-win-navitem" data-on="true">
+            <MailIcon size={15} /> Mail
+          </span>
+          <span className="lp-win-navitem">
+            <CalendarIcon size={15} /> Calendar
+          </span>
+          <span className="lp-win-navitem">
+            <AgentIcon size={15} /> Agent
+          </span>
+          <span className="lp-win-raildiv" />
+          <span className="lp-win-folder" data-on="true">
+            Inbox<span className="tnum">5</span>
+          </span>
+          <span className="lp-win-folder">Priority</span>
+          <span className="lp-win-folder">Starred</span>
+          <span className="lp-win-folder">Sent</span>
+        </div>
+        <div className="lp-win-list">
+          {INBOX.map((m, i) => (
+            <MailRow key={m.subject} m={m} active={i === sel} />
+          ))}
+        </div>
+      </div>
+      <div className="lp-pal">
+        <div className="lp-pal-input">
+          {typed}
+          <span className="lp-caret" />
+          {!typing && <span className="lp-pal-ph">Type a command…</span>}
+        </div>
+        <div className="lp-pal-list">
+          {COMMANDS.map((c, i) => (
+            <span
+              className="lp-pal-item"
+              data-on={typing ? c.key === "cal" : i === 0}
+              key={c.label}
+            >
+              <span className="lp-pal-ic">{c.icon}</span>
+              {c.label}
+              <span className="lp-pal-keys">
+                {c.keys.map((k, j) => (
+                  <Kbd key={j}>{k}</Kbd>
+                ))}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- bento mini-UIs ---- */
+
+function MiniInbox() {
+  return (
+    <div className="lp-mini lp-mini-inbox">
+      {INBOX.slice(0, 4).map((m, i) => (
+        <MailRow key={m.subject} m={m} active={i === 1} />
+      ))}
+    </div>
+  );
+}
+
+function MiniPalette() {
+  return (
+    <div className="lp-mini lp-pal lp-pal-flat">
+      <div className="lp-pal-input">
+        send<span className="lp-caret" />
+      </div>
+      <div className="lp-pal-list">
+        <span className="lp-pal-item" data-on="true">
+          <span className="lp-pal-ic">
+            <SendIcon size={15} />
+          </span>
+          Send and archive
+          <span className="lp-pal-keys">
+            <Kbd>⌘</Kbd>
+            <Kbd>↵</Kbd>
+          </span>
+        </span>
+        <span className="lp-pal-item">
+          <span className="lp-pal-ic">
+            <ReplyIcon size={15} />
+          </span>
+          Reply with availability
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const CAL = [
+  { d: "Mon", e: [{ t: 24, h: 16, l: "Standup" }] },
+  { d: "Tue", e: [{ t: 42, h: 24, l: "Q3 review" }] },
+  { d: "Wed", e: [] },
+  { d: "Thu", e: [{ t: 18, h: 18, l: "1:1 Dev" }, { t: 60, h: 18, l: "Design" }] },
+  { d: "Fri", e: [{ t: 34, h: 20, l: "Ship" }] },
+];
+
+function MiniCalendar() {
+  return (
+    <div className="lp-mini lp-cal">
+      <div className="lp-cal-head">
+        {CAL.map((c) => (
+          <span key={c.d} className="lp-cal-dayname">
+            {c.d}
+          </span>
+        ))}
+      </div>
+      <div className="lp-cal-grid">
+        {CAL.map((c, i) => (
+          <span className="lp-cal-col" key={c.d} data-today={i === 3}>
+            {c.e.map((ev) => (
+              <span
+                key={ev.l}
+                className="lp-cal-event"
+                style={{ top: `${ev.t}%`, height: `${ev.h}%` }}
+              >
+                {ev.l}
+              </span>
+            ))}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MiniAgent() {
+  return (
+    <div className="lp-mini lp-agent">
+      <div className="lp-agent-msg" data-role="user">
+        Reply to Priya that Thursday 2pm works, and add it to my calendar.
+      </div>
+      <div className="lp-agent-tool" data-done="true">
+        Drafted reply
+      </div>
+      <div className="lp-agent-tool" data-done="true">
+        Created event · Thu 2:00 PM
+      </div>
+      <div className="lp-agent-msg" data-role="assistant">
+        Done. I replied to <strong>Priya Nair</strong> and put a 30-minute hold
+        on your calendar.
+      </div>
+    </div>
+  );
+}
+
+function BentoCard({
+  label,
+  title,
+  body,
+  keys,
+  wide,
+  children,
+}: {
+  label: string;
+  title: string;
+  body: string;
+  keys?: string[];
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <article className="lp-bento-card lp-rise" data-wide={wide}>
+      <div className="lp-bento-visual">{children}</div>
+      <div className="lp-bento-copy">
+        <p className="lp-label tnum">{label}</p>
+        <h3 className="lp-bento-title">{title}</h3>
+        <p className="lp-bento-body">{body}</p>
+        {keys && (
+          <p className="lp-bento-keys">
+            {keys.map((k, i) => (
+              <Kbd key={i}>{k}</Kbd>
+            ))}
+          </p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+/* ---- bits ---- */
+
 function AnimatedNumber({
   value,
   prefix = "",
@@ -40,15 +378,11 @@ function AnimatedNumber({
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true, margin: "-40px" });
-  const spring = useSpring(0, { mass: 1, stiffness: 90, damping: 26 });
-  const display = useTransform(spring, (current) =>
-    Math.round(current).toLocaleString("en-US"),
-  );
-
+  const spring = useSpring(0, { mass: 1, stiffness: 80, damping: 24 });
+  const display = useTransform(spring, (c) => Math.round(c).toLocaleString("en-US"));
   useEffect(() => {
     if (inView) spring.set(value);
   }, [inView, value, spring]);
-
   return (
     <span ref={ref}>
       {prefix}
@@ -58,276 +392,206 @@ function AnimatedNumber({
   );
 }
 
-/* ---- hero product mock -------------------------------------------------- */
-const MOCK_ROWS = [
-  { from: "Priya Nair", subject: "Q3 roadmap review", w: 72 },
-  { from: "Github", subject: "PR #214 approved and merged", w: 58 },
-  { from: "Dev Jain", subject: "Re: Corsair webhook setup", w: 81 },
-  { from: "Linear", subject: "Cycle 12 starts Monday", w: 64 },
-  { from: "Ana Souza", subject: "Design tokens handoff", w: 69 },
-];
+const U1 = "M3 8 C 36 4, 104 4, 137 8";
+const U2 = "M3 7 C 36 11, 104 3, 137 9";
+const U3 = "M3 9 C 36 4, 104 11, 137 5";
 
-function HeroMock() {
+/** A hand-drawn underline that morphs between waves under the accent word. */
+function MorphUnderline() {
   return (
-    <div className="lp-mock" aria-hidden="true">
-      <div className="lp-mock-rail">
-        <span className="lp-mock-brand">
-          <BrandMark size={15} />
-        </span>
-        <span className="lp-mock-railitem" data-on="true" />
-        <span className="lp-mock-railitem" />
-        <span className="lp-mock-divider" />
-        <span className="lp-mock-railitem sub" />
-        <span className="lp-mock-railitem sub" />
-        <span className="lp-mock-railitem sub" />
-      </div>
-      <div className="lp-mock-list">
-        <div className="lp-mock-search" />
-        <div className="lp-mock-rows">
-          <span className="lp-mock-cursor" />
-          {MOCK_ROWS.map((row) => (
-            <div className="lp-mock-row" key={row.subject}>
-              <span className="lp-mock-from">{row.from}</span>
-              <span className="lp-mock-subject">{row.subject}</span>
-              <span className="lp-mock-snippet" style={{ width: `${row.w}%` }} />
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="lp-mock-read">
-        <div className="lp-mock-actions">
-          <ArchiveIcon size={13} />
-          <StarIcon size={13} />
-          <ReplyIcon size={13} />
-        </div>
-        <div className="lp-mock-subjectline" />
-        <div className="lp-mock-meta" />
-        <div className="lp-mock-body">
-          <span style={{ width: "94%" }} />
-          <span style={{ width: "88%" }} />
-          <span style={{ width: "97%" }} />
-          <span style={{ width: "72%" }} />
-          <span style={{ width: "84%" }} />
-          <span style={{ width: "46%" }} />
-        </div>
-      </div>
-    </div>
+    <svg className="lp-underline-svg" viewBox="0 0 140 13" fill="none" aria-hidden="true">
+      <motion.path
+        stroke="var(--color-accent)"
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        initial={{ d: U1, pathLength: 0 }}
+        animate={{ d: [U1, U2, U3, U1], pathLength: 1 }}
+        transition={{
+          d: { duration: 7, repeat: Infinity, ease: "easeInOut" },
+          pathLength: { duration: 0.9, delay: 0.7, ease: "easeOut" },
+        }}
+      />
+    </svg>
   );
 }
 
-/* ---- section header rhythm ---------------------------------------------- */
-function SectionHead({
-  label,
-  title,
-  desc,
-}: {
-  label: string;
-  title: string;
-  desc?: string;
-}) {
+function SectionHead({ label, title }: { label: string; title: React.ReactNode }) {
   return (
-    <motion.div className="lp-head" {...rise}>
+    <div className="lp-head lp-rise">
       <p className="lp-label tnum">{label}</p>
       <h2 className="lp-title">{title}</h2>
-      {desc && <p className="lp-desc">{desc}</p>}
-    </motion.div>
+    </div>
   );
 }
 
 export function Landing() {
   const [error, setError] = useState<string | null>(null);
-
+  const heroRef = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({
+    target: heroRef,
+    offset: ["start start", "end start"],
+  });
+  const winY = useTransform(scrollYProgress, [0, 1], [0, -90]);
+  const navRef = useRef<HTMLElement>(null);
+  useLenis();
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("error");
     if (code) setError(ERRORS[code] ?? "Something went wrong. Please try again.");
   }, []);
+  // Full-width at the top, morphs to the floating pill once scrolled.
+  useEffect(() => {
+    const onScroll = () => {
+      navRef.current?.setAttribute(
+        "data-scrolled",
+        window.scrollY > 16 ? "true" : "false",
+      );
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
     <div className="lp">
-      <nav className="lp-nav">
+      <LpDots />
+
+      <nav className="lp-nav" ref={navRef} data-scrolled="false">
         <span className="lp-brand">
           <BrandMark size={18} />
           {siteConfig.name}
         </span>
         <div className="lp-nav-links">
-          <a href="#how-it-works">How it works</a>
+          <a href="#features">Features</a>
           <a href="#compare">Compare</a>
           <a href="#faq">FAQ</a>
         </div>
         <span className="topbar-spacer" />
-        <a className="btn btn-primary" href="/api/oauth/start">
+        <LandingThemeToggle />
+        <a className="btn btn-primary lp-nav-cta" href="#start">
           Connect Google
         </a>
       </nav>
 
       <main>
-        {/* ---- hero ---- */}
-        <section className="lp-hero">
-          <motion.p
-            className="lp-eyebrow tnum"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }}
-          >
-            KEYBOARD-FIRST COMMAND CENTER FOR GMAIL + CALENDAR
-          </motion.p>
-          <motion.h1
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.05, ease: [0.2, 0, 0, 1] }}
-          >
-            Your inbox, at the speed
+        {/* hero */}
+        <section className="lp-hero" id="start" ref={heroRef}>
+          <span className="lp-rise" style={{ animationDelay: "0s" }}>
+            <HelmGlyph size={66} />
+          </span>
+          <p className="lp-eyebrow tnum lp-rise" style={{ animationDelay: "0.06s" }}>
+            KEYBOARD-FIRST · GMAIL + CALENDAR
+          </p>
+          <h1 className="lp-rise" style={{ animationDelay: "0.12s" }}>
+            Your inbox at the
             <br />
-            of your <em>keyboard</em>.
-          </motion.h1>
-          <motion.p
-            className="lp-sub"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.12, ease: [0.2, 0, 0, 1] }}
-          >
-            {siteConfig.name} puts Gmail and Google Calendar in one fast
-            window where every action — triage, reply, search, schedule — is
-            a single keystroke. Stop clicking through your day.
-          </motion.p>
-          <motion.div
-            className="lp-cta-row"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, delay: 0.18, ease: [0.2, 0, 0, 1] }}
-          >
-            <a className="btn btn-primary lp-cta" href="/api/oauth/start">
-              Connect Google
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M3 8h10m0 0L9 4m4 4L9 12"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </a>
-            <a className="btn lp-cta" href="#how-it-works">
-              See how it works
-            </a>
-          </motion.div>
+            speed of{" "}
+            <span className="lp-serif lp-underline">
+              thought
+              <MorphUnderline />
+            </span>
+            .
+          </h1>
+          <p className="lp-sub lp-rise" style={{ animationDelay: "0.18s" }}>
+            {siteConfig.name} puts Gmail and Google Calendar in one fast window
+            where every action — triage, reply, search, schedule — is a single
+            keystroke. Stop clicking through your day.
+          </p>
+          <div className="lp-cta-row lp-rise" style={{ animationDelay: "0.24s" }}>
+            <ConnectGoogle
+              withArrow
+              secondary={{ href: "#features", label: "See it fly" }}
+            />
+          </div>
           {error && <p className="error lp-error">{error}</p>}
-          <motion.p
-            className="lp-fine"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-          >
-            Free during beta. Connects securely through Corsair — your Google
-            password is never shared with {siteConfig.name}.
-          </motion.p>
+          <p className="lp-fine lp-rise" style={{ animationDelay: "0.32s" }}>
+            Free during beta · Connects securely through Corsair · Your password
+            is never shared
+          </p>
 
-          <motion.div
-            className="lp-stats"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.24, ease: [0.2, 0, 0, 1] }}
-          >
-            <div className="lp-stat">
-              <span className="lp-stat-num tnum">
-                <AnimatedNumber value={0} />
-              </span>
-              <span className="lp-stat-label">clicks to clear an inbox</span>
-            </div>
-            <div className="lp-stat">
-              <span className="lp-stat-num tnum">
-                <AnimatedNumber value={30} suffix="+" />
-              </span>
-              <span className="lp-stat-label">keyboard shortcuts</span>
-            </div>
-            <div className="lp-stat">
-              <span className="lp-stat-num tnum">
-                <AnimatedNumber value={2} />
-              </span>
-              <span className="lp-stat-label">Google apps, one window</span>
-            </div>
-            <div className="lp-stat">
-              <span className="lp-stat-num tnum">
-                <AnimatedNumber value={1} prefix="under " suffix="s" />
-              </span>
-              <span className="lp-stat-label">cached lists and search</span>
-            </div>
-          </motion.div>
-
-          <motion.div
-            className="lp-mock-wrap"
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.3, ease: [0.2, 0, 0, 1] }}
-          >
-            <HeroMock />
-          </motion.div>
-        </section>
-
-        {/* ---- proof strip ---- */}
-        <motion.section className="lp-strip" {...rise}>
-          <span>
-            <Kbd>J</Kbd> <Kbd>K</Kbd> fly through mail
-          </span>
-          <span>
-            <Kbd>R</Kbd> reply
-          </span>
-          <span>
-            <Kbd>E</Kbd> archive
-          </span>
-          <span>
-            <Kbd>G</Kbd> jump anywhere
-          </span>
-          <span>
-            <Kbd>⌘</Kbd> <Kbd>K</Kbd> everything else
-          </span>
-          <span>
-            <Kbd>⌘</Kbd> <Kbd>↵</Kbd> send
-          </span>
-        </motion.section>
-
-        {/* ---- how it works ---- */}
-        <section className="lp-section" id="how-it-works">
-          <SectionHead
-            label="HOW IT WORKS"
-            title="Connected in one consent, fast forever after"
-          />
-          <div className="lp-steps">
-            <motion.div className="lp-step" {...rise}>
-              <span className="lp-step-num tnum">01</span>
-              <h3>Connect Google</h3>
-              <p>
-                One OAuth consent covers Gmail and Calendar together. Revoke it
-                from your Google account at any time.
-              </p>
-            </motion.div>
-            <motion.div className="lp-step" {...rise} transition={{ ...rise.transition, delay: 0.07 }}>
-              <span className="lp-step-num tnum">02</span>
-              <h3>Corsair syncs and encrypts</h3>
-              <p>
-                Your mailbox mirrors into an envelope-encrypted Postgres cache,
-                isolated per user, kept fresh as you work.
-              </p>
-            </motion.div>
-            <motion.div className="lp-step" {...rise} transition={{ ...rise.transition, delay: 0.14 }}>
-              <span className="lp-step-num tnum">03</span>
-              <h3>Fly</h3>
-              <p>
-                Lists and search answer from the cache in under a second; sends
-                and invites hit Google live. J, K, done.
-              </p>
+          <div className="lp-stage lp-rise" style={{ animationDelay: "0.28s" }}>
+            <motion.div style={{ y: winY }}>
+              <HeroWindow />
             </motion.div>
           </div>
         </section>
 
-        {/* ---- comparison ---- */}
-        <section className="lp-section" id="compare">
+        {/* proof strip */}
+        <section className="lp-strip lp-rise">
+          <span><Kbd>J</Kbd> <Kbd>K</Kbd> fly through mail</span>
+          <span><Kbd>R</Kbd> reply</span>
+          <span><Kbd>E</Kbd> archive</span>
+          <span><Kbd>G</Kbd> jump anywhere</span>
+          <span><Kbd>⌘</Kbd> <Kbd>K</Kbd> everything else</span>
+          <span><Kbd>⌘</Kbd> <Kbd>↵</Kbd> send</span>
+        </section>
+
+        {/* bento showcase */}
+        <section className="lp-features" id="features">
           <SectionHead
-            label="COMPARE"
-            title="The speed of Superhuman, the price of neither"
+            label="THE WORKSPACE"
+            title={<>Everything, one keystroke away</>}
           />
-          <motion.div className="lp-compare-wrap" {...rise}>
+          <div className="lp-bento">
+            <BentoCard
+              wide
+              label="TRIAGE"
+              title="Fly through your inbox"
+              body="J and K move, E archives, R replies, # trashes. Clear a morning's mail without lifting your hands from the keys."
+              keys={["J", "K", "E"]}
+            >
+              <MiniInbox />
+            </BentoCard>
+            <BentoCard
+              label="COMMAND · ⌘K"
+              title="One palette for everything"
+              body="Start typing and Helm surfaces the command — compose, search, schedule, run the agent."
+              keys={["⌘", "K"]}
+            >
+              <MiniPalette />
+            </BentoCard>
+            <BentoCard
+              label="CALENDAR"
+              title="Your week, a key away"
+              body="Mail and calendar in one window. Turn an email into an event in a single keystroke."
+              keys={["G", "C"]}
+            >
+              <MiniCalendar />
+            </BentoCard>
+            <BentoCard
+              wide
+              label="AGENT"
+              title="An assistant that actually acts"
+              body="Ask in plain language. It drafts the reply, books the meeting, and clears the thread — every destructive step gated behind your confirmation."
+            >
+              <MiniAgent />
+            </BentoCard>
+          </div>
+        </section>
+
+        {/* stats */}
+        <section className="lp-stats lp-rise">
+          <div className="lp-stat">
+            <span className="lp-stat-num tnum"><AnimatedNumber value={0} /></span>
+            <span className="lp-stat-label">clicks to clear an inbox</span>
+          </div>
+          <div className="lp-stat">
+            <span className="lp-stat-num tnum"><AnimatedNumber value={30} suffix="+" /></span>
+            <span className="lp-stat-label">keyboard shortcuts</span>
+          </div>
+          <div className="lp-stat">
+            <span className="lp-stat-num tnum"><AnimatedNumber value={2} /></span>
+            <span className="lp-stat-label">Google apps, one window</span>
+          </div>
+          <div className="lp-stat">
+            <span className="lp-stat-num tnum"><AnimatedNumber value={1} prefix="under " suffix="s" /></span>
+            <span className="lp-stat-label">cached lists and search</span>
+          </div>
+        </section>
+
+        {/* comparison */}
+        <section className="lp-section" id="compare">
+          <SectionHead label="COMPARE" title="The speed of Superhuman, the price of neither" />
+          <div className="lp-compare-wrap lp-rise">
             <table className="lp-compare">
               <thead>
                 <tr>
@@ -338,122 +602,67 @@ export function Landing() {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td>Keyboard-first triage</td>
-                  <td data-accent="true">Yes</td>
-                  <td>Partial</td>
-                  <td>Yes</td>
-                </tr>
-                <tr>
-                  <td>Mail and calendar in one window</td>
-                  <td data-accent="true">Yes</td>
-                  <td className="lp-no">—</td>
-                  <td>Partial</td>
-                </tr>
-                <tr>
-                  <td>Email to calendar event in one key</td>
-                  <td data-accent="true">Yes</td>
-                  <td className="lp-no">—</td>
-                  <td>Yes</td>
-                </tr>
-                <tr>
-                  <td>Sub-second cached search</td>
-                  <td data-accent="true">Yes</td>
-                  <td className="lp-no">—</td>
-                  <td>Yes</td>
-                </tr>
-                <tr>
-                  <td>Open source, inspectable</td>
-                  <td data-accent="true">Yes</td>
-                  <td className="lp-no">—</td>
-                  <td className="lp-no">—</td>
-                </tr>
-                <tr>
-                  <td>Price</td>
-                  <td data-accent="true">Free beta</td>
-                  <td>Free</td>
-                  <td>$25+/mo</td>
-                </tr>
+                <tr><td>Keyboard-first triage</td><td data-accent="true">Yes</td><td>Partial</td><td>Yes</td></tr>
+                <tr><td>Mail and calendar in one window</td><td data-accent="true">Yes</td><td className="lp-no">—</td><td>Partial</td></tr>
+                <tr><td>Email to calendar event in one key</td><td data-accent="true">Yes</td><td className="lp-no">—</td><td>Yes</td></tr>
+                <tr><td>Sub-second cached search</td><td data-accent="true">Yes</td><td className="lp-no">—</td><td>Yes</td></tr>
+                <tr><td>An agent that acts for you</td><td data-accent="true">Yes</td><td className="lp-no">—</td><td>Partial</td></tr>
+                <tr><td>Price</td><td data-accent="true">Free beta</td><td>Free</td><td>$25+/mo</td></tr>
               </tbody>
             </table>
-          </motion.div>
-        </section>
-
-        {/* ---- trust ---- */}
-        <section className="lp-section" id="trust">
-          <SectionHead label="YOUR DATA" title="Your account stays yours" />
-          <div className="lp-trust">
-            <motion.div className="lp-trust-row" {...rise}>
-              <span className="lp-trust-label tnum">YOUR ACCOUNT</span>
-              <p>
-                Connects through Google OAuth. {siteConfig.name} never sees your
-                password, and you can revoke access from your Google account at
-                any time.
-              </p>
-            </motion.div>
-            <motion.div className="lp-trust-row" {...rise}>
-              <span className="lp-trust-label tnum">YOUR DATA</span>
-              <p>
-                Messages are mirrored into an encrypted store so search and
-                browsing feel instant. Never sold, never used for training.
-              </p>
-            </motion.div>
-            <motion.div className="lp-trust-row" {...rise}>
-              <span className="lp-trust-label tnum">YOUR KEYS</span>
-              <p>
-                Every token is envelope-encrypted with a key that stays on the
-                server — handled by Corsair and Postgres, isolated per user.
-              </p>
-            </motion.div>
           </div>
         </section>
 
-        {/* ---- FAQ ---- */}
+        {/* trust */}
+        <section className="lp-section" id="trust">
+          <SectionHead label="YOUR DATA" title="Your account stays yours" />
+          <div className="lp-trust">
+            <div className="lp-trust-row lp-rise">
+              <span className="lp-trust-label tnum">YOUR ACCOUNT</span>
+              <p>Connects through Google OAuth. {siteConfig.name} never sees your password, and you can revoke access from your Google account at any time.</p>
+            </div>
+            <div className="lp-trust-row lp-rise">
+              <span className="lp-trust-label tnum">YOUR DATA</span>
+              <p>Messages are mirrored into an encrypted store so search and browsing feel instant. Never sold, never used for training.</p>
+            </div>
+            <div className="lp-trust-row lp-rise">
+              <span className="lp-trust-label tnum">YOUR KEYS</span>
+              <p>Every token is envelope-encrypted with a key that stays on the server — handled by Corsair and Postgres, isolated per user.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* faq */}
         <section className="lp-section" id="faq">
           <SectionHead label="FAQ" title="Questions, answered" />
-          <motion.div className="lp-faq" {...rise}>
+          <div className="lp-faq lp-rise">
             <details>
               <summary>Is my email stored?</summary>
-              <p>
-                Headers and snippets are cached in an encrypted database so
-                lists and search are instant. Full messages are fetched live
-                from Gmail when you open them. Disconnecting your account
-                removes the cache.
-              </p>
+              <p>Headers and snippets are cached in an encrypted database so lists and search are instant. Full messages are fetched live from Gmail when you open them. Disconnecting your account removes the cache.</p>
             </details>
             <details>
               <summary>What does {siteConfig.name} cost?</summary>
-              <p>
-                Nothing during the beta. If that changes, connected users hear
-                about it first — there are no surprise charges.
-              </p>
+              <p>Nothing during the beta. If that changes, connected users hear about it first — there are no surprise charges.</p>
             </details>
             <details>
               <summary>Does it work with Google Workspace accounts?</summary>
-              <p>
-                Yes — any Google account works. Some Workspace organisations
-                require an admin to allow third-party access first.
-              </p>
+              <p>Yes — any Google account works. Some Workspace organisations require an admin to allow third-party access first.</p>
             </details>
             <details>
               <summary>Why does Google show an unverified-app screen?</summary>
-              <p>
-                {siteConfig.name} is in beta and Google&apos;s verification is
-                in progress. Choose Advanced, then Continue — the permissions
-                requested are only Gmail and Calendar.
-              </p>
+              <p>{siteConfig.name} is in beta and Google&apos;s verification is in progress. Choose Advanced, then Continue — the permissions requested are only Gmail and Calendar.</p>
             </details>
-          </motion.div>
+          </div>
         </section>
 
-        {/* ---- final CTA ---- */}
+        {/* final CTA */}
         <section className="lp-final">
-          <motion.div {...rise}>
+          <div className="lp-final-inner lp-rise">
+            <HelmGlyph size={56} />
             <h2>Take the helm of your inbox.</h2>
-            <a className="btn btn-primary lp-cta" href="/api/oauth/start">
-              Connect Google
-            </a>
-          </motion.div>
+            <p className="lp-final-sub">One consent, then it&apos;s all keyboard. Free during the beta.</p>
+            <ConnectGoogle withArrow />
+          </div>
         </section>
       </main>
 
@@ -463,13 +672,12 @@ export function Landing() {
           {siteConfig.name}
         </span>
         <div className="lp-foot-links">
+          <a href="#features">Features</a>
           <a href="#compare">Compare</a>
           <a href="#faq">FAQ</a>
         </div>
         <span className="topbar-spacer" />
-        <span className="lp-foot-note tnum">
-          Built with Next.js, Postgres and Corsair
-        </span>
+        <span className="lp-foot-note tnum">Built with Next.js, Postgres and Corsair</span>
       </footer>
     </div>
   );

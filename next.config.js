@@ -8,18 +8,23 @@ import "./src/env.js";
 // (Next's inline bootstrap/hydration scripts, the veil WebAssembly loader, blob
 // workers) but it blocks external scripts, plugins, base-uri/form-action hijacks
 // and cross-origin connections — the client only ever talks to its own origin.
+// The sole external dependency is Cloudflare Turnstile, which gates the landing's
+// "Connect Google" CTA: it loads api.js, renders a challenge iframe, and posts
+// the solution back to challenges.cloudflare.com — allowlisted on the three
+// directives it touches and nowhere else.
+const TURNSTILE = "https://challenges.cloudflare.com";
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
   "object-src 'none'",
-  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:",
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: ${TURNSTILE}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https: blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
-  "frame-src 'self'",
+  `connect-src 'self' ${TURNSTILE}`,
+  `frame-src 'self' ${TURNSTILE}`,
   "worker-src 'self' blob:",
   "media-src 'self' https: data:",
 ].join("; ");

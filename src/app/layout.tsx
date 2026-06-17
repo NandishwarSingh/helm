@@ -3,9 +3,20 @@ import "@fontsource-variable/jetbrains-mono";
 import "@/styles/globals.css";
 
 import { type Metadata, type Viewport } from "next";
+import { Playfair_Display } from "next/font/google";
 
 import { siteConfig } from "@/config/site";
 import { TRPCReactProvider } from "@/trpc/react";
+
+// Editorial serif used only on the landing, for italic display emphasis.
+// Self-hosted by next/font at build time, so no runtime Google Fonts request.
+const serif = Playfair_Display({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-serif",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
@@ -56,7 +67,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body>
+      <body className={serif.variable}>
         <TRPCReactProvider>{children}</TRPCReactProvider>
       </body>
     </html>

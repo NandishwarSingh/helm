@@ -30,6 +30,11 @@ export const env = createEnv({
       process.env.NODE_ENV === "production"
         ? z.string().min(16)
         : z.string().min(16).optional(),
+    // Cloudflare Turnstile secret, verified server-side before the landing's
+    // "Connect Google" CTA starts OAuth. Optional everywhere: when unset the
+    // bot check is skipped (so dev and an un-keyed prod still connect), and it
+    // activates the moment a key is configured.
+    TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -41,6 +46,10 @@ export const env = createEnv({
    */
   client: {
     NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
+    // Public Turnstile site key. When set, the landing renders the widget;
+    // when unset, the CTA connects without a challenge (paired with the
+    // optional secret above).
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
   },
 
   /**
@@ -57,8 +66,10 @@ export const env = createEnv({
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     TENANT_ID: process.env.TENANT_ID,
     WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
+    TURNSTILE_SECRET_KEY: process.env.TURNSTILE_SECRET_KEY,
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
   },
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,
   emptyStringAsUndefined: true,

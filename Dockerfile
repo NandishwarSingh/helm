@@ -17,6 +17,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # NEXT_PUBLIC_* are inlined at build time, so the site URL must be set here.
 ARG NEXT_PUBLIC_SITE_URL=https://helm.houndcode.com
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+# Public Turnstile site key — inlined into the client bundle at build time.
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
+ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 RUN pnpm build
 
 # One-shot migrator: full deps + source so Drizzle migrations + the pgvector
