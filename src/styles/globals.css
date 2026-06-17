@@ -1890,49 +1890,6 @@
     z-index: 1;
   }
 
-  /* ---- constellation starfield ---- */
-  .lp-stars {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    overflow: hidden;
-    -webkit-mask-image: radial-gradient(
-      120% 90% at 50% 38%,
-      transparent 36%,
-      #000 72%
-    );
-    mask-image: radial-gradient(
-      120% 90% at 50% 38%,
-      transparent 36%,
-      #000 72%
-    );
-  }
-  .lp-stars svg {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  .lp-star {
-    --tw: 0.6;
-    animation: lp-twinkle ease-in-out infinite;
-  }
-  @keyframes lp-twinkle {
-    0%,
-    100% {
-      opacity: calc(var(--tw) * 0.28);
-    }
-    50% {
-      opacity: var(--tw);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .lp-star {
-      animation: none;
-      opacity: calc(var(--tw) * 0.7);
-    }
-  }
-
   /* ---- entrance (CSS-driven, robust without JS) ---- */
   @keyframes lp-rise {
     from {
