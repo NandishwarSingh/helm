@@ -4,6 +4,7 @@ import { z } from "zod";
 import { dayStartMs } from "@/lib/calendar";
 import { corsair } from "@/server/corsair";
 import { purgeCachedEntity } from "@/server/lib/cache";
+import { mapLimit } from "@/server/lib/concurrency";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
 import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
@@ -161,30 +162,28 @@ export const calendarRouter = createTRPCRouter({
       const weekEnd = new Date(input.weekEnd);
       const clients = await readClients(input.account);
 
-      const per = await Promise.all(
-        clients.map(async (c) => {
-          const events = await listOrEmpty(async () =>
-            input.query.trim()
-              ? c.client.googlecalendar.db.events.search({
-                  data: { summary: { contains: input.query } },
-                  limit: 200,
-                  offset: 0,
-                })
-              : c.client.googlecalendar.db.events.list({
-                  limit: 200,
-                  offset: 0,
-                }),
-          );
-          return {
-            items: dedupeByEntityId(events).map((e) => ({
-              ...mapEvent(e),
-              accountId: c.accountId,
-              accountEmail: c.email,
-            })),
-            full: events.length >= 200,
-          };
-        }),
-      );
+      const per = await mapLimit(clients, 4, async (c) => {
+        const events = await listOrEmpty(async () =>
+          input.query.trim()
+            ? c.client.googlecalendar.db.events.search({
+                data: { summary: { contains: input.query } },
+                limit: 200,
+                offset: 0,
+              })
+            : c.client.googlecalendar.db.events.list({
+                limit: 200,
+                offset: 0,
+              }),
+        );
+        return {
+          items: dedupeByEntityId(events).map((e) => ({
+            ...mapEvent(e),
+            accountId: c.accountId,
+            accountEmail: c.email,
+          })),
+          full: events.length >= 200,
+        };
+      });
 
       return {
         items: filterEventsByWeek(

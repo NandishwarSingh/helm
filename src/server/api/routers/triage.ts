@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 
 import { db } from "@/server/db";
 import { mailTriage } from "@/server/db/schema";
+import { mapLimit } from "@/server/lib/concurrency";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import {
   dedupeByEntityId,
@@ -54,21 +55,16 @@ export const triageRouter = createTRPCRouter({
   // grouped by priority, plus how many inbox messages still await classification.
   overview: authedProcedure.query(async () => {
     const clients = await getAccountClients();
-    const per = await Promise.all(
-      clients.map(async (c) => {
-        const [messages, verdicts] = await Promise.all([
-          inboxFor(c),
-          db
-            .select()
-            .from(mailTriage)
-            .where(eq(mailTriage.tenantId, c.tenantId)),
-        ]);
-        return {
-          messages,
-          verdictById: new Map(verdicts.map((v) => [v.messageId, v])),
-        };
-      }),
-    );
+    const per = await mapLimit(clients, 4, async (c) => {
+      const [messages, verdicts] = await Promise.all([
+        inboxFor(c),
+        db.select().from(mailTriage).where(eq(mailTriage.tenantId, c.tenantId)),
+      ]);
+      return {
+        messages,
+        verdictById: new Map(verdicts.map((v) => [v.messageId, v])),
+      };
+    });
 
     const groups = emptyGroups();
     let pendingCount = 0;

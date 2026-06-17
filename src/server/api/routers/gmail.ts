@@ -14,6 +14,7 @@ import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
+import { mapLimit } from "@/server/lib/concurrency";
 import {
   isNotConnectedError,
   listOrEmpty,
@@ -94,6 +95,8 @@ const MAIL_WINDOW = 300;
 const SEARCH_WINDOW = 2000;
 // Semantic candidate pool that smartSearch re-ranks with the keyword boost.
 const SMART_POOL = 150;
+// Max accounts read concurrently in a unified fan-out (bounds DB-pool pressure).
+const READ_CONCURRENCY = 4;
 
 // Gmail's messages.list returns only id/threadId stubs, so each id is hydrated
 // with metadata (from, subject, snippet, date) for the list view. Each get
@@ -220,8 +223,8 @@ export const gmailRouter = createTRPCRouter({
     .query(async ({ input }) => {
       const query = input.query.trim();
       const clients = await readClients(input.account);
-      const per = await Promise.all(
-        clients.map((c) => readAccountMessages(c, query ? { query } : {})),
+      const per = await mapLimit(clients, READ_CONCURRENCY, (c) =>
+        readAccountMessages(c, query ? { query } : {}),
       );
       const all = sortMessagesNewestFirst(
         per.flatMap((p) => p.items).filter(FOLDER_FILTERS[input.folder]),
@@ -282,10 +285,8 @@ export const gmailRouter = createTRPCRouter({
       // No free text → pure Corsair `.db` filter (operators + flags), recency order.
       if (!text) {
         const filters = buildFilters(parsed);
-        const per = await Promise.all(
-          clients.map((c) =>
-            readAccountMessages(c, filters.length ? { filters } : {}),
-          ),
+        const per = await mapLimit(clients, READ_CONCURRENCY, (c) =>
+          readAccountMessages(c, filters.length ? { filters } : {}),
         );
         const all = sortMessagesNewestFirst(
           per
@@ -301,8 +302,8 @@ export const gmailRouter = createTRPCRouter({
 
       // Free text → per-account semantic candidate pool, re-ranked by the tiered
       // keyword boost, then merged across accounts by the blended score.
-      const perAccount = await Promise.all(
-        clients.map(async (c) => {
+      const perAccount = await mapLimit(clients, READ_CONCURRENCY, async (c) => {
+        try {
           const hits = await semanticSearchIds(c.tenantId, text, SMART_POOL);
           if (hits.length === 0) return [];
           const semScore = new Map(hits.map((hit) => [hit.messageId, hit.score]));
@@ -324,8 +325,11 @@ export const gmailRouter = createTRPCRouter({
               msg: { ...m, accountId: c.accountId, accountEmail: c.email },
               score: (semScore.get(m.id) ?? 0) + tieredBoost(text, m),
             }));
-        }),
-      );
+        } catch {
+          // One account's semantic query failing must not 500 the whole search.
+          return [];
+        }
+      });
       const ranked = perAccount
         .flat()
         .sort((a, b) => b.score - a.score)
@@ -374,23 +378,21 @@ export const gmailRouter = createTRPCRouter({
     .input(paginationSchema.extend({ account: accountInput }))
     .query(async ({ input }) => {
       const clients = await readClients(input.account);
-      const per = await Promise.all(
-        clients.map(async (c) => {
-          const drafts = await listOrEmpty(async () =>
-            c.client.gmail.db.drafts.list({
-              limit: input.limit,
-              offset: input.offset,
-            }),
-          );
-          return dedupeByEntityId(drafts).map((draft) => ({
-            id: draft.entity_id,
-            messageId: draft.data.messageId ?? "",
-            createdAt: draft.data.createdAt ?? null,
-            accountId: c.accountId,
-            accountEmail: c.email,
-          }));
-        }),
-      );
+      const per = await mapLimit(clients, READ_CONCURRENCY, async (c) => {
+        const drafts = await listOrEmpty(async () =>
+          c.client.gmail.db.drafts.list({
+            limit: input.limit,
+            offset: input.offset,
+          }),
+        );
+        return dedupeByEntityId(drafts).map((draft) => ({
+          id: draft.entity_id,
+          messageId: draft.data.messageId ?? "",
+          createdAt: draft.data.createdAt ?? null,
+          accountId: c.accountId,
+          accountEmail: c.email,
+        }));
+      });
       return per.flat();
     }),
 

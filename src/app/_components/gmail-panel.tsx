@@ -86,7 +86,8 @@ type Confirm = { kind: "trash" | "delete" | "draft"; ids: string[] };
 
 // Mutations that can be taken back from the toast, with their reversals.
 type UndoableAction = "archive" | "unarchive" | "trash";
-type Undo = { ids: string[]; action: UndoableAction };
+type UndoItem = { id: string; account: string | undefined };
+type Undo = { items: UndoItem[]; action: UndoableAction };
 const UNDO_REVERSE = {
   archive: "unarchive",
   unarchive: "archive",
@@ -171,8 +172,15 @@ function inFolder(state: LabelState, folder: Folder): boolean {
   }
 }
 
+// A row's stable key across the unified view: Gmail ids are unique only WITHIN
+// a mailbox, so optimistic state, dedupe, and priority lookups key on
+// (accountId, id) to avoid cross-account collisions.
+function rowKey(row: { accountId?: string; id: string }): string {
+  return `${row.accountId ?? ""}:${row.id}`;
+}
+
 function undoLabel(undo: Undo) {
-  const count = undo.ids.length;
+  const count = undo.items.length;
   const what = count === 1 ? "message" : `${count} messages`;
   if (undo.action === "archive") return `Archived ${what}`;
   if (undo.action === "unarchive") return `Moved ${what} to inbox`;
@@ -390,7 +398,7 @@ export function GmailPanel({
     if (!overviewGroups) return map;
     for (const priority of PRIORITY_ORDER) {
       for (const message of overviewGroups[priority]) {
-        map.set(message.id, priority);
+        map.set(rowKey(message), priority);
       }
     }
     return map;
@@ -413,9 +421,9 @@ export function GmailPanel({
         const base: EmailRow = {
           ...item,
           reason: "",
-          priority: priorityById.get(item.id),
+          priority: priorityById.get(rowKey(item)),
         };
-        const edit = localEdits.get(item.id);
+        const edit = localEdits.get(rowKey(item));
         return edit
           ? { ...base, unread: edit.state.unread, starred: edit.state.starred }
           : base;
@@ -431,15 +439,16 @@ export function GmailPanel({
       : (items ?? []).map((item) => ({
           ...item,
           reason: "",
-          priority: priorityById.get(item.id),
+          priority: priorityById.get(rowKey(item)),
         }));
 
     const seen = new Set<string>();
     const merged: EmailRow[] = [];
     for (const item of source) {
-      if (seen.has(item.id)) continue;
-      seen.add(item.id);
-      const edit = localEdits.get(item.id);
+      const key = rowKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const edit = localEdits.get(key);
       if (!edit) {
         merged.push(item);
         continue;
@@ -456,8 +465,8 @@ export function GmailPanel({
     // (e.g. just archived, viewed from Archive). Priority skips additions —
     // a message needs a verdict before it can join a group.
     if (!isPriority) {
-      for (const [id, edit] of localEdits) {
-        if (seen.has(id) || !inFolder(edit.state, folder)) continue;
+      for (const [key, edit] of localEdits) {
+        if (seen.has(key) || !inFolder(edit.state, folder)) continue;
         merged.push({
           ...edit.row,
           unread: edit.state.unread,
@@ -493,13 +502,12 @@ export function GmailPanel({
     account === "all" ? emails.find((e) => e.id === id)?.accountId : account;
   // Group ids by owning account so a bulk action over the unified view fires one
   // Gmail call per mailbox.
-  function groupByAccount(ids: string[]): Map<string | undefined, string[]> {
+  function groupByPairs(pairs: UndoItem[]): Map<string | undefined, string[]> {
     const groups = new Map<string | undefined, string[]>();
-    for (const id of ids) {
-      const acct = accountOf(id);
-      const list = groups.get(acct) ?? [];
+    for (const { id, account } of pairs) {
+      const list = groups.get(account) ?? [];
       list.push(id);
-      groups.set(acct, list);
+      groups.set(account, list);
     }
     return groups;
   }
@@ -543,8 +551,10 @@ export function GmailPanel({
   const isThread = threadMessages.length > 1;
 
   // The user's own address, so reply-all never cc's them back to themselves.
+  // For reply-all self-exclusion, "self" is the account the OPEN message belongs
+  // to — in the unified view that's the row's account, not the active one.
   const myEmail = api.gmail.profile.useQuery(
-    { account: account === "all" ? undefined : account },
+    { account: account === "all" ? readAccount : account },
     {
       enabled: inMessages,
       staleTime: 60 * 60 * 1000,
@@ -700,7 +710,12 @@ export function GmailPanel({
   // The mailbox a compose sends from: a reply goes from the account its thread
   // lives in; a fresh compose from the active account (or the primary in "all").
   function composeAccountId(): string | undefined {
-    if (replyThread) return selectedId ? accountOf(selectedId) : undefined;
+    // A reply goes from the account its thread lives in; if that can't be
+    // resolved, fall back to primary (never to the active mailbox blindly).
+    if (replyThread && selectedId) {
+      const resolved = accountOf(selectedId);
+      if (resolved) return resolved;
+    }
     if (account !== "all") return account;
     return accountList.find((a) => a.isPrimary)?.id ?? accountList[0]?.id;
   }
@@ -751,15 +766,18 @@ export function GmailPanel({
   // ---- message actions ------------------------------------------------------
 
   // Records the new label state for each id, synchronously.
-  function applyLocal(ids: string[], action: MessageAction) {
+  function applyLocal(items: UndoItem[], action: MessageAction) {
     setLocalEdits((prev) => {
       const next = new Map(prev);
-      for (const id of ids) {
-        const existing = next.get(id);
-        const row = existing?.row ?? emails.find((email) => email.id === id);
+      for (const { id, account } of items) {
+        const key = `${account ?? ""}:${id}`;
+        const existing = next.get(key);
+        const row =
+          existing?.row ??
+          emails.find((e) => e.id === id && e.accountId === account);
         if (!row) continue;
         const state = applyAction(existing?.state ?? stateFromRow(row), action);
-        next.set(id, { row, state });
+        next.set(key, { row, state });
       }
       return next;
     });
@@ -783,10 +801,18 @@ export function GmailPanel({
   // before the network is touched, so every view is correct instantly.
   function performAction(ids: string[], action: MessageAction) {
     if (ids.length === 0) return;
+    // Resolve each row's owning account up front, while the rows are still in
+    // view (undo/chained actions can't re-derive it once they've left).
+    let items: UndoItem[] = ids.map((id) => ({ id, account: accountOf(id) }));
+    // In the unified view, never act on a row whose account we can't resolve —
+    // a write with account:undefined would fall back to the active mailbox.
+    if (account === "all") items = items.filter((p) => p.account !== undefined);
+    if (items.length === 0) return;
+
     if (view !== "drafts" && LEAVES_FOLDER[folder].includes(action)) {
-      advanceSelectionPast(ids);
+      advanceSelectionPast(items.map((p) => p.id));
     }
-    applyLocal(ids, action);
+    applyLocal(items, action);
 
     // Read-state flips fire on every J/K; they never move a message, so
     // they stay untracked and trigger no reconciling refetch.
@@ -795,7 +821,7 @@ export function GmailPanel({
 
     // One Gmail call per owning account — a multiselect over the unified view
     // can span mailboxes; each group is tracked independently.
-    for (const [acct, gids] of groupByAccount(ids)) {
+    for (const [acct, gids] of groupByPairs(items)) {
       if (tracked) inFlight.current += 1;
       if (action === "deleteForever") {
         if (gids.length === 1) {
@@ -812,7 +838,7 @@ export function GmailPanel({
     setBulkIds(new Set());
 
     if (action === "archive" || action === "unarchive" || action === "trash") {
-      pushUndo({ ids, action });
+      pushUndo({ items, action });
     }
   }
 
@@ -820,8 +846,8 @@ export function GmailPanel({
   function performUndo() {
     if (!undo) return;
     const reverse = UNDO_REVERSE[undo.action];
-    applyLocal(undo.ids, reverse);
-    for (const [acct, gids] of groupByAccount(undo.ids)) {
+    applyLocal(undo.items, reverse);
+    for (const [acct, gids] of groupByPairs(undo.items)) {
       inFlight.current += 1;
       if (gids.length === 1) {
         modifyMessage.mutate(
@@ -919,7 +945,7 @@ export function GmailPanel({
     if (!readId || !selectedEmail.data) return;
     const meta = emails.find((email) => email.id === readId);
     if (meta?.unread) {
-      applyLocal([readId], "read");
+      applyLocal([{ id: readId, account: accountOf(readId) }], "read");
       modifyMessage.mutate({ id: readId, account: accountOf(readId), action: "read" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1366,7 +1392,7 @@ export function GmailPanel({
     const sub = isPriority && email.reason ? email.reason : email.snippet;
     return (
       <motion.div
-        key={email.id}
+        key={rowKey(email)}
         className="row"
         role="button"
         tabIndex={0}

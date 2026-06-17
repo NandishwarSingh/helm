@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
+import { MAX_ACCOUNTS } from "@/server/lib/concurrency";
 import {
   buildAuthUrl,
   createPkcePair,
@@ -11,6 +12,7 @@ import { type OAuthState } from "@/server/lib/oauth-state";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { ensureTenantId, getSession } from "@/server/lib/session";
 import { verifyTurnstile } from "@/server/lib/turnstile";
+import { getUserAccounts } from "@/server/lib/users";
 
 /** User-facing redirect base — canonical site, with a dev fallback. */
 function appUrl(request: NextRequest, path: string): URL {
@@ -36,6 +38,14 @@ async function startConsent(
   if (intent === "add") {
     const session = await getSession();
     if (session) {
+      // Bound the per-user account count so a unified fan-out can't grow without limit.
+      const owned = await getUserAccounts();
+      if (owned.length >= MAX_ACCOUNTS) {
+        return NextResponse.redirect(
+          appUrl(request, "/?error=account_limit"),
+          303,
+        );
+      }
       state = {
         tenantId: randomUUID(),
         intent: "add",
