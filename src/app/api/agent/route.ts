@@ -1,18 +1,78 @@
 import {
   convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
   stepCountIs,
   streamText,
   type UIMessage,
 } from "ai";
 import { type NextRequest, NextResponse } from "next/server";
 
-import { isAffirmation } from "@/server/lib/agent-policy";
+import { env } from "@/env";
+import { corsair } from "@/server/corsair";
+import {
+  type ActionSummary,
+  signAction,
+  summarizeAction,
+  verifyAction,
+} from "@/server/lib/agent-action";
+import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { rateLimit } from "@/server/lib/rate-limit";
 import { getTenantId } from "@/server/lib/session";
 
 export const maxDuration = 60;
+
+/** Resolve a Corsair dot-path on the tenant client and call it with `args`. */
+async function callTenantOp(
+  tenant: unknown,
+  op: string,
+  args: unknown,
+): Promise<unknown> {
+  const parts = op.split(".");
+  const method = parts.pop()!;
+  let parent: unknown = tenant;
+  for (const key of parts) {
+    parent = (parent as Record<string, unknown> | undefined)?.[key];
+    if (parent == null) throw new Error(`unknown operation: ${op}`);
+  }
+  const fn = (parent as Record<string, unknown> | undefined)?.[method];
+  if (typeof fn !== "function") throw new Error(`not callable: ${op}`);
+  return (fn as (a: unknown) => unknown).call(parent, args ?? {});
+}
+
+/** A short, kind-specific line shown after a confirmed action runs. */
+function confirmedOutcome(summary: ActionSummary): string {
+  switch (summary.kind) {
+    case "send":
+      return "Sent.";
+    case "trash":
+      return "Moved to Trash.";
+    case "delete":
+      return "Deleted.";
+    case "event-create":
+      return "Event created.";
+    case "event-update":
+      return "Event updated.";
+    case "event-delete":
+      return "Event deleted.";
+    default:
+      return "Done.";
+  }
+}
+
+/** A one-shot assistant message carrying a single block of text (no model call). */
+function textResponse(text: string): Response {
+  const stream = createUIMessageStream({
+    execute: ({ writer }) => {
+      writer.write({ type: "text-start", id: "t0" });
+      writer.write({ type: "text-delta", id: "t0", delta: text });
+      writer.write({ type: "text-end", id: "t0" });
+    },
+  });
+  return createUIMessageStreamResponse({ stream });
+}
 
 function systemPrompt() {
   const now = new Date();
@@ -51,7 +111,7 @@ Read one email in full (live):
   const h = n => (m.payload?.headers||[]).find(x=>(x.name||"").toLowerCase()===n)?.value || "";
   return { from:h("from"), to:h("to"), subject:h("subject"), snippet:m.snippet };
 
-Send an email (ONLY after the user replied "confirm"; otherwise the tool refuses with CONFIRM_REQUIRED):
+Send an email — CALL this to STAGE it for the user's confirmation card (it returns CONFIRM_REQUIRED, which is expected; do NOT retry):
   const mime = ["To: "+TO, "Subject: "+SUBJECT, "MIME-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "", BODY].join("\\r\\n");
   const raw = Buffer.from(mime,"utf8").toString("base64").replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
   const r = await corsair.gmail.api.messages.send({ raw });
@@ -71,7 +131,7 @@ List calendar events in a window:
   const r = await corsair.googlecalendar.api.events.getMany({ calendarId:"primary", timeMin:"ISO", timeMax:"ISO", maxResults:25, singleEvents:true, orderBy:"startTime" });
   return (r.items||[]).map(e=>({ id:e.id, summary:e.summary, start:e.start?.dateTime||e.start?.date, end:e.end?.dateTime||e.end?.date }));
 
-Create an event and invite people (ONLY after the user replied "confirm"; attendees receive a real invite):
+Create an event and invite people — CALL this to STAGE it for confirmation (returns CONFIRM_REQUIRED, expected; attendees receive a real invite once the user confirms):
   const e = await corsair.googlecalendar.api.events.create({ calendarId:"primary", sendUpdates:"all", event:{ summary:SUMMARY, start:{dateTime:"START_ISO+05:30"}, end:{dateTime:"END_ISO+05:30"}, attendees:[{email:"a@b.com"}] } });
   return { created:true, id:e.id, link:e.htmlLink };
 
@@ -80,7 +140,7 @@ Create an event and invite people (ONLY after the user replied "confirm"; attend
 - Do NOT narrate between tool calls. Call tools silently; all prose belongs in ONE final answer after the work is done.
 - In run_script, ALWAYS filter and map to the few fields you need and cap lists at about 10 items — never return whole API responses.
 - To locate mail prefer the cached \`gmail.db\` search; use \`gmail.api\` for reading one message in full and for every write.
-- Confirmation gate: sending email, sending calendar invites, trashing or deleting mail, and creating or changing calendar events all REQUIRE the user's explicit confirmation — and the tools enforce this, refusing with "CONFIRM_REQUIRED" until the user confirms. So when the user asks for one of these, do NOT call the write yet: first state exactly what you will do (recipient, subject and a one-line summary of the body; or the event title, time and attendees) and ask them to reply "confirm". Perform it only once they have confirmed. Saving a draft and all reads never need confirmation, so prefer a draft when the user only wants to prepare something. Default meeting length is 30 minutes when only a start time is given.
+- Confirmation: sending mail, sending invites, trashing or deleting mail, and creating, updating or deleting calendar events are STAGED for the user's approval, not run immediately. To do one, CALL the operation in run_script with the exact final details (recipient, subject and the full body; or the event title, time and attendees). The sandbox stages it and returns CONFIRM_REQUIRED, and the user gets a confirmation card with Confirm and Deny — that return is EXPECTED and means it staged successfully, so NEVER retry it or call it again. After staging, write ONE short sentence naming exactly what you staged (e.g. "Staged a reply to Priya about the Q3 review — confirm to send."). Saving a draft and all reads are never staged, so prefer a draft when the user only wants to prepare something. Stage at most ONE action per reply; if more are needed, stage one and say what remains. Default meeting length is 30 minutes when only a start time is given.
 - run_script is for Gmail and Calendar through \`corsair\` only. Never read process or environment variables, touch the filesystem, or make unrelated network requests.
 - Be concise: short paragraphs; hyphen or numbered lists and **bold** are fine; never headings, tables, code blocks, nested lists, horizontal rules or emojis.
 - Never invent ids, addresses, events or results. If an operation returns nothing, say so plainly.
@@ -106,32 +166,54 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json().catch(() => null)) as {
     messages?: UIMessage[];
+    confirm?: string;
   } | null;
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
     return NextResponse.json({ error: "No messages." }, { status: 400 });
   }
-  // Keep context bounded but roomy enough for multi-step follow-ups.
-  const recent = body.messages.slice(-24);
 
-  // Destructive actions (send, trash, delete, calendar writes) are gated: the
-  // sandbox refuses them unless the user has explicitly confirmed. A bare
-  // affirmation opens the gate for ONE destructive op across the ENTIRE turn —
-  // the budget is shared by every run_script call (see corsair-mcp's gate +
-  // agent-policy.isAffirmation). It is NOT bound to the specific action the
-  // agent proposed; the model could choose a different write, so this limits
-  // blast radius rather than proving intent.
-  const lastUserText = [...recent]
-    .reverse()
-    .find((m) => m.role === "user")
-    ?.parts.map((p) => (p.type === "text" ? p.text : ""))
-    .join(" ");
-  const confirmed = isAffirmation(lastUserText);
+  // Confirm turn: the user approved an action card. Replay the EXACT signed op
+  // they saw — the model is NOT in this loop, so a "yes" can only run the action
+  // the card showed, never a different write the model might pick. The token is
+  // HMAC-signed, tenant-bound, and expires (see agent-action).
+  if (typeof body.confirm === "string") {
+    const action = verifyAction(env.AUTH_SECRET, body.confirm, Date.now());
+    if (action?.tenantId !== tenantId) {
+      return textResponse(
+        "That confirmation expired or didn't match — ask me again and I'll re-stage it.",
+      );
+    }
+    // Defense in depth: only ever replay an allowlisted, destructive op.
+    if (!isAllowedPath(action.op) || !isDestructive(action.op)) {
+      return textResponse("That action can't be run.");
+    }
+    const summary = summarizeAction(action.op, action.args);
+    try {
+      await callTenantOp(corsair.withTenant(tenantId), action.op, action.args);
+      return textResponse(confirmedOutcome(summary));
+    } catch (error) {
+      return textResponse(
+        `That didn't go through: ${error instanceof Error ? error.message : "unknown error"}.`,
+      );
+    }
+  }
+
+  // Keep context bounded but roomy enough for multi-step follow-ups. Strip the
+  // `data-pendingAction` cards from history so stale signed tokens never reach
+  // the model — they're confirmed out-of-band via body.confirm, not by the LLM.
+  const recent = body.messages
+    .slice(-24)
+    .map((m) => ({
+      ...m,
+      parts: m.parts.filter((p) => !p.type.startsWith("data-")),
+    }))
+    .filter((m) => m.parts.length > 0);
 
   // Spin up a tenant-scoped Corsair MCP server and bridge it to the AI SDK.
   // Every tool call the model makes now travels the real MCP protocol.
   let mcp: Awaited<ReturnType<typeof createCorsairMcp>>;
   try {
-    mcp = await createCorsairMcp(tenantId, confirmed);
+    mcp = await createCorsairMcp(tenantId);
   } catch (error) {
     console.error(
       "corsair mcp init failed:",
@@ -177,5 +259,29 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return result.toUIMessageStreamResponse();
+  // Stream the model's reply, then — if it staged a destructive op — append a
+  // signed confirmation card the user can Confirm or Deny. The action is captured
+  // in `mcp.gate.proposed` by the sandbox and is NEVER executed in this loop;
+  // only a Confirm turn replays it (above).
+  const stream = createUIMessageStream({
+    execute: async ({ writer }) => {
+      writer.merge(result.toUIMessageStream());
+      await result.finishReason; // wait for the model to finish staging
+      const proposed = mcp.gate.proposed;
+      if (proposed && isAllowedPath(proposed.op) && isDestructive(proposed.op)) {
+        const token = signAction(
+          env.AUTH_SECRET,
+          { tenantId, op: proposed.op, args: proposed.args },
+          Date.now(),
+        );
+        writer.write({
+          type: "data-pendingAction",
+          id: `pa-${token.slice(-12)}`,
+          data: { token, summary: summarizeAction(proposed.op, proposed.args) },
+        });
+      }
+    },
+    onError: (error) => (error instanceof Error ? error.message : String(error)),
+  });
+  return createUIMessageStreamResponse({ stream });
 }

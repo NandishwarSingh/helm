@@ -73,6 +73,12 @@ type ScriptResult =
 export type DestructiveGate = {
   confirmed: boolean;
   budget: { remaining: number };
+  /**
+   * The first destructive op the model stages this turn, captured (op + args)
+   * for the confirmation card. Set only on a preview turn (confirmed === false);
+   * the route signs it, the user approves it, and the action is replayed verbatim.
+   */
+  proposed?: { op: string; args: unknown };
 };
 
 export async function runScriptSandboxed(
@@ -94,8 +100,21 @@ export async function runScriptSandboxed(
       if (!isAllowedPath(pathStr)) return fail(`operation not allowed: ${pathStr}`);
       if (isDestructive(pathStr)) {
         if (!gate.confirmed) {
+          // Capture the first staged action for the confirmation card, then
+          // refuse. The user approves it on the card and the server replays the
+          // signed action verbatim — the model never executes it directly.
+          if (!gate.proposed) {
+            try {
+              gate.proposed = {
+                op: pathStr,
+                args: argsJson ? (JSON.parse(argsJson) as unknown) : {},
+              };
+            } catch {
+              gate.proposed = { op: pathStr, args: {} };
+            }
+          }
           return fail(
-            `CONFIRM_REQUIRED: "${pathStr}" sends or changes things on the user's account. Do not retry it now. First tell the user exactly what you will do, then ask them to reply "confirm".`,
+            `CONFIRM_REQUIRED: "${pathStr}" is now STAGED for the user to confirm on a card. This is expected — do NOT retry it. Write one short sentence telling the user exactly what you staged.`,
           );
         }
         // Shared across every run_script call this turn, so one confirmation

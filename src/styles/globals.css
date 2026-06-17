@@ -1388,6 +1388,85 @@
   .agent-tool[data-error="true"]::before {
     background: var(--color-danger);
   }
+
+  /* Staged-action confirmation card (agent human-in-the-loop). */
+  .agent-action {
+    margin: 8px 0 2px;
+    max-width: 470px;
+    padding: 12px 14px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-paper-raised);
+  }
+  .agent-action[data-state="pending"] {
+    border-color: color-mix(
+      in srgb,
+      var(--color-accent) 42%,
+      var(--color-line-strong)
+    );
+  }
+  .agent-action[data-state="denied"] {
+    opacity: 0.62;
+  }
+  .agent-action-title {
+    margin: 0 0 9px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+  .agent-action-fields {
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 12px;
+    font-size: 0.84rem;
+  }
+  .agent-action-fields > div {
+    display: contents;
+  }
+  .agent-action-fields dt {
+    padding-top: 1px;
+    font-size: 0.74rem;
+    color: var(--color-ink-3);
+  }
+  .agent-action-fields dd {
+    margin: 0;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .agent-action-body {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    max-height: 184px;
+    overflow: auto;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    color: var(--color-ink-2);
+    background: color-mix(in srgb, var(--color-ink) 4%, transparent);
+    border-radius: var(--radius-sm);
+  }
+  .agent-action-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .agent-action-buttons .btn {
+    padding: 5px 12px;
+    font-size: 0.8rem;
+  }
+  .agent-action-resolved {
+    margin: 12px 0 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-ink-3);
+  }
+  .agent-action-resolved[data-kind="confirmed"] {
+    color: var(--color-accent);
+  }
+
   .agent-error {
     margin: 0;
   }

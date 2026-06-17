@@ -9,8 +9,10 @@ import { type ToolSet } from "ai";
 import { z } from "zod";
 
 import { corsair } from "@/server/corsair";
-import { DESTRUCTIVE_BUDGET } from "@/server/lib/agent-policy";
-import { runScriptSandboxed } from "@/server/lib/run-script-sandbox";
+import {
+  type DestructiveGate,
+  runScriptSandboxed,
+} from "@/server/lib/run-script-sandbox";
 
 /**
  * Bridges Corsair's MCP server into the Vercel AI SDK, in-process.
@@ -27,17 +29,14 @@ import { runScriptSandboxed } from "@/server/lib/run-script-sandbox";
  * pair, so the agent route receives ordinary AI SDK tools while every call
  * still travels the real MCP protocol. Everything is scoped to `tenantId`.
  */
-export async function createCorsairMcp(tenantId: string, confirmed = false) {
+export async function createCorsairMcp(tenantId: string) {
   const tenant = corsair.withTenant(tenantId);
 
-  // One destructive-op budget for the whole turn, shared across every run_script
-  // call: a single "confirm" authorizes at most DESTRUCTIVE_BUDGET writes total,
-  // not one per call. Each call spins up a fresh isolate, so a per-call counter
-  // would reset and let one "yes" fire several agent-chosen writes.
-  const gate = {
-    confirmed,
-    budget: { remaining: confirmed ? DESTRUCTIVE_BUDGET : 0 },
-  };
+  // The LLM loop never EXECUTES a destructive op — it STAGES one, which the
+  // sandbox captures into `gate.proposed`. The user approves it on a card and
+  // the route replays the signed action verbatim, so the gate stays unconfirmed
+  // here: every destructive call is intercepted and captured, never run.
+  const gate: DestructiveGate = { confirmed: false, budget: { remaining: 0 } };
 
   const server = new McpServer({
     name: "corsair",
@@ -80,6 +79,8 @@ export async function createCorsairMcp(tenantId: string, confirmed = false) {
 
   return {
     tools,
+    /** Staged-action gate; read `gate.proposed` once the stream has finished. */
+    gate,
     /** Tear the client and server down once the stream has finished. */
     async close() {
       await client.close().catch(() => undefined);

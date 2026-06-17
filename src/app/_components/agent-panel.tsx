@@ -10,7 +10,86 @@ import { Kbd } from "@/components/kbd";
 import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
 import { listRow } from "@/lib/motion";
+import type { ActionSummary } from "@/server/lib/agent-action";
 import { api } from "@/trpc/react";
+
+/** What the agent stages for confirmation, carried on a `data-pendingAction` part. */
+type PendingAction = { token: string; summary: ActionSummary };
+type CardState = "confirmed" | "denied" | undefined;
+
+/**
+ * The confirmation card for a staged destructive action. Its contents are
+ * derived server-side from the EXACT op + args that will run, and Confirm sends
+ * the signed token back — so what's shown is exactly what executes.
+ */
+function ActionCard({
+  summary,
+  state,
+  busy,
+  onConfirm,
+  onDeny,
+}: {
+  summary: ActionSummary;
+  state: CardState;
+  busy: boolean;
+  onConfirm: () => void;
+  onDeny: () => void;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  // Pull focus to Confirm when the card appears so Enter confirms and Esc denies
+  // without reaching for the mouse — it's a deliberate, attention-drawing pause.
+  useEffect(() => {
+    if (!state) confirmRef.current?.focus();
+  }, [state]);
+
+  return (
+    <div
+      className="agent-action"
+      data-state={state ?? "pending"}
+      onKeyDown={(e) => {
+        if (!state && e.key === "Escape") {
+          e.preventDefault();
+          onDeny();
+        }
+      }}
+    >
+      <p className="agent-action-title">{summary.title}</p>
+      <dl className="agent-action-fields">
+        {summary.fields.map((f, i) => (
+          <div key={i}>
+            <dt>{f.label}</dt>
+            <dd>{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {summary.body && <p className="agent-action-body">{summary.body}</p>}
+      {state === "confirmed" ? (
+        <p className="agent-action-resolved" data-kind="confirmed">
+          Confirmed
+        </p>
+      ) : state === "denied" ? (
+        <p className="agent-action-resolved" data-kind="denied">
+          Cancelled
+        </p>
+      ) : (
+        <div className="agent-action-buttons">
+          <button
+            ref={confirmRef}
+            type="button"
+            className="btn btn-primary"
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            Confirm <Kbd>↵</Kbd>
+          </button>
+          <button type="button" className="btn" onClick={onDeny} disabled={busy}>
+            Deny <Kbd>Esc</Kbd>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const SUGGESTIONS = [
   "Summarize my unread mail",
@@ -181,6 +260,20 @@ export function AgentPanel() {
 
   const busy = status === "submitted" || status === "streaming";
 
+  // Which staged actions the user has resolved locally, keyed by signed token.
+  const [resolved, setResolved] = useState<Record<string, CardState>>({});
+  function confirmAction(token: string) {
+    if (resolved[token] || busy) return;
+    setResolved((r) => ({ ...r, [token]: "confirmed" }));
+    // The token is HMAC-signed: the server replays the EXACT action it encodes,
+    // never a write the model re-chooses. The text is just the visible bubble.
+    void sendMessage({ text: "Confirm" }, { body: { confirm: token } });
+  }
+  function denyAction(token: string) {
+    if (resolved[token]) return;
+    setResolved((r) => ({ ...r, [token]: "denied" }));
+  }
+
   // The agent acts on real mail and events server-side; when a run ends,
   // refetch every data view so its work is visible immediately.
   const utils = api.useUtils();
@@ -268,6 +361,19 @@ export function AgentPanel() {
                     <p className="agent-text" key={i}>
                       {part.text}
                     </p>
+                  );
+                }
+                if (part.type === "data-pendingAction") {
+                  const data = part.data as PendingAction;
+                  return (
+                    <ActionCard
+                      key={i}
+                      summary={data.summary}
+                      state={resolved[data.token]}
+                      busy={busy}
+                      onConfirm={() => confirmAction(data.token)}
+                      onDeny={() => denyAction(data.token)}
+                    />
                   );
                 }
                 if (part.type.startsWith("tool-")) {
