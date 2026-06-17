@@ -773,6 +773,7 @@ export function CalendarPanel({
               animate="animate"
               exit="exit"
               role="alertdialog"
+              aria-modal="true"
               aria-label="Confirm delete"
             >
               <div className="confirm-body">
@@ -833,6 +834,7 @@ export function CalendarPanel({
               animate="animate"
               exit="exit"
               role="dialog"
+              aria-modal="true"
               aria-label={editingId ? "Edit event" : "New event"}
               onKeyDown={(event) => {
                 if (!(event.metaKey || event.ctrlKey)) return;

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { CloseIcon } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { scrim, slideOver } from "@/lib/motion";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 
 type Props = {
   open: boolean;
@@ -74,6 +75,9 @@ const GROUPS: { title: string; rows: Row[] }[] = [
 ];
 
 export function ShortcutsHelp({ open, onOpenChange }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
+
   useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
@@ -99,12 +103,14 @@ export function ShortcutsHelp({ open, onOpenChange }: Props) {
             onClick={() => onOpenChange(false)}
           />
           <motion.div
+            ref={dialogRef}
             className="compose help"
             variants={slideOver}
             initial="initial"
             animate="animate"
             exit="exit"
             role="dialog"
+            aria-modal="true"
             aria-label="Keyboard shortcuts"
           >
             <div className="compose-head">

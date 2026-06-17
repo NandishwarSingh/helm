@@ -1924,6 +1924,7 @@ export function GmailPanel({
               animate="animate"
               exit="exit"
               role="alertdialog"
+              aria-modal="true"
               aria-label="Confirm action"
             >
               <div className="confirm-body">
@@ -2005,6 +2006,7 @@ export function GmailPanel({
               animate="animate"
               exit="exit"
               role="dialog"
+              aria-modal="true"
               aria-label="Compose message"
               onKeyDown={(event) => {
                 if (!(event.metaKey || event.ctrlKey)) return;

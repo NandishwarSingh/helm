@@ -67,11 +67,18 @@ export const mailTriage = pgTable('mail_triage', {
     primaryKey({ columns: [table.tenantId, table.messageId] }),
 ]);
 
-// Maps a connected Gmail address to its tenant, so an incoming Pub/Sub push
-// routes to the right user's realtime stream and the renewal cron can re-arm
-// every tenant's watch (a Gmail watch expires in ~7 days). One row per address.
+// Maps a connected Gmail address to its tenant(s), so an incoming Pub/Sub push
+// routes to the right realtime stream(s) and the renewal cron can re-arm every
+// tenant's watch (a Gmail watch expires in ~7 days). The same mailbox can be
+// connected from several browser sessions — each its own tenant — so the key is
+// (email, tenant): they coexist instead of one silently hijacking the other's
+// routing, and a push fans out to all of them.
 export const gmailWatch = pgTable('gmail_watch', {
-    email: text('email').primaryKey(),
+    email: text('email').notNull(),
     tenantId: text('tenant_id').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+    primaryKey({ columns: [table.email, table.tenantId] }),
+    // The renewal cron and watch teardown scan by tenant.
+    index('gmail_watch_tenant_idx').on(table.tenantId),
+]);

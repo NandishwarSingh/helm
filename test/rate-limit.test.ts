@@ -35,9 +35,14 @@ describe("rateLimit (in-process)", () => {
 });
 
 describe("clientIp", () => {
-  it("prefers the first x-forwarded-for hop", () => {
+  it("trusts the LAST x-forwarded-for hop (the one our proxy appended)", () => {
+    // The client can prepend anything; only the last entry is proxy-set, so a
+    // spoofed first hop must not become the rate-limit key.
     const h = new Headers({ "x-forwarded-for": "1.1.1.1, 2.2.2.2" });
-    expect(clientIp(h)).toBe("1.1.1.1");
+    expect(clientIp(h)).toBe("2.2.2.2");
+  });
+  it("handles a single forwarded value and stray whitespace", () => {
+    expect(clientIp(new Headers({ "x-forwarded-for": "  3.3.3.3  " }))).toBe("3.3.3.3");
   });
   it("falls back to x-real-ip, then a local key", () => {
     expect(clientIp(new Headers({ "x-real-ip": "9.9.9.9" }))).toBe("9.9.9.9");

@@ -113,9 +113,23 @@ export async function rateLimit(
   return shared ?? memoryLimit(key, limit, windowMs);
 }
 
-/** Best-effort client IP from proxy headers, falling back to a local key. */
+/**
+ * Best-effort client IP from proxy headers, falling back to a local key.
+ *
+ * Trust only the LAST x-forwarded-for entry — the hop our own reverse proxy
+ * appended. The first entry is whatever the client sent and is trivially
+ * spoofable; taking it would let an attacker forge a fresh key per request and
+ * skip the limit. (Our nginx vhost overwrites XFF with $remote_addr, so in
+ * practice there's a single trustworthy value; last-hop is correct either way.)
+ */
 export function clientIp(headers: Headers): string {
   const forwarded = headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]!.trim();
+  if (forwarded) {
+    const hops = forwarded
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1]!;
+  }
   return headers.get("x-real-ip") ?? "local";
 }

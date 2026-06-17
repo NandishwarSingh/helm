@@ -85,6 +85,7 @@ export function CommandPalette({
             animate="animate"
             exit="exit"
             role="dialog"
+            aria-modal="true"
             aria-label="Command palette"
           >
             <Command label="Command palette">

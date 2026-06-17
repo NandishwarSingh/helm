@@ -108,8 +108,11 @@ export async function POST(request: NextRequest) {
 
   // Destructive actions (send, trash, delete, calendar writes) are gated: the
   // sandbox refuses them unless the user has explicitly confirmed. A bare
-  // affirmation of the action the agent just proposed opens the gate for ONE op
-  // (see agent-policy.isAffirmation + the sandbox's per-run destructive budget).
+  // affirmation opens the gate for ONE destructive op across the ENTIRE turn —
+  // the budget is shared by every run_script call (see corsair-mcp's gate +
+  // agent-policy.isAffirmation). It is NOT bound to the specific action the
+  // agent proposed; the model could choose a different write, so this limits
+  // blast radius rather than proving intent.
   const lastUserText = [...recent]
     .reverse()
     .find((m) => m.role === "user")

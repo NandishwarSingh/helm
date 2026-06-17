@@ -2,7 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
-import { allWatchTenants, armGmailWatch } from "@/server/lib/gmail-watch";
+import {
+  allWatchTenants,
+  armGmailWatch,
+  getGmailEmail,
+  rememberGmailTenant,
+} from "@/server/lib/gmail-watch";
 
 export const maxDuration = 60;
 
@@ -34,10 +39,14 @@ export async function POST(request: NextRequest) {
   if (!tenants.includes(env.TENANT_ID)) tenants.push(env.TENANT_ID);
 
   const results = await Promise.all(
-    tenants.map(async (tenantId) => ({
-      tenantId,
-      expiration: await armGmailWatch(tenantId),
-    })),
+    tenants.map(async (tenantId) => {
+      // Self-heal the email->tenant map for tenants that connected before it
+      // existed (no callback row), so their pushes route precisely instead of
+      // riding the TENANT_ID fallback.
+      const email = await getGmailEmail(tenantId);
+      if (email) await rememberGmailTenant(tenantId, email);
+      return { tenantId, expiration: await armGmailWatch(tenantId) };
+    }),
   );
   const renewed = results.filter((r) => r.expiration !== null).length;
   console.log(`[renew-watch] re-armed ${renewed}/${tenants.length} watch(es)`);

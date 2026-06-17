@@ -2,11 +2,7 @@ import "server-only";
 
 import ivm from "isolated-vm";
 
-import {
-  DESTRUCTIVE_BUDGET,
-  isAllowedPath,
-  isDestructive,
-} from "@/server/lib/agent-policy";
+import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
 
 /**
  * Runs the agent's `run_script` code inside an isolated-vm V8 isolate.
@@ -67,10 +63,22 @@ type ScriptResult =
   | { ok: true; value: unknown }
   | { ok: false; error: string };
 
+/**
+ * The destructive-op gate for one agent turn. `confirmed` is whether the user
+ * affirmed the proposed action; `budget.remaining` is how many destructive ops
+ * are still authorized. The SAME object is threaded through every run_script
+ * call in the turn, so the cap is per-confirmation — not per-call, which would
+ * reset on each fresh isolate and let one "yes" fire several writes.
+ */
+export type DestructiveGate = {
+  confirmed: boolean;
+  budget: { remaining: number };
+};
+
 export async function runScriptSandboxed(
   tenant: TenantCorsair,
   code: string,
-  allowDestructive = false,
+  gate: DestructiveGate = { confirmed: false, budget: { remaining: 0 } },
 ): Promise<ScriptResult> {
   const isolate = new ivm.Isolate({ memoryLimit: MEMORY_LIMIT_MB });
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,24 +89,24 @@ export async function runScriptSandboxed(
   // boundary — that would surface as an uncaught host rejection); errors travel
   // as `{ ok: false, error }` and are re-thrown inside the isolate by the proxy.
   const fail = (error: string) => JSON.stringify({ ok: false, error });
-  // A confirmed message authorizes exactly DESTRUCTIVE_BUDGET destructive op(s);
-  // any further one in the same run must be confirmed on its own.
-  let destructiveUsed = 0;
   const hostCall = async (pathStr: string, argsJson: string): Promise<string> => {
     try {
       if (!isAllowedPath(pathStr)) return fail(`operation not allowed: ${pathStr}`);
       if (isDestructive(pathStr)) {
-        if (!allowDestructive) {
+        if (!gate.confirmed) {
           return fail(
             `CONFIRM_REQUIRED: "${pathStr}" sends or changes things on the user's account. Do not retry it now. First tell the user exactly what you will do, then ask them to reply "confirm".`,
           );
         }
-        if (destructiveUsed >= DESTRUCTIVE_BUDGET) {
+        // Shared across every run_script call this turn, so one confirmation
+        // can't authorize more than the budget no matter how the model splits
+        // the work across steps.
+        if (gate.budget.remaining <= 0) {
           return fail(
             `CONFIRM_REQUIRED: only one confirmed action is allowed per message, and "${pathStr}" would be another. Tell the user what remains and ask them to confirm it separately.`,
           );
         }
-        destructiveUsed += 1;
+        gate.budget.remaining -= 1;
       }
       const parts = pathStr.split(".");
       const method = parts.pop()!;

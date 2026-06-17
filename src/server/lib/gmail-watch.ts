@@ -74,7 +74,11 @@ export async function armGmailWatch(tenantId: string): Promise<number | null> {
   }
 }
 
-/** Records (email -> tenant) so future pushes for this mailbox route correctly. */
+/**
+ * Records (email, tenant) so future pushes for this mailbox route correctly.
+ * Keyed on the pair, so connecting the same mailbox from another session adds a
+ * row rather than overwriting the first — both keep receiving realtime.
+ */
 export async function rememberGmailTenant(
   tenantId: string,
   email: string,
@@ -83,18 +87,18 @@ export async function rememberGmailTenant(
     .insert(gmailWatch)
     .values({ email: email.toLowerCase(), tenantId })
     .onConflictDoUpdate({
-      target: gmailWatch.email,
-      set: { tenantId, updatedAt: new Date() },
+      target: [gmailWatch.email, gmailWatch.tenantId],
+      set: { updatedAt: new Date() },
     });
 }
 
-/** The tenant that owns a Gmail address, if any. */
-export async function tenantForEmail(email: string): Promise<string | null> {
-  const [row] = await db
+/** Every tenant that has this Gmail address connected (usually one). */
+export async function tenantsForEmail(email: string): Promise<string[]> {
+  const rows = await db
     .select({ tenantId: gmailWatch.tenantId })
     .from(gmailWatch)
     .where(eq(gmailWatch.email, email.toLowerCase()));
-  return row?.tenantId ?? null;
+  return [...new Set(rows.map((row) => row.tenantId))];
 }
 
 /** Every tenant with a registered Gmail watch (for the renewal cron). */

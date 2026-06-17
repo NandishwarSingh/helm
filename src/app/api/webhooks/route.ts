@@ -6,7 +6,7 @@ import { after, NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
-import { gmailPushEmail, tenantForEmail } from "@/server/lib/gmail-watch";
+import { gmailPushEmail, tenantsForEmail } from "@/server/lib/gmail-watch";
 import { syncNewMailForTenant } from "@/server/lib/mail-sync";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { notifyTenant } from "@/server/lib/realtime";
@@ -112,15 +112,18 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Route the push to the tenant that owns the mailbox. A Gmail push carries
-    // the address; Calendar channels and any unmapped address fall back to the
-    // pinned tenant (the original single-tenant deploy).
+    // Route the push to the tenant(s) that own the mailbox. A Gmail push carries
+    // the address; the same mailbox may be connected from several sessions, so
+    // fan out to all of them. Calendar channels and any unmapped address fall
+    // back to the pinned tenant (the original single-tenant deploy).
     const pushEmail = gmailPushEmail(body);
-    const routedTenant =
-      (pushEmail ? await tenantForEmail(pushEmail) : null) ?? env.TENANT_ID;
+    const mapped = pushEmail ? await tenantsForEmail(pushEmail) : [];
+    const routedTenants = mapped.length > 0 ? mapped : [env.TENANT_ID];
 
+    // The ack is identical for every tenant (same historyId), so validate once
+    // against the primary; the per-tenant cache pull happens in syncAndNotify.
     const result = await processWebhook(corsair, headers, body, {
-      tenantId: routedTenant,
+      tenantId: routedTenants[0]!,
     });
 
     if (isDev) {
@@ -146,7 +149,7 @@ export async function POST(request: NextRequest) {
     // Google immediately and run it after the response — overlapping pushes are
     // coalesced so a retry storm can't pile up syncs.
     after(async () => {
-      syncAndNotify(routedTenant);
+      for (const tenantId of routedTenants) syncAndNotify(tenantId);
     });
 
     return NextResponse.json(result.response, { headers: nextHeaders });
