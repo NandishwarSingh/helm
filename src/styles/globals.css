@@ -2010,6 +2010,8 @@
 
   /* ---- hero ---- */
   .lp-hero {
+    position: relative;
+    isolation: isolate;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2017,6 +2019,51 @@
     max-width: 1120px;
     margin: 0 auto;
     padding: 6rem 1.6rem 0;
+  }
+  /* hero spotlight — soft blurred beam that blooms in (Aceternity-style) */
+  .lp-spotlight {
+    position: absolute;
+    top: -10rem;
+    left: 0;
+    width: 138%;
+    height: 169%;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
+    --lp-spot-fill: #bae6fd;
+    animation: lp-spotlight 2s ease 0.75s forwards;
+  }
+  @media (min-width: 768px) {
+    .lp-spotlight {
+      top: -5rem;
+      left: 15rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .lp-spotlight {
+      width: 84%;
+    }
+  }
+  /* The light (paper) hero doesn't want a glow. */
+  :root[data-theme="light"] .lp-spotlight {
+    display: none;
+  }
+  @keyframes lp-spotlight {
+    from {
+      opacity: 0;
+      transform: translate(-72%, -62%) scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -40%) scale(1);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lp-spotlight {
+      animation: none;
+      opacity: 1;
+      transform: translate(-50%, -40%) scale(1);
+    }
   }
   .lp-hero .lp-glyph {
     margin-bottom: 1.6rem;
