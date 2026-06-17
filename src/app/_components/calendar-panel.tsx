@@ -114,6 +114,12 @@ export function CalendarPanel({
 
   // Dialog state: create or edit one event.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The account the edited event lives in — captured at open so the write hits
+  // the right calendar even when two connected accounts share a Google event id
+  // (invites reuse the same id across attendees' calendars).
+  const [editingAccount, setEditingAccount] = useState<string | undefined>(
+    undefined,
+  );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
@@ -156,9 +162,6 @@ export function CalendarPanel({
   // window was full, results may be incomplete, so a live Google pull is run.
   const eventItems = events.data?.items;
   const windowFull = events.data?.windowFull ?? false;
-  // The calendar an event lives in, so update/delete hit the right account.
-  const eventAccountOf = (id: string | null): string | undefined =>
-    id ? eventItems?.find((e) => e.id === id)?.accountId : undefined;
   // Account colors for the unified ("all") grid badge.
   const accountsQuery = api.accounts.list.useQuery(undefined, {
     staleTime: 30_000,
@@ -226,6 +229,7 @@ export function CalendarPanel({
     setStart(toDatetimeLocalValue(defaults.startAt));
     setEnd(toDatetimeLocalValue(defaults.endAt));
     setEditingId(null);
+    setEditingAccount(undefined);
     setConfirmingDelete(false);
     setConfirmEvent(null);
     onCreateOpenChange(false);
@@ -270,6 +274,7 @@ export function CalendarPanel({
 
   function openEdit(event: EventItem) {
     setEditingId(event.id);
+    setEditingAccount(event.accountId);
     setConfirmingDelete(false);
     setSummary(event.summary);
     setDescription(event.description);
@@ -374,7 +379,7 @@ export function CalendarPanel({
         deleteEvent.mutate({
           id: confirmEvent!.id,
           notify: confirmEvent!.attendees.length > 0,
-          account: eventAccountOf(confirmEvent!.id),
+          account: confirmEvent!.accountId,
         });
       }
     }
@@ -530,7 +535,7 @@ export function CalendarPanel({
     // New events go on the active calendar (the primary in the unified view);
     // an edit stays on the calendar the event already lives in.
     account: editingId
-      ? eventAccountOf(editingId)
+      ? editingAccount
       : account === "all"
         ? undefined
         : account,
@@ -847,7 +852,7 @@ export function CalendarPanel({
                     deleteEvent.mutate({
                       id: confirmEvent.id,
                       notify: confirmEvent.attendees.length > 0,
-                      account: eventAccountOf(confirmEvent.id),
+                      account: confirmEvent.accountId,
                     })
                   }
                   disabled={deleteEvent.isPending}
@@ -995,7 +1000,7 @@ export function CalendarPanel({
                         ? deleteEvent.mutate({
                             id: editingId,
                             notify: parseAttendees().length > 0,
-                            account: eventAccountOf(editingId),
+                            account: editingAccount,
                           })
                         : setConfirmingDelete(true)
                     }

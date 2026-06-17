@@ -8,7 +8,7 @@ import { forEachAccount, mapLimit } from "@/server/lib/concurrency";
 import { listOrEmpty } from "@/server/lib/corsair-errors";
 import { getTenantId } from "@/server/lib/session";
 import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
-import { resolveAccountTenant } from "@/server/lib/users";
+import { getUserAccounts, resolveAccountTenant } from "@/server/lib/users";
 import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
 
 const paginationSchema = z.object({
@@ -137,7 +137,18 @@ async function readClients(account?: string): Promise<AccountClient[]> {
 /** Resolve a per-event op to one owned account's calendar client + tenant id. */
 async function opAccount(
   account?: string,
+  opts: { requireAccount?: boolean } = {},
 ): Promise<{ client: ReturnType<typeof corsair.withTenant>; tenantId: string }> {
+  // Updating/deleting an EXISTING event must name its calendar once the user
+  // has more than one account — refuse rather than silently using the active
+  // one (the panel captures the event's own account; a missing one is a bug).
+  // Single-account sessions keep the active fallback unchanged.
+  if (!account && opts.requireAccount && (await getUserAccounts()).length > 1) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "account must be specified for this operation",
+    });
+  }
   const tenantId = account
     ? await resolveAccountTenant(account)
     : await getTenantId();
@@ -269,7 +280,9 @@ export const calendarRouter = createTRPCRouter({
         .and(whenSchema),
     )
     .mutation(async ({ input }) => {
-      const { client } = await opAccount(input.account);
+      const { client } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       const event = await client.googlecalendar.api.events.update({
         calendarId: "primary",
         id: input.id,
@@ -294,7 +307,9 @@ export const calendarRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const { client, tenantId } = await opAccount(input.account);
+      const { client, tenantId } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       await client.googlecalendar.api.events.delete({
         calendarId: "primary",
         id: input.id,

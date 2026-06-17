@@ -42,7 +42,7 @@ import {
 } from "@/server/lib/semantic-search";
 import { getTenantId } from "@/server/lib/session";
 import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
-import { resolveAccountTenant } from "@/server/lib/users";
+import { getUserAccounts, resolveAccountTenant } from "@/server/lib/users";
 import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
 
 const paginationSchema = z.object({
@@ -153,7 +153,18 @@ async function readClients(account?: string): Promise<AccountClient[]> {
  */
 async function opAccount(
   account?: string,
+  opts: { requireAccount?: boolean } = {},
 ): Promise<{ tenant: Tenant; tenantId: string }> {
+  // A destructive op on an EXISTING message must name its account once the user
+  // has more than one mailbox — refuse rather than silently falling back to the
+  // active mailbox (the client always names it for these; a missing one is a
+  // bug, not intent). Single-account sessions keep the active fallback as-is.
+  if (!account && opts.requireAccount && (await getUserAccounts()).length > 1) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "account must be specified for this operation",
+    });
+  }
   const tenantId = account
     ? await resolveAccountTenant(account)
     : await getTenantId();
@@ -492,7 +503,9 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const { tenant, tenantId } = await opAccount(input.account);
+      const { tenant, tenantId } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       if (input.action === "trash") {
         await withRetry(() => tenant.gmail.api.messages.trash({ id: input.id }));
         return { ok: true };
@@ -554,7 +567,9 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const { tenant } = await opAccount(input.account);
+      const { tenant } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       const change: Record<
         typeof input.action,
         { add?: string[]; remove?: string[] }
@@ -592,7 +607,9 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const { tenant, tenantId } = await opAccount(input.account);
+      const { tenant, tenantId } = await opAccount(input.account, {
+        requireAccount: true,
+      });
       for (const id of input.ids) {
         await withRetry(() => tenant.gmail.api.messages.delete({ id }));
         await purgeCachedEntity(tenantId, id);
