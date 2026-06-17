@@ -16,7 +16,10 @@ const TURNSTILE = "https://challenges.cloudflare.com";
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
-  "form-action 'self'",
+  // 'self' for the Connect form's POST to /api/oauth/start; Google's OAuth
+  // origin because that POST 303-redirects to the consent screen and Chrome
+  // enforces form-action against the redirect target.
+  "form-action 'self' https://accounts.google.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
   `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: ${TURNSTILE}`,
