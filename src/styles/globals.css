@@ -1009,13 +1009,6 @@
 @layer components {
   .search-wrap {
     position: relative;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .search-wrap > .field {
-    flex: 1;
-    min-width: 0;
   }
   .search-wrap > .kbd {
     position: absolute;
@@ -1027,34 +1020,6 @@
   }
   .search-wrap:focus-within > .kbd {
     opacity: 0;
-  }
-  /* Keyword (Corsair .db search) / Smart (semantic) toggle */
-  .search-mode {
-    display: inline-flex;
-    flex: none;
-    border: 1px solid var(--color-line-strong);
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-  }
-  .search-mode button {
-    padding: 0.18rem 0.5rem;
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--color-ink-3);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    white-space: nowrap;
-    transition:
-      background 0.12s var(--ease-snap),
-      color 0.12s var(--ease-snap);
-  }
-  .search-mode button + button {
-    border-left: 1px solid var(--color-line);
-  }
-  .search-mode button[data-on="true"] {
-    background: var(--color-accent-wash);
-    color: var(--color-accent-strong);
   }
   /* Parsed-operator chips beneath the search bar */
   .search-chips {

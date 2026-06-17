@@ -1,7 +1,13 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { buildFilters, matchesFlags, parseQuery } from "@/lib/search-operators";
+import {
+  buildFilters,
+  matchesFlags,
+  matchesOperators,
+  parseQuery,
+  tieredBoost,
+} from "@/lib/search-operators";
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
@@ -75,6 +81,8 @@ const MAIL_WINDOW = 300;
 // Wider read used only to hydrate semantic-search hits (which can reach beyond
 // the list window) back into full rows. Submit-driven, so the cost is rare.
 const SEARCH_WINDOW = 2000;
+// Semantic candidate pool that smartSearch re-ranks with the keyword boost.
+const SMART_POOL = 150;
 
 // Gmail's messages.list returns only id/threadId stubs, so each id is hydrated
 // with metadata (from, subject, snippet, date) for the list view. Each get
@@ -164,52 +172,6 @@ export const gmailRouter = createTRPCRouter({
       };
     }),
 
-  // Keyword search through Corsair's `.db` search API — Gmail-style operators
-  // (from:, to:, subject:, is:unread/read/starred/unstarred) compile straight to
-  // `gmail.db.messages.search` filters, and free text matches subject/snippet/from.
-  // Instant + exact over the local cache, no embeddings (the semantic path is the
-  // separate semanticSearch query). Status flags post-filter on labels, which
-  // aren't a searchable field.
-  keywordSearch: authedProcedure
-    .input(
-      z.object({
-        query: z.string().max(256),
-        folder: folderSchema,
-        limit: z.number().min(1).max(MAIL_WINDOW).default(40),
-      }),
-    )
-    .query(async ({ input }) => {
-      const parsed = parseQuery(input.query.trim());
-      const filters = buildFilters(parsed);
-
-      const window = await listOrEmpty(async () => {
-        const tenant = await getTenant();
-        if (filters.length === 0) {
-          // Only status flags (or nothing) — scan the window; flags applied below.
-          return tenant.gmail.db.messages.list({ limit: MAIL_WINDOW, offset: 0 });
-        }
-        const results = await Promise.all(
-          filters.map((data) =>
-            tenant.gmail.db.messages.search({ data, limit: MAIL_WINDOW, offset: 0 }),
-          ),
-        );
-        return results.flat();
-      });
-
-      const all = sortMessagesNewestFirst(
-        dedupeByEntityId(window).map(mapMessage),
-      )
-        .filter((message) => message.hydrated)
-        .filter((message) => matchesFlags(message, parsed))
-        .filter(FOLDER_FILTERS[input.folder]);
-
-      return {
-        items: all.slice(0, input.limit),
-        hasMore: all.length > input.limit,
-        windowFull: window.length >= MAIL_WINDOW,
-      };
-    }),
-
   // Warm the semantic index: embed any cached messages that are new or changed
   // since last call. Hash-deduped, so steady state embeds nothing — cheap to
   // call after every sync. The client runs this in the background.
@@ -235,24 +197,53 @@ export const gmailRouter = createTRPCRouter({
     return { indexed };
   }),
 
-  // Semantic search: embed the query, cosine-KNN over this tenant's embedded
-  // mail, then hydrate the hits from the cache in similarity order.
-  semanticSearch: authedProcedure
+  // Unified search. Gmail-style operators (from:/to:/subject:/is:…) FILTER the
+  // results; the free text is RANKED by semantic similarity plus an adaptive
+  // keyword boost (tieredBoost) — the architecture an offline eval over the real
+  // mailbox picked as the best of both worlds (beats pure semantic and every
+  // static fusion). A query with only operators/flags is a pure cache filter;
+  // free text re-ranks the semantic candidate pool.
+  smartSearch: authedProcedure
     .input(
       z.object({
-        query: z.string().min(1).max(256),
-        limit: z.number().min(1).max(100).default(40),
+        query: z.string().max(256),
+        folder: folderSchema,
+        limit: z.number().min(1).max(MAIL_WINDOW).default(40),
       }),
     )
     .query(async ({ input }) => {
       const tenantId = await getTenantId();
-      if (!tenantId) return { items: [] };
-      const hits = await semanticSearchIds(
-        tenantId,
-        input.query.trim(),
-        input.limit,
-      );
-      if (hits.length === 0) return { items: [] };
+      if (!tenantId) return { items: [], hasMore: false };
+      const parsed = parseQuery(input.query.trim());
+      const text = parsed.text ?? "";
+
+      // No free text → pure Corsair `.db` filter (operators + flags), recency order.
+      if (!text) {
+        const filters = buildFilters(parsed);
+        const window = await listOrEmpty(async () => {
+          const tenant = await getTenant();
+          if (filters.length === 0) {
+            return tenant.gmail.db.messages.list({ limit: MAIL_WINDOW, offset: 0 });
+          }
+          const results = await Promise.all(
+            filters.map((data) =>
+              tenant.gmail.db.messages.search({ data, limit: MAIL_WINDOW, offset: 0 }),
+            ),
+          );
+          return results.flat();
+        });
+        const all = sortMessagesNewestFirst(dedupeByEntityId(window).map(mapMessage))
+          .filter((m) => m.hydrated)
+          .filter((m) => matchesFlags(m, parsed) && matchesOperators(m, parsed))
+          .filter(FOLDER_FILTERS[input.folder]);
+        return { items: all.slice(0, input.limit), hasMore: all.length > input.limit };
+      }
+
+      // Free text → semantic candidate pool, re-ranked by the tiered keyword
+      // boost, then filtered by any operators/flags/folder.
+      const hits = await semanticSearchIds(tenantId, text, SMART_POOL);
+      if (hits.length === 0) return { items: [], hasMore: false };
+      const semScore = new Map(hits.map((hit) => [hit.messageId, hit.score]));
       const window = await listOrEmpty(async () => {
         const tenant = await getTenant();
         return tenant.gmail.db.messages.list({ limit: SEARCH_WINDOW, offset: 0 });
@@ -263,12 +254,19 @@ export const gmailRouter = createTRPCRouter({
           .filter((message) => message.hydrated)
           .map((message) => [message.id, message] as const),
       );
-      const items = hits
+      const ranked = hits
         .map((hit) => byId.get(hit.messageId))
-        .filter((message): message is NonNullable<typeof message> =>
-          Boolean(message),
-        );
-      return { items };
+        .filter((message): message is NonNullable<typeof message> => Boolean(message))
+        .filter((message) => matchesFlags(message, parsed) && matchesOperators(message, parsed))
+        .filter(FOLDER_FILTERS[input.folder])
+        .map((message) => ({
+          message,
+          score: (semScore.get(message.id) ?? 0) + tieredBoost(text, message),
+        }))
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.message);
+
+      return { items: ranked.slice(0, input.limit), hasMore: ranked.length > input.limit };
     }),
 
   getMessage: authedProcedure

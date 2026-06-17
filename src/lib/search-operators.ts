@@ -98,6 +98,41 @@ export function matchesFlags(
   return true;
 }
 
+/**
+ * Adaptive keyword boost added on top of a message's semantic similarity score.
+ * Chosen by an offline eval over the real mailbox (TIERED beat pure semantic and
+ * every static fusion): a strong lift when the free text appears verbatim in the
+ * subject, a medium lift when every term is present, a scaled lift for partial
+ * overlap, and ZERO otherwise — so paraphrase/conceptual queries (no real overlap)
+ * stay pure-semantic and never pick up keyword noise.
+ */
+export function tieredBoost(
+  text: string,
+  m: { subject: string; snippet: string; from: string },
+): number {
+  if (!text) return 0;
+  const phrase = text.toLowerCase();
+  const subject = m.subject.toLowerCase();
+  if (phrase.length >= 3 && subject.includes(phrase)) return 0.35;
+  const hay = `${subject} ${m.snippet.toLowerCase()} ${m.from.toLowerCase()}`;
+  const tokens = [...new Set(phrase.split(/\s+/).filter((t) => t.length >= 2))];
+  if (tokens.length === 0) return 0;
+  const frac = tokens.filter((t) => hay.includes(t)).length / tokens.length;
+  if (frac >= 0.999) return 0.2;
+  if (frac >= 0.6) return 0.2 * frac;
+  return 0;
+}
+
+/** Field-operator filter: a message must contain each from:/to:/subject: value. */
+export function matchesOperators(
+  m: { from: string; to: string; subject: string },
+  q: ParsedQuery,
+): boolean {
+  const has = (hay: string, needle?: string) =>
+    !needle || hay.toLowerCase().includes(needle.toLowerCase());
+  return has(m.from, q.from) && has(m.to, q.to) && has(m.subject, q.subject);
+}
+
 /** True when the query carries any actionable filter. */
 export function hasFilters(q: ParsedQuery): boolean {
   return (
