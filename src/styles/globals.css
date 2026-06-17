@@ -1917,18 +1917,6 @@
     --tw: 0.6;
     animation: lp-twinkle ease-in-out infinite;
   }
-  .lp-star-key {
-    fill: #7dd3fc;
-    --tw: 0.78;
-  }
-  .lp-star-lines polyline {
-    fill: none;
-    stroke: #38bdf8;
-    stroke-width: 0.08;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    opacity: 0.12;
-  }
   @keyframes lp-twinkle {
     0%,
     100% {
