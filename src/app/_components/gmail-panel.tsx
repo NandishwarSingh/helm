@@ -1497,7 +1497,7 @@ export function GmailPanel({
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder={`Search ${view} — from:, subject:, is:unread…`}
+                  placeholder={`Search ${view}`}
                 />
                 {searching ? (
                   <div
