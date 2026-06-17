@@ -34,11 +34,14 @@ export function ConnectGoogle({
   children = "Connect Google",
   withArrow = false,
   secondary,
+  formId,
 }: {
   className?: string;
   children?: ReactNode;
   withArrow?: boolean;
   secondary?: { href: string; label: string };
+  /** Stable id so another control (e.g. the nav CTA) can submit this form. */
+  formId?: string;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const hiddenRef = useRef<HTMLInputElement>(null);
@@ -74,6 +77,7 @@ export function ConnectGoogle({
   return (
     <form
       ref={formRef}
+      id={formId}
       method="POST"
       action="/api/oauth/start"
       onSubmit={onSubmit}

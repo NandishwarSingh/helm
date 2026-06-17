@@ -590,9 +590,22 @@ export function Landing() {
         </div>
         <span className="topbar-spacer" />
         <LandingThemeToggle />
-        <a className="btn btn-primary lp-nav-cta" href="#start">
+        <button
+          type="button"
+          className="btn btn-primary lp-nav-cta"
+          onClick={() => {
+            // Drive the hero's connect form (reusing its Turnstile token) and
+            // scroll it into view so a still-verifying state is visible —
+            // `href="#start"` did nothing when already at the top of the page.
+            const form = document.getElementById(
+              "hero-connect",
+            ) as HTMLFormElement | null;
+            form?.scrollIntoView({ behavior: "smooth", block: "center" });
+            form?.requestSubmit();
+          }}
+        >
           Connect Google
-        </a>
+        </button>
       </nav>
 
       <main>
@@ -623,6 +636,7 @@ export function Landing() {
           </p>
           <div className="lp-cta-row lp-rise" style={{ animationDelay: "0.24s" }}>
             <ConnectGoogle
+              formId="hero-connect"
               withArrow
               secondary={{ href: "#features", label: "See it fly" }}
             />

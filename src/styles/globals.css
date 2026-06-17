@@ -2806,7 +2806,6 @@
     line-height: 1.2;
     color: var(--color-ink);
     background: var(--color-accent-wash);
-    border-left: 2px solid var(--color-accent);
     border-radius: var(--radius-sm);
     overflow: hidden;
   }
