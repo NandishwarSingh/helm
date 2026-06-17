@@ -16,24 +16,24 @@ import { getTenantId } from "@/server/lib/session";
 export async function GET(request: NextRequest) {
   const { ok } = await rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
   if (!ok) {
-    return NextResponse.redirect(new URL("/?error=rate_limited", request.url));
+    return NextResponse.redirect(new URL("/?error=rate_limited", env.NEXT_PUBLIC_SITE_URL));
   }
 
   const params = request.nextUrl.searchParams;
 
   if (params.get("error")) {
-    return NextResponse.redirect(new URL("/?error=denied", request.url));
+    return NextResponse.redirect(new URL("/?error=denied", env.NEXT_PUBLIC_SITE_URL));
   }
 
   const code = params.get("code");
   const state = params.get("state");
   if (!code || !state) {
-    return NextResponse.redirect(new URL("/?error=missing_code", request.url));
+    return NextResponse.redirect(new URL("/?error=missing_code", env.NEXT_PUBLIC_SITE_URL));
   }
 
   const tenantId = verifyState(state, Date.now());
   if (!tenantId) {
-    return NextResponse.redirect(new URL("/?error=bad_state", request.url));
+    return NextResponse.redirect(new URL("/?error=bad_state", env.NEXT_PUBLIC_SITE_URL));
   }
 
   // The state must belong to THIS browser's session. Without this check a
@@ -41,11 +41,11 @@ export async function GET(request: NextRequest) {
   // attacker's tenant (OAuth login-CSRF).
   const sessionTenantId = await getTenantId();
   if (sessionTenantId !== tenantId) {
-    return NextResponse.redirect(new URL("/?error=bad_state", request.url));
+    return NextResponse.redirect(new URL("/?error=bad_state", env.NEXT_PUBLIC_SITE_URL));
   }
 
   // Must be byte-identical to the redirect_uri sent in /oauth/start — build it
-  // from the canonical site URL, not the proxied request.url.
+  // from the canonical site URL, not the proxied env.NEXT_PUBLIC_SITE_URL.
   const redirectUri = new URL(
     "/api/oauth/callback",
     env.NEXT_PUBLIC_SITE_URL,
@@ -53,12 +53,12 @@ export async function GET(request: NextRequest) {
   try {
     const tokens = await exchangeCode(code, redirectUri);
     await storeGoogleTokens(tenantId, tokens);
-    return NextResponse.redirect(new URL("/?connected=1", request.url));
+    return NextResponse.redirect(new URL("/?connected=1", env.NEXT_PUBLIC_SITE_URL));
   } catch (error) {
     console.error(
       "oauth callback failed:",
       error instanceof Error ? error.message : error,
     );
-    return NextResponse.redirect(new URL("/?error=oauth_callback", request.url));
+    return NextResponse.redirect(new URL("/?error=oauth_callback", env.NEXT_PUBLIC_SITE_URL));
   }
 }
