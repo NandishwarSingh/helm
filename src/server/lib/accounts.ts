@@ -14,6 +14,7 @@ import {
   userAccounts,
   users,
 } from "@/server/db/schema";
+import { stopCalendarWatch } from "@/server/lib/calendar-watch";
 import { getGmailEmail } from "@/server/lib/gmail-watch";
 import { issueUserCookie, setActiveAccountCookie } from "@/server/lib/session";
 
@@ -81,6 +82,7 @@ export async function teardownTenant(tenantId: string): Promise<void> {
   await db.delete(mailSync).where(eq(mailSync.tenantId, tenantId));
   await db.delete(mailTriage).where(eq(mailTriage.tenantId, tenantId));
   await db.delete(gmailWatch).where(eq(gmailWatch.tenantId, tenantId));
+  await stopCalendarWatch(tenantId);
   // mail_embeddings is a raw (non-Drizzle) table.
   await conn`delete from mail_embeddings where tenant_id = ${tenantId}`;
 }

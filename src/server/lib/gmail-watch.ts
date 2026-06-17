@@ -19,7 +19,7 @@ import { gmailWatch } from "@/server/db/schema";
 const GMAIL_TOPIC =
   process.env.GMAIL_PUBSUB_TOPIC ?? "projects/helm-499111/topics/helm-gmail";
 
-async function freshAccessToken(tenantId: string): Promise<string> {
+export async function freshAccessToken(tenantId: string): Promise<string> {
   const tenant = corsair.withTenant(tenantId);
   // Forces Corsair to refresh + persist a current access token.
   await tenant.gmail.api.messages.list({ maxResults: 1 });

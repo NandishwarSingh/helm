@@ -112,3 +112,17 @@ export const userAccounts = pgTable('user_accounts', {
     uniqueIndex('user_accounts_tenant_uniq').on(table.tenantId),
     index('user_accounts_user_idx').on(table.userId),
 ]);
+
+// Maps a Google Calendar push channel to its tenant. Calendar pushes carry no
+// body — just an X-Goog-Channel-Id header — so the tenant is looked up here to
+// route + notify. Renewed by the cron (a channel expires) and torn down on
+// account removal.
+export const calendarWatch = pgTable('calendar_watch', {
+    channelId: text('channel_id').primaryKey(),
+    tenantId: text('tenant_id').notNull(),
+    resourceId: text('resource_id'),
+    expiration: text('expiration'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+    index('calendar_watch_tenant_idx').on(table.tenantId),
+]);

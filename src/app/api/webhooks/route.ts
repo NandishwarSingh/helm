@@ -6,6 +6,7 @@ import { after, NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
+import { calendarTenantForChannel } from "@/server/lib/calendar-watch";
 import { gmailPushEmail, tenantsForEmail } from "@/server/lib/gmail-watch";
 import { syncNewMailForTenant } from "@/server/lib/mail-sync";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
@@ -101,6 +102,22 @@ export async function POST(request: NextRequest) {
   request.headers.forEach((value, key) => {
     headers[key] = value;
   });
+
+  // Calendar channels carry no body — just headers with an X-Goog-Channel-Id.
+  // Gmail's Pub/Sub pushes never set that header, so this cleanly separates the
+  // two without touching the Gmail path. Route by channel -> tenant and notify;
+  // the client live-pulls the calendar on the SSE event.
+  const calendarChannelId = headers["x-goog-channel-id"];
+  if (calendarChannelId) {
+    const state = headers["x-goog-resource-state"];
+    const tenant =
+      (await calendarTenantForChannel(calendarChannelId)) ?? env.TENANT_ID;
+    // "sync" is the initial handshake (no change yet); real edits fire "exists".
+    if (state && state !== "sync") {
+      after(() => notifyTenant(tenant, "calendar"));
+    }
+    return NextResponse.json({ ok: true });
+  }
 
   const contentType = request.headers.get("content-type");
   let body: string | Record<string, unknown>;

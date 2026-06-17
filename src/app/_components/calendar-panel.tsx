@@ -205,16 +205,17 @@ export function CalendarPanel({
     };
   }, []);
 
-  // Realtime: a Corsair calendar webhook pushes "changed" over SSE → refetch
-  // the week instantly instead of waiting for the background pull.
+  // Realtime: a calendar push fans "changed" (kind "calendar") over SSE. The
+  // push only signals a change, so pull the visible week LIVE from Google
+  // (which then invalidates the grid). Mail-only changes are ignored here.
   useEffect(() => {
     if (typeof window === "undefined" || !("EventSource" in window)) return;
     const source = new EventSource("/api/stream");
-    source.addEventListener("changed", () => {
-      void utils.calendar.searchEvents.invalidate();
+    source.addEventListener("changed", (e) => {
+      if (e.data === "calendar") pullRef.current();
     });
     return () => source.close();
-  }, [utils]);
+  }, []);
 
   function closeDialog() {
     setSummary("");

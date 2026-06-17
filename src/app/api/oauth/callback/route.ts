@@ -2,6 +2,7 @@ import { after, type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { linkAddedAccount } from "@/server/lib/accounts";
+import { armCalendarWatch } from "@/server/lib/calendar-watch";
 import {
   armGmailWatch,
   getGmailEmail,
@@ -77,6 +78,7 @@ export async function GET(request: NextRequest) {
         try {
           await rememberGmailTenant(tenantId, email);
           await armGmailWatch(tenantId);
+          await armCalendarWatch(tenantId);
         } catch (error) {
           console.error(
             "[oauth] watch registration failed:",
@@ -91,6 +93,7 @@ export async function GET(request: NextRequest) {
           const email = await getGmailEmail(tenantId);
           if (email) await rememberGmailTenant(tenantId, email);
           await armGmailWatch(tenantId);
+          await armCalendarWatch(tenantId);
         } catch (error) {
           console.error(
             "[oauth] watch registration failed:",

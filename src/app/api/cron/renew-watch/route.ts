@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
+import { armCalendarWatch } from "@/server/lib/calendar-watch";
 import {
   allWatchTenants,
   armGmailWatch,
@@ -51,11 +52,18 @@ export async function POST(request: NextRequest) {
   const renewed = results.filter((r) => r.expiration !== null).length;
   console.log(`[renew-watch] re-armed ${renewed}/${tenants.length} watch(es)`);
 
+  // Calendar push channels also expire — re-arm one per connected tenant.
+  const calRenewed = (
+    await Promise.all(tenants.map((t) => armCalendarWatch(t)))
+  ).filter((e) => e !== null).length;
+  console.log(`[renew-watch] re-armed ${calRenewed} calendar channel(s)`);
+
   // A partial failure (a tenant whose token expired/was revoked) isn't a server
   // error — report counts and let the next run retry the laggards.
   return NextResponse.json({
     ok: renewed === tenants.length,
     renewed,
     total: tenants.length,
+    calendarRenewed: calRenewed,
   });
 }

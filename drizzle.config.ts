@@ -21,6 +21,7 @@ export default {
     "mail_sync",
     "mail_triage",
     "gmail_watch",
+    "calendar_watch",
     "users",
     "user_accounts",
   ],
