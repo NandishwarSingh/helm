@@ -31,13 +31,20 @@ Current date and time: ${now.toISOString()} (UTC). The user's local timezone is 
 Find mail (cached, fast — prefer this to locate messages):
   const rows = await corsair.gmail.db.messages.search({ data: { subject: { contains: "KEYWORD" } }, limit: 8, offset: 0 });
   return rows.map(m => ({ id: m.entity_id, from: m.data.from, subject: m.data.subject, snippet: (m.data.snippet||"").slice(0,140) }));
-  // search other fields with { from: { contains: "..." } } or { snippet: { contains: "..." } }
+  // search other fields with { from: { contains: "..." } } or { snippet: { contains: "..." } } — substring match ONLY; gmail.db.search has NO date/range/comparison operators (never put an internalDate range in search()).
 
 Latest inbox mail (cached):
   const rows = await corsair.gmail.db.messages.list({ limit: 200, offset: 0 });
   return rows.filter(m => (m.data.labelIds||[]).includes("INBOX"))
     .sort((a,b)=>Number(b.data.internalDate||0)-Number(a.data.internalDate||0)).slice(0,10)
     .map(m=>({ id:m.entity_id, from:m.data.from, subject:m.data.subject, unread:(m.data.labelIds||[]).includes("UNREAD") }));
+
+Mail in a date range — "this week", "today", "since Monday" (internalDate is epoch MILLISECONDS as a string, NOT ISO; gmail.db has NO date operators, so list then filter in JS on Number(internalDate)):
+  const sinceMs = Date.now() - 7*24*60*60*1000;  // last 7 days — adjust the window to the request
+  const rows = await corsair.gmail.db.messages.list({ limit: 200, offset: 0 });
+  return rows.filter(m => (m.data.labelIds||[]).includes("INBOX") && Number(m.data.internalDate||0) >= sinceMs)
+    .sort((a,b)=>Number(b.data.internalDate||0)-Number(a.data.internalDate||0)).slice(0,15)
+    .map(m=>({ id:m.entity_id, from:m.data.from, subject:m.data.subject, snippet:(m.data.snippet||"").slice(0,120) }));
 
 Read one email in full (live):
   const m = await corsair.gmail.api.messages.get({ id: "MESSAGE_ID", format: "full" });
