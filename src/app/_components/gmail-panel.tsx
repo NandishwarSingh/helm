@@ -617,6 +617,18 @@ export function GmailPanel({
     };
   }, []);
 
+  // Realtime push: Corsair webhooks fan a "changed" event out over SSE, so new
+  // mail lands the instant Google notifies us — no waiting for the poll. The
+  // EventSource auto-reconnects; the poll above stays as a fallback.
+  const refreshRef = useRef(refreshMailViews);
+  refreshRef.current = refreshMailViews;
+  useEffect(() => {
+    if (typeof window === "undefined" || !("EventSource" in window)) return;
+    const source = new EventSource("/api/stream");
+    source.addEventListener("changed", () => void refreshRef.current());
+    return () => source.close();
+  }, []);
+
   function closeCompose() {
     setTo("");
     setCc("");

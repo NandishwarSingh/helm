@@ -172,6 +172,17 @@ export function CalendarPanel({
     };
   }, []);
 
+  // Realtime: a Corsair calendar webhook pushes "changed" over SSE → refetch
+  // the week instantly instead of waiting for the background pull.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("EventSource" in window)) return;
+    const source = new EventSource("/api/stream");
+    source.addEventListener("changed", () => {
+      void utils.calendar.searchEvents.invalidate();
+    });
+    return () => source.close();
+  }, [utils]);
+
   function closeDialog() {
     setSummary("");
     setDescription("");

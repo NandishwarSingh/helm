@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
+import { notifyTenant } from "@/server/lib/realtime";
 
 /**
  * Receives Google push notifications (Gmail watch, Calendar channels) and
@@ -36,6 +37,10 @@ export async function POST(request: NextRequest) {
     const result = await processWebhook(corsair, headers, body, {
       tenantId: env.TENANT_ID,
     });
+
+    // A handled push means the cache just changed — wake every open SSE
+    // connection for this tenant so the UI refetches instantly (no polling).
+    if (result.response) notifyTenant(env.TENANT_ID);
 
     const nextHeaders = new Headers();
     if (result.responseHeaders) {
