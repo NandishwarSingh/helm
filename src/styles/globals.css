@@ -2065,6 +2065,57 @@
       transform: translate(-50%, -40%) scale(1);
     }
   }
+  /* motes drifting in the spotlight — dust caught in the beam (dark only) */
+  .lp-motes {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    -webkit-mask-image: radial-gradient(
+      58% 60% at 34% 16%,
+      #000 28%,
+      transparent 80%
+    );
+    mask-image: radial-gradient(58% 60% at 34% 16%, #000 28%, transparent 80%);
+  }
+  .lp-mote {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgba(219, 239, 255, 0.95) 0%,
+      rgba(186, 230, 253, 0) 70%
+    );
+    opacity: 0;
+    animation-name: lp-mote-drift, lp-mote-twinkle;
+    animation-timing-function: ease-in-out, ease-in-out;
+    animation-iteration-count: infinite, infinite;
+    animation-direction: alternate, normal;
+    will-change: transform, opacity;
+  }
+  @keyframes lp-mote-drift {
+    to {
+      transform: translate(var(--dx), var(--dy));
+    }
+  }
+  @keyframes lp-mote-twinkle {
+    0%,
+    100% {
+      opacity: calc(var(--o) * 0.22);
+    }
+    50% {
+      opacity: var(--o);
+    }
+  }
+  :root[data-theme="light"] .lp-motes {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lp-mote {
+      animation: none;
+      opacity: calc(var(--o) * 0.6);
+    }
+  }
   .lp-hero .lp-glyph {
     margin-bottom: 1.6rem;
   }

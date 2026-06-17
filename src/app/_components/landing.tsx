@@ -459,6 +459,81 @@ function Spotlight() {
   );
 }
 
+// Deterministic PRNG (mulberry32) so seeded mote positions match SSR and client.
+function moteRng(seed: number) {
+  return () => {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+type Mote = {
+  x: number;
+  y: number;
+  s: number;
+  dx: number;
+  dy: number;
+  o: number;
+  dur: number;
+  tw: number;
+  delay: number;
+};
+
+function buildMotes(count: number): Mote[] {
+  const rand = moteRng(7138);
+  const motes: Mote[] = [];
+  for (let i = 0; i < count; i++) {
+    // Bias toward the upper-left, where the spotlight blooms brightest.
+    const bx = Math.pow(rand(), 1.5);
+    const by = Math.pow(rand(), 1.5);
+    motes.push({
+      x: +(4 + bx * 62).toFixed(2),
+      y: +(2 + by * 44).toFixed(2),
+      s: +(2 + rand() * 3.5).toFixed(1),
+      dx: +((rand() - 0.5) * 26).toFixed(1),
+      dy: +(-6 - rand() * 16).toFixed(1),
+      o: +(0.25 + rand() * 0.4).toFixed(2),
+      dur: +(8 + rand() * 8).toFixed(1),
+      tw: +(3 + rand() * 4).toFixed(1),
+      delay: +(rand() * 8).toFixed(1),
+    });
+  }
+  return motes;
+}
+
+const MOTES = buildMotes(22);
+
+// Fine motes drifting in the spotlight — dust caught in a sunbeam. Pure CSS,
+// seeded for SSR safety, masked to the beam so they only glow where it's lit.
+function Motes() {
+  return (
+    <div className="lp-motes" aria-hidden="true">
+      {MOTES.map((m, i) => (
+        <span
+          key={i}
+          className="lp-mote"
+          style={
+            {
+              top: `${m.y}%`,
+              left: `${m.x}%`,
+              width: m.s,
+              height: m.s,
+              "--dx": `${m.dx}px`,
+              "--dy": `${m.dy}px`,
+              "--o": m.o,
+              animationDuration: `${m.dur}s, ${m.tw}s`,
+              animationDelay: `${m.delay}s, ${m.delay}s`,
+            } as React.CSSProperties
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 function SectionHead({ label, title }: { label: string; title: React.ReactNode }) {
   return (
     <div className="lp-head lp-rise">
@@ -519,6 +594,7 @@ export function Landing() {
         {/* hero */}
         <section className="lp-hero" id="start" ref={heroRef}>
           <Spotlight />
+          <Motes />
           <span className="lp-rise" style={{ animationDelay: "0s" }}>
             <HelmGlyph size={66} />
           </span>
