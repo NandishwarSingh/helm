@@ -458,6 +458,39 @@
   .acct-add {
     color: var(--color-accent);
   }
+  .acct-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border-radius: 6px;
+  }
+  .acct-row[data-on="true"] {
+    background: var(--color-paper-sunken);
+  }
+  .acct-pick {
+    flex: 1;
+    min-width: 0;
+  }
+  .acct-mini {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-ink-3);
+    cursor: pointer;
+  }
+  .acct-mini:hover {
+    background: var(--color-line);
+    color: var(--color-ink);
+  }
+  .acct-remove:hover {
+    color: #e5484d;
+  }
   /* Per-row account dot in the unified ("all accounts") mail list. */
   .row-acct {
     flex: none;

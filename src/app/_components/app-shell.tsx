@@ -158,6 +158,40 @@ export function AppShell() {
       ? "var(--color-accent)"
       : (accountList.find((a) => a.id === activeAccount)?.color ??
         "var(--color-accent)");
+  const setPrimaryM = api.accounts.setPrimary.useMutation({
+    onSuccess: () => void utils.accounts.list.invalidate(),
+  });
+  const removeM = api.accounts.remove.useMutation({
+    onSuccess: () => {
+      void utils.accounts.list.invalidate();
+      void utils.gmail.invalidate();
+      void utils.triage.invalidate();
+      void utils.calendar.invalidate();
+    },
+  });
+  // "Add account" is an authenticated form POST (intent=add); submit one
+  // programmatically so it can be triggered from the menu or the palette.
+  function addAccount() {
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = "/api/oauth/start";
+    const field = document.createElement("input");
+    field.type = "hidden";
+    field.name = "intent";
+    field.value = "add";
+    form.appendChild(field);
+    document.body.appendChild(form);
+    form.submit();
+  }
+  // Esc closes the open account menu.
+  useEffect(() => {
+    if (!acctMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAcctMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [acctMenuOpen]);
 
   // G-chords: G then a second key jumps anywhere. Runs in the capture phase
   // so a consumed chord key never reaches the panel handlers.
@@ -363,20 +397,64 @@ export function AppShell() {
                       </button>
                     )}
                     {accountList.map((a) => (
-                      <button
+                      <div
                         key={a.id}
-                        type="button"
-                        className="acct-opt"
+                        className="acct-row"
                         data-on={activeAccount === a.id}
-                        onClick={() => pickAccount(a.id)}
                       >
-                        <span
-                          className="acct-dot"
-                          style={{ background: a.color ?? "var(--color-accent)" }}
-                        />
-                        <span className="acct-opt-email">{a.email}</span>
-                        {a.isPrimary && <span className="acct-tag">primary</span>}
-                      </button>
+                        <button
+                          type="button"
+                          className="acct-opt acct-pick"
+                          onClick={() => pickAccount(a.id)}
+                          title={a.email}
+                        >
+                          <span
+                            className="acct-dot"
+                            style={{
+                              background: a.color ?? "var(--color-accent)",
+                            }}
+                          />
+                          <span className="acct-opt-email">{a.email}</span>
+                        </button>
+                        {a.isPrimary ? (
+                          <span className="acct-tag">primary</span>
+                        ) : (
+                          multiAccount && (
+                            <button
+                              type="button"
+                              className="acct-mini"
+                              title="Make primary"
+                              aria-label="Make primary"
+                              onClick={() =>
+                                setPrimaryM.mutate({ accountId: a.id })
+                              }
+                            >
+                              <StarIcon size={12} />
+                            </button>
+                          )
+                        )}
+                        {multiAccount && (
+                          <button
+                            type="button"
+                            className="acct-mini acct-remove"
+                            title="Remove account"
+                            aria-label="Remove account"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  `Remove ${a.email}? It will be disconnected and its cached data deleted.`,
+                                )
+                              ) {
+                                if (activeAccount === a.id) setActiveAccount("all");
+                                removeM.mutate({ accountId: a.id });
+                                setAcctMenuOpen(false);
+                              }
+                            }}
+                          >
+                            <TrashIcon size={12} />
+                          </button>
+                        )}
+                      </div>
                     ))}
                     <form
                       action="/api/oauth/start"
@@ -509,6 +587,9 @@ export function AppShell() {
           setCreateOpen(true);
         }}
         onHelp={() => setHelpOpen(true)}
+        onAddAccount={addAccount}
+        accounts={accountList.map((a) => ({ id: a.id, email: a.email }))}
+        onSwitchAccount={pickAccount}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
       {firstRun && <FirstSyncVeil onEnter={() => setFirstRun(false)} />}

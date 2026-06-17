@@ -159,6 +159,19 @@ export function CalendarPanel({
   // The calendar an event lives in, so update/delete hit the right account.
   const eventAccountOf = (id: string | null): string | undefined =>
     id ? eventItems?.find((e) => e.id === id)?.accountId : undefined;
+  // Account colors for the unified ("all") grid badge.
+  const accountsQuery = api.accounts.list.useQuery(undefined, {
+    staleTime: 30_000,
+  });
+  const multiAccount = accountsQuery.data?.multi ?? false;
+  const accountColor = (id: string | undefined): string => {
+    if (!id) return "var(--color-accent)";
+    return (
+      accountsQuery.data?.accounts.find((a) => a.id === id)?.color ??
+      "var(--color-accent)"
+    );
+  };
+  const showAcct = account === "all" && multiAccount;
 
   const refreshEvents = api.calendar.refreshEvents.useMutation({
     onSuccess: async () => {
@@ -683,6 +696,14 @@ export function CalendarPanel({
                       className="calgrid-alldaychip"
                       data-active={selectedEventId === event.id}
                       data-event-id={event.id}
+                      style={
+                        showAcct
+                          ? {
+                              borderLeft: `3px solid ${accountColor(event.accountId)}`,
+                            }
+                          : undefined
+                      }
+                      title={showAcct ? event.accountEmail : undefined}
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedEventId(event.id);
@@ -748,7 +769,13 @@ export function CalendarPanel({
                       height,
                       left: `calc(${(lane / lanes) * 100}% + 2px)`,
                       width: `calc(${100 / lanes}% - 5px)`,
+                      ...(showAcct
+                        ? {
+                            borderLeft: `3px solid ${accountColor(event.accountId)}`,
+                          }
+                        : {}),
                     }}
+                    title={showAcct ? event.accountEmail : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedEventId(event.id);

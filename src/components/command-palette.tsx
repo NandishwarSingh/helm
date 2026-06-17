@@ -27,6 +27,9 @@ type Props = {
   onCompose: () => void;
   onNewEvent: () => void;
   onHelp: () => void;
+  onAddAccount: () => void;
+  accounts?: { id: string; email: string }[];
+  onSwitchAccount?: (id: string) => void;
 };
 
 async function signOut() {
@@ -44,6 +47,9 @@ export function CommandPalette({
   onCompose,
   onNewEvent,
   onHelp,
+  onAddAccount,
+  accounts,
+  onSwitchAccount,
 }: Props) {
   const paletteRef = useRef<HTMLDivElement>(null);
   useFocusTrap(paletteRef, open);
@@ -148,6 +154,32 @@ export function CommandPalette({
                     <span className="palette-keys">
                       <Kbd>3</Kbd>
                     </span>
+                  </Command.Item>
+                </Command.Group>
+
+                <Command.Group heading="Accounts">
+                  {onSwitchAccount && accounts && accounts.length > 1 && (
+                    <>
+                      <Command.Item
+                        onSelect={() => run(() => onSwitchAccount("all"))}
+                      >
+                        <MailIcon size={15} />
+                        All accounts
+                      </Command.Item>
+                      {accounts.map((a) => (
+                        <Command.Item
+                          key={a.id}
+                          onSelect={() => run(() => onSwitchAccount(a.id))}
+                        >
+                          <MailIcon size={15} />
+                          Switch to {a.email}
+                        </Command.Item>
+                      ))}
+                    </>
+                  )}
+                  <Command.Item onSelect={() => run(onAddAccount)}>
+                    <PlusIcon size={15} />
+                    Add account
                   </Command.Item>
                 </Command.Group>
 
