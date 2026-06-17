@@ -23,13 +23,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.50",
     "@ai-sdk/openai": "^3.0.70",
     "@ai-sdk/react": "^3.0.204",
     "@corsair-dev/cli": "^0.1.19",
     "@corsair-dev/gmail": "^0.1.3",
     "@corsair-dev/googlecalendar": "^0.1.2",
+    "@corsair-dev/mcp": "^0.1.22",
     "@fontsource-variable/hanken-grotesk": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@t3-oss/env-nextjs": "^0.13.11",
     "@tanstack/react-query": "^5.69.0",
     "@trpc/client": "^11.0.0",

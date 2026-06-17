@@ -127,38 +127,45 @@ function AgentText({ text }: { text: string }) {
   return <div className="agent-text">{blocks}</div>;
 }
 
-/** Friendly labels for tool activity chips. */
-function toolLabel(type: string, state: string, output: unknown): string {
+/**
+ * Friendly labels for tool activity chips. The agent runs on the Corsair MCP
+ * server, whose tools are `list_operations`, `get_schema` and `run_script` —
+ * run_script carries the real action as a code snippet, so we read its code to
+ * name the work instead of surfacing the raw tool name.
+ */
+function toolLabel(
+  type: string,
+  state: string,
+  input: unknown,
+  output: unknown,
+): string {
   const name = type.replace(/^tool-/, "");
   const done = state === "output-available";
-  const out = (output ?? {}) as Record<string, unknown>;
-  const count = typeof out.count === "number" ? ` · ${out.count}` : "";
-  switch (name) {
-    case "searchMail":
-      return done ? `Searched mail${count}` : "Searching mail";
-    case "listRecentMail":
-      return done ? `Listed inbox${count}` : "Listing inbox";
-    case "readEmail":
-      return done ? "Read email" : "Reading email";
-    case "sendEmail":
-      return done ? "Email sent" : "Sending email";
-    case "createDraft":
-      return done ? "Draft saved" : "Saving draft";
-    case "modifyMail":
-      return done
-        ? `Done: ${typeof out.action === "string" ? out.action : "updated"}`
-        : "Updating mail";
-    case "listEvents":
-      return done ? `Checked calendar${count}` : "Checking calendar";
-    case "createEvent":
-      return done
-        ? out.invitesSent
-          ? "Invite sent"
-          : "Event created"
-        : "Creating event";
-    default:
-      return done ? name : `${name}…`;
+
+  if (name === "list_operations") return done ? "Found tools" : "Finding tools";
+  if (name === "get_schema") return done ? "Checked the API" : "Checking the API";
+
+  if (name === "run_script") {
+    const code =
+      typeof (input as { code?: unknown } | null)?.code === "string"
+        ? (input as { code: string }).code
+        : "";
+    // Order matters: drafts.create also builds a MIME body, so check it first.
+    if (code.includes("drafts.create")) return done ? "Draft saved" : "Saving draft";
+    if (code.includes("messages.send")) return done ? "Email sent" : "Sending email";
+    if (code.includes("events.create")) return done ? "Event created" : "Creating event";
+    if (/events\.(getMany|list)/.test(code))
+      return done ? "Checked calendar" : "Checking calendar";
+    if (/messages\.(trash|modify|batchModify)/.test(code))
+      return done ? "Mail updated" : "Updating mail";
+    if (/messages\.get\b/.test(code)) return done ? "Read email" : "Reading email";
+    if (/db\.messages\.(search|list)/.test(code))
+      return done ? "Searched mail" : "Searching mail";
+    return done ? "Done" : "Working";
   }
+
+  void output;
+  return done ? name : `${name}…`;
 }
 
 export function AgentPanel() {
@@ -266,6 +273,7 @@ export function AgentPanel() {
                 if (part.type.startsWith("tool-")) {
                   const state =
                     "state" in part ? String(part.state) : "input-available";
+                  const input = "input" in part ? part.input : undefined;
                   const output = "output" in part ? part.output : undefined;
                   return (
                     <span
@@ -276,7 +284,7 @@ export function AgentPanel() {
                     >
                       {state === "output-error"
                         ? "Action failed"
-                        : toolLabel(part.type, state, output)}
+                        : toolLabel(part.type, state, input, output)}
                     </span>
                   );
                 }
