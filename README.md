@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/hero.png" alt="Helm — your inbox at the speed of thought" width="100%" />
+</p>
+
 # Helm
 
 **Live → [helm.houndcode.com](https://helm.houndcode.com)**
