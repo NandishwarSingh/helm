@@ -63,7 +63,20 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
     onEnter();
   };
 
-  const arm = () => setPhase((p) => (p === "syncing" ? "armed" : p));
+  // The syncing state ends (the cloth arms) only once BOTH the first sync has
+  // settled AND the cloth engine has loaded + rendered ("veil-ready") — else
+  // "Tear to enter" shows over a bare background with no cloth to tear.
+  const syncDone = useRef(false);
+  const veilReady = useRef(false);
+  const arm = () => {
+    if (syncDone.current && veilReady.current) {
+      setPhase((p) => (p === "syncing" ? "armed" : p));
+    }
+  };
+  const markSyncDone = () => {
+    syncDone.current = true;
+    arm();
+  };
 
   // Remember the real document title BEFORE the veil WASM overwrites it with
   // "Veil", and restore it whenever the overlay goes away (tear-through or
@@ -96,15 +109,22 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
           utils.triage.overview.invalidate(),
         ]),
       )
-      .finally(arm);
+      .finally(markSyncDone);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Separate, unguarded fail-open timer so the user is never trapped behind a
-  // stalled sync — even if the chain above never resolves.
+  // Fail-open timer so the user is never trapped: if the sync stalls, mark it
+  // done so a ready cloth can still arm; and if by then the cloth itself never
+  // loaded, let the user straight through rather than wait on a veil that will
+  // never appear.
   useEffect(() => {
-    const fallback = window.setTimeout(arm, SYNC_FALLBACK_MS);
+    const fallback = window.setTimeout(() => {
+      syncDone.current = true;
+      if (veilReady.current) arm();
+      else enter();
+    }, SYNC_FALLBACK_MS);
     return () => window.clearTimeout(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Mount and configure the cloth element imperatively (React never owns the
@@ -129,6 +149,11 @@ export function FirstSyncVeil({ onEnter }: { onEnter: () => void }) {
         el.setAttribute("interaction", "none");
         el.setAttribute("tearable", "false");
         el.style.setProperty("--veil-cursor", "progress");
+        // The cloth has loaded + rendered: it's now safe to arm (end syncing).
+        el.addEventListener("veil-ready", () => {
+          veilReady.current = true;
+          arm();
+        });
         el.addEventListener("veil-revealed", () => {
           setPhase("revealed");
           window.setTimeout(enter, FALL_MS);
