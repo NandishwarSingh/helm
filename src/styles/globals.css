@@ -2109,8 +2109,9 @@
     color: var(--color-ink);
   }
   .docs-chip[data-active="true"] {
-    color: var(--color-on-accent);
-    background: var(--color-accent);
+    color: var(--color-accent);
+    background: var(--color-accent-wash);
+    border-color: color-mix(in srgb, var(--color-accent) 42%, transparent);
     font-weight: 550;
   }
   .docs-chip-n {
@@ -2146,8 +2147,17 @@
     gap: 0.4rem;
   }
   .docs-group-n {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5em;
+    height: 1.45em;
+    padding: 0 0.4em;
+    border-radius: 999px;
+    background: var(--color-paper-sunken);
+    color: var(--color-ink-3);
     font-variant-numeric: tabular-nums;
-    opacity: 0.7;
+    font-weight: 500;
     text-transform: none;
     letter-spacing: 0;
   }
@@ -2172,12 +2182,14 @@
   }
   .docs-row[data-selected="true"] {
     background: var(--color-paper-sunken);
+    box-shadow: inset 2px 0 0 0 var(--color-accent);
   }
   .docs-row[data-pinned="true"] {
     background: var(--color-accent-wash);
   }
   .docs-row[data-pinned="true"][data-selected="true"] {
     background: var(--color-accent-wash);
+    box-shadow: inset 2px 0 0 0 var(--color-accent);
   }
   /* Primary row action: a transparent button holding the file content so the
      row opens on Enter/Space (keyboard-first), with pin/download as siblings. */
@@ -2204,7 +2216,24 @@
   .docs-row-icon {
     flex: none;
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
     color: var(--color-ink-3);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    transition:
+      color 0.12s var(--ease-snap),
+      border-color 0.12s var(--ease-snap);
+  }
+  .docs-row:hover .docs-row-icon {
+    color: var(--color-ink-2);
+  }
+  .docs-row[data-selected="true"] .docs-row-icon {
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-line));
   }
   .docs-row-main {
     flex: 1;
@@ -2228,6 +2257,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .docs-row-from {
+    color: var(--color-ink-2);
+  }
+  .docs-row-subject {
+    color: var(--color-ink-3);
+  }
+  /* Right-aligned metadata cluster — tabular widths keep size/date in columns
+     down the list instead of floating wherever the name ends. */
+  .docs-row-meta {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-left: 0.6rem;
+  }
   .docs-row-size {
     flex: none;
     color: var(--color-ink-3);
@@ -2240,6 +2285,7 @@
     flex: none;
     color: var(--color-ink-3);
     font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
     width: 58px;
     text-align: right;
   }
@@ -2267,40 +2313,32 @@
     justify-content: center;
     padding: 1rem 0 0.4rem;
   }
+  /* Quiet, on-system ghost button — matches .btn, no gradient/glow/shine. The
+     only colour is the accent arc while loading. */
   .docs-load-more {
-    position: relative;
-    isolation: isolate;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.45rem;
-    min-width: 154px;
-    height: 38px;
-    padding: 0 1rem;
-    overflow: hidden;
-    border: 1px solid
-      color-mix(in srgb, var(--color-accent-strong) 78%, var(--color-line));
-    border-bottom-width: 2px;
-    border-radius: 8px;
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--color-accent) 86%, var(--color-paper) 14%),
-        color-mix(in srgb, var(--color-accent) 74%, var(--color-ink) 26%)
-      );
-    box-shadow:
-      0 1px 0 color-mix(in srgb, var(--color-on-accent) 18%, transparent) inset,
-      0 10px 26px -18px var(--color-accent-strong);
-    color: var(--color-on-accent);
+    gap: 0.5rem;
+    height: 34px;
+    padding: 0 0.85rem 0 0.7rem;
+    color: var(--color-ink-2);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-lg);
     cursor: pointer;
     font: inherit;
-    font-size: 0.86rem;
-    font-weight: 650;
-    letter-spacing: 0;
+    font-size: 0.82rem;
+    font-weight: 500;
+    transition:
+      background 0.14s var(--ease-snap),
+      border-color 0.14s var(--ease-snap),
+      color 0.14s var(--ease-snap);
   }
   .docs-load-more:hover:not(:disabled) {
-    border-color: var(--color-accent);
-    filter: saturate(1.04);
+    color: var(--color-ink);
+    background: color-mix(in srgb, var(--color-paper-raised) 92%, var(--color-ink) 8%);
+    border-color: var(--color-ink-3);
   }
   .docs-load-more:focus-visible {
     outline: 2px solid var(--color-accent);
@@ -2308,53 +2346,33 @@
   }
   .docs-load-more:disabled {
     cursor: wait;
+    color: var(--color-ink-3);
   }
-  .docs-load-more-shine {
-    position: absolute;
-    inset: -35% auto -35% 0;
-    z-index: -1;
-    width: 58%;
-    transform: skewX(-18deg);
-    background: linear-gradient(
-      90deg,
-      transparent,
-      color-mix(in srgb, var(--color-on-accent) 42%, transparent),
-      transparent
-    );
-  }
-  .docs-load-more-label {
+  .docs-load-more-icon {
     flex: none;
-    line-height: 1;
+    display: inline-flex;
+    width: 15px;
+    height: 15px;
   }
-  .docs-load-more .kbd {
-    color: color-mix(in srgb, var(--color-on-accent) 82%, transparent);
-    background: color-mix(in srgb, var(--color-on-accent) 12%, transparent);
-    border-color: color-mix(in srgb, var(--color-on-accent) 26%, transparent);
-  }
-  .docs-load-more-glyph {
-    flex: none;
-    width: 20px;
-    height: 20px;
+  .docs-load-more-icon svg {
+    width: 15px;
+    height: 15px;
     overflow: visible;
     stroke: currentColor;
-    stroke-width: 1.9;
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
     fill: none;
   }
-  .docs-load-glyph-track,
-  .docs-load-glyph-progress {
-    transform-origin: 12px 12px;
+  .docs-load-more-spin-track {
+    opacity: 0.2;
   }
-  .docs-load-glyph-track {
-    stroke: currentColor;
+  .docs-load-more-spin-arc {
+    stroke: var(--color-accent);
   }
-  .docs-load-glyph-progress {
-    stroke: currentColor;
-    stroke-dasharray: 1;
-  }
-  .docs-load-glyph-sweep {
-    stroke: color-mix(in srgb, var(--color-on-accent) 86%, transparent);
+  .docs-load-more-label {
+    flex: none;
+    line-height: 1;
   }
   .docs-empty {
     gap: 0.7rem;

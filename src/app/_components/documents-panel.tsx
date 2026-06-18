@@ -16,7 +16,7 @@ import { HelmLoader } from "@/components/helm-loader";
 import { Kbd } from "@/components/kbd";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import { formatAccountEmail } from "@/lib/display";
-import { drawerRight, listRow, scrim, viewSwap } from "@/lib/motion";
+import { drawerRight, listRow, scrim, snap, snapFast, viewSwap } from "@/lib/motion";
 import { useFocusTrap } from "@/lib/use-focus-trap";
 import { api, type RouterOutputs } from "@/trpc/react";
 
@@ -716,31 +716,40 @@ export function DocumentsPanel({ account }: { account: string }) {
                       onClick={() => setPreview(doc)}
                     >
                       <span className="docs-row-icon">
-                        <DocumentsIcon size={16} />
+                        <DocumentsIcon size={15} />
                       </span>
                       <span className="docs-row-main">
                         <span className="docs-row-name" title={doc.filename}>
                           {doc.filename}
                         </span>
                         <span className="docs-row-sub">
-                          {doc.sender || "Unknown sender"}
-                          {doc.subject ? ` · ${doc.subject}` : ""}
+                          <span className="docs-row-from">
+                            {doc.sender || "Unknown sender"}
+                          </span>
+                          {doc.subject && (
+                            <span className="docs-row-subject">
+                              {" · "}
+                              {doc.subject}
+                            </span>
+                          )}
                         </span>
                       </span>
-                      {account === "all" && multiAccount && (
-                        <span
-                          className="row-acct"
-                          style={{ background: accountColor(doc.accountId) }}
-                          title={formatAccountEmail(doc.accountEmail)}
-                        />
-                      )}
-                      {doc.sizeBytes > 0 && (
-                        <span className="docs-row-size">
-                          {fmtBytes(doc.sizeBytes)}
+                      <span className="docs-row-meta">
+                        {account === "all" && multiAccount && (
+                          <span
+                            className="row-acct"
+                            style={{ background: accountColor(doc.accountId) }}
+                            title={formatAccountEmail(doc.accountEmail)}
+                          />
+                        )}
+                        {doc.sizeBytes > 0 && (
+                          <span className="docs-row-size">
+                            {fmtBytes(doc.sizeBytes)}
+                          </span>
+                        )}
+                        <span className="docs-row-date">
+                          {fmtDate(doc.receivedAt)}
                         </span>
-                      )}
-                      <span className="docs-row-date">
-                        {fmtDate(doc.receivedAt)}
                       </span>
                     </button>
                     <button
@@ -784,88 +793,6 @@ export function DocumentsPanel({ account }: { account: string }) {
   );
 }
 
-function LoadMoreGlyph({ loading }: { loading: boolean }) {
-  return (
-    <motion.svg
-      className="docs-load-more-glyph"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      data-loading={loading}
-      initial={false}
-      animate={loading ? "loading" : "idle"}
-    >
-      <motion.circle
-        className="docs-load-glyph-track"
-        cx="12"
-        cy="12"
-        r="8"
-        pathLength="1"
-        variants={{
-          idle: { opacity: 0, scale: 0.82 },
-          loading: { opacity: 0.28, scale: 1 },
-        }}
-        transition={{ duration: 0.18 }}
-      />
-      <motion.circle
-        className="docs-load-glyph-progress"
-        cx="12"
-        cy="12"
-        r="8"
-        pathLength="1"
-        variants={{
-          idle: { opacity: 0, pathLength: 0, rotate: 0 },
-          loading: {
-            opacity: 1,
-            pathLength: [0.2, 0.72, 0.2],
-            rotate: [0, 360],
-          },
-        }}
-        transition={{
-          opacity: { duration: 0.12 },
-          pathLength: { duration: 1.05, repeat: Infinity, ease: "easeInOut" },
-          rotate: { duration: 0.92, repeat: Infinity, ease: "linear" },
-        }}
-      />
-      <motion.g
-        className="docs-load-glyph-arrow"
-        variants={{
-          idle: { opacity: 1, y: 0, scale: 1 },
-          loading: { opacity: 0, y: 4, scale: 0.7 },
-        }}
-        transition={{ duration: 0.16 }}
-      >
-        <motion.path
-          d="M12 5v10"
-          initial={false}
-          variants={{
-            idle: { pathLength: 1 },
-            loading: { pathLength: 0 },
-          }}
-          transition={{ duration: 0.18 }}
-        />
-        <motion.path
-          d="M8 11l4 4 4-4"
-          initial={false}
-          variants={{
-            idle: { pathLength: 1 },
-            loading: { pathLength: 0 },
-          }}
-          transition={{ duration: 0.18 }}
-        />
-      </motion.g>
-      <motion.path
-        className="docs-load-glyph-sweep"
-        d="M7.8 12a4.2 4.2 0 0 1 8.4 0"
-        variants={{
-          idle: { opacity: 0, pathLength: 0 },
-          loading: { opacity: [0, 1, 0], pathLength: [0, 1, 0] },
-        }}
-        transition={{ duration: 1.05, repeat: Infinity, ease: "easeInOut" }}
-      />
-    </motion.svg>
-  );
-}
-
 function LoadMoreButton({
   loading,
   onClick,
@@ -882,33 +809,52 @@ function LoadMoreButton({
       onClick={onClick}
       disabled={loading}
       whileHover={loading ? undefined : { y: -1 }}
-      whileTap={loading ? undefined : { scale: 0.985 }}
-      transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+      whileTap={loading ? undefined : { scale: 0.98 }}
+      transition={snap}
     >
-      <motion.span
-        className="docs-load-more-shine"
-        aria-hidden="true"
-        initial={false}
-        animate={loading ? { x: ["-120%", "120%"], opacity: [0, 0.42, 0] } : { opacity: 0 }}
-        transition={{
-          duration: 1.25,
-          repeat: loading ? Infinity : 0,
-          ease: "easeInOut",
-        }}
-      />
-      <LoadMoreGlyph loading={loading} />
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.span
-          key={loading ? "loading" : "idle"}
-          className="docs-load-more-label"
-          initial={{ opacity: 0, y: 6, filter: "blur(3px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          exit={{ opacity: 0, y: -6, filter: "blur(3px)" }}
-          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-        >
-          {loading ? "Loading more" : "Load more"}
-        </motion.span>
-      </AnimatePresence>
+      <span className="docs-load-more-icon" aria-hidden="true">
+        <AnimatePresence mode="wait" initial={false}>
+          {loading ? (
+            <motion.svg
+              key="spin"
+              viewBox="0 0 24 24"
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1, rotate: 360 }}
+              exit={{ opacity: 0, scale: 0.5 }}
+              transition={{
+                opacity: snapFast,
+                scale: snapFast,
+                rotate: { duration: 0.7, repeat: Infinity, ease: "linear" },
+              }}
+            >
+              <circle
+                className="docs-load-more-spin-track"
+                cx="12"
+                cy="12"
+                r="8"
+              />
+              <path
+                className="docs-load-more-spin-arc"
+                d="M12 4a8 8 0 0 1 8 8"
+              />
+            </motion.svg>
+          ) : (
+            <motion.svg
+              key="chev"
+              viewBox="0 0 24 24"
+              initial={{ opacity: 0, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 3 }}
+              transition={snapFast}
+            >
+              <path d="M6 10l6 6 6-6" />
+            </motion.svg>
+          )}
+        </AnimatePresence>
+      </span>
+      <span className="docs-load-more-label">
+        {loading ? "Loading more" : "Load more"}
+      </span>
       {!loading && <Kbd>M</Kbd>}
     </motion.button>
   );
