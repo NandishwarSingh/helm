@@ -17,6 +17,7 @@ import {
   verifyAction,
 } from "@/server/lib/agent-action";
 import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
+import { suggestFollowups } from "@/server/lib/agent-suggest";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { rateLimit } from "@/server/lib/rate-limit";
@@ -169,6 +170,12 @@ Archive / star / mark read / trash, by id:
   await corsair.gmail.api.messages.modify({ id:"MESSAGE_ID", addLabelIds:["STARRED"], removeLabelIds:[] });  return { done:true };
   // archive -> removeLabelIds:["INBOX"]; mark read -> removeLabelIds:["UNREAD"]; mark unread -> addLabelIds:["UNREAD"]; trash -> await corsair.gmail.api.messages.trash({ id:"MESSAGE_ID" })
 
+Permanently delete an email (IRREVERSIBLE — ONLY when the user explicitly says "permanently"/"forever"/"for good"; otherwise prefer trash):
+  await corsair.gmail.api.messages.delete({ id:"MESSAGE_ID" });  return { deleted:true };
+
+Act on an item you located in ALL-ACCOUNTS mode — scope the write to the account you FOUND it on (never bare):
+  await corsair.account("FOUND_ACCOUNT_EMAIL").gmail.api.messages.trash({ id:"MESSAGE_ID" });  return { trashed:true, account:"FOUND_ACCOUNT_EMAIL" };
+
 List calendar events in a window:
   const r = await corsair.googlecalendar.api.events.getMany({ calendarId:"primary", timeMin:"ISO", timeMax:"ISO", maxResults:25, singleEvents:true, orderBy:"startTime" });
   return (r.items||[]).map(e=>({ id:e.id, summary:e.summary, start:e.start?.dateTime||e.start?.date, end:e.end?.dateTime||e.end?.date }));
@@ -179,10 +186,13 @@ Create an event and invite people — CALL this to STAGE it for confirmation (re
 
 # Rules
 - Plan the whole task first, then act. Prefer ONE run_script that does everything over many small calls — batch reads/writes and use Promise.all to fan out across accounts or messages in a single script. Tool budget: about 6 calls per request; never repeat an identical call.
-- Open with ONE very short line saying what you're about to do (e.g. "Checking both inboxes…" or "Searching your mail…") so the user sees instant progress — then call tools silently. Don't narrate each step; put the substantive result in ONE final answer after the work is done.
+- Do NOT narrate, restate the plan, or write any prose WHILE working — call tools silently. The UI already shows live progress chips as you work. Put ALL prose in ONE final answer after the work is done.
+- Your run_script code must ONLY ever be sent as the run_script TOOL CALL — NEVER write the script, a code block, or a fabricated result (e.g. { trashed:true }, { sent:true }, { deleted:true }) into your reply text. Pasting code or a made-up result does nothing: it stages nothing and shows no confirmation card. You may ONLY claim an action you actually performed via a real run_script tool call whose result you received.
 - In run_script, ALWAYS filter and map to the few fields you need and cap lists at about 10 items — never return whole API responses.
 - To locate mail prefer the cached \`gmail.db\` search; use \`gmail.api\` for reading one message in full and for every write.
 - Confirmation: sending mail, sending invites, trashing or deleting mail, and creating, updating or deleting calendar events are STAGED for the user's approval, not run immediately. To do one, CALL the operation in run_script with the exact final details (recipient, subject and the full body; or the event title, time and attendees). The sandbox stages it and returns CONFIRM_REQUIRED, and the user gets a confirmation card with Confirm and Deny — that return is EXPECTED and means it staged successfully, so NEVER retry it or call it again. After staging, write ONE short sentence naming exactly what you staged (e.g. "Staged a reply to Priya about the Q3 review — confirm to send."). Saving a draft and all reads are never staged, so prefer a draft when the user only wants to prepare something. Stage at most ONE action per reply; if more are needed, stage one and say what remains. Default meeting length is 30 minutes when only a start time is given.
+- "Delete" / "remove" / "get rid of" means TRASH (reversible) — use messages.trash. Use messages.delete (permanent) ONLY when the user explicitly demands permanence ("permanently", "forever", "for good").
+- After you LOCATE an item, do every follow-up WRITE on the SAME account you found it on: \`corsair.account("<that item's account email>").gmail.api…\` — NEVER a bare \`corsair.gmail.*\` / \`corsair.googlecalendar.*\` for a write (that hits only the default mailbox, which may be the wrong one).
 - run_script is for Gmail and Calendar through \`corsair\` only. Never read process or environment variables, touch the filesystem, or make unrelated network requests.
 - Be concise: short paragraphs; hyphen or numbered lists and **bold** are fine; never headings, tables, code blocks, nested lists, horizontal rules or emojis.
 - Never invent ids, addresses, events or results. If an operation returns nothing, say so plainly.
@@ -308,6 +318,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const modelMessages = await convertToModelMessages(recent);
   const result = streamText({
     model: openrouter(AGENT_MODEL),
     temperature: 0.2,
@@ -318,19 +329,19 @@ export async function POST(request: NextRequest) {
       allMode,
       scopeEmail,
     }),
-    messages: await convertToModelMessages(recent),
+    messages: modelMessages,
     tools: mcp.tools,
     // If the client disconnects mid-stream, stop generating and let onAbort tear
     // the MCP bridge down — otherwise the server/client/transport leak.
     abortSignal: request.signal,
     // The playbook pushes "one run_script that does everything", so real tasks
-    // finish in a few steps; a tighter ceiling caps the worst case (every step
-    // is a full, uncached round-trip) without clipping legitimate work.
-    stopWhen: stepCountIs(10),
-    // Near the budget, withdraw the tools so the model must write its final
-    // answer instead of dying mid-loop.
+    // finish in 1-3 steps; a tight ceiling caps the worst case (every step is a
+    // full round-trip) without clipping legitimate work.
+    stopWhen: stepCountIs(6),
+    // Near the budget, withdraw the tools AND force text so the model writes its
+    // final answer instead of looping (e.g. re-calling a staged action).
     prepareStep: ({ stepNumber }) =>
-      stepNumber >= 8 ? { activeTools: [] } : undefined,
+      stepNumber >= 4 ? { activeTools: [], toolChoice: "none" } : undefined,
     // Tear the MCP bridge down once the run is over (success, error, or abort).
     // close() is idempotent, so firing from several callbacks is safe.
     onFinish: () => {
@@ -388,6 +399,21 @@ export async function POST(request: NextRequest) {
           id: `pa-${token.slice(-12)}`,
           data: { token, summary },
         });
+      } else {
+        // No action pending — offer up to 4 follow-up chips. Generated AFTER the
+        // answer has streamed, so the latency is invisible; fully best-effort.
+        const finalText = await result.text;
+        const suggestions = await suggestFollowups([
+          ...modelMessages,
+          { role: "assistant", content: finalText },
+        ]);
+        if (suggestions.length > 0) {
+          writer.write({
+            type: "data-suggestions",
+            id: "suggest",
+            data: suggestions,
+          });
+        }
       }
     },
     onError: (error) => (error instanceof Error ? error.message : String(error)),

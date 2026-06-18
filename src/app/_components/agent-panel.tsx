@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
 import { listRow } from "@/lib/motion";
 import type { ActionSummary } from "@/server/lib/agent-action";
+import type { Suggestion } from "@/server/lib/agent-suggest";
 import { api } from "@/trpc/react";
 
 /** What the agent stages for confirmation, carried on a `data-pendingAction` part. */
@@ -127,6 +128,9 @@ function AgentText({ text }: { text: string }) {
   let ul: string[] = [];
   let ol: string[] = [];
   let quote: string[] = [];
+  // Defense: the model is told never to emit code, but if it slips, swallow the
+  // whole fenced block so run_script source can never reach the DOM.
+  let inFence = false;
 
   const flush = (key: number) => {
     if (ul.length > 0) {
@@ -163,6 +167,12 @@ function AgentText({ text }: { text: string }) {
 
   const lines = text.split("\n");
   lines.forEach((line, i) => {
+    if (/^\s*```/.test(line)) {
+      if (!inFence) flush(i); // close any open list/quote before swallowing
+      inFence = !inFence;
+      return; // never render the fence marker itself
+    }
+    if (inFence) return; // swallow every line inside a code fence
     const hyphen = /^\s*[-*]\s+(.*)$/.exec(line);
     const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
     const quoted = /^\s*>\s?(.*)$/.exec(line);
@@ -399,9 +409,9 @@ export function AgentPanel({ account }: { account: string }) {
               {message.parts.map((part, i) => {
                 if (part.type === "text") {
                   return message.role === "assistant" ? (
-                    <AgentText key={i} text={part.text} />
+                    <AgentText key={`${message.id}-t${i}`} text={part.text} />
                   ) : (
-                    <p className="agent-text" key={i}>
+                    <p className="agent-text" key={`${message.id}-t${i}`}>
                       {part.text}
                     </p>
                   );
@@ -410,7 +420,7 @@ export function AgentPanel({ account }: { account: string }) {
                   const data = part.data as PendingAction;
                   return (
                     <ActionCard
-                      key={i}
+                      key={data.token}
                       summary={data.summary}
                       state={resolved[data.token]}
                       busy={busy}
@@ -429,7 +439,7 @@ export function AgentPanel({ account }: { account: string }) {
                       className="agent-tool tnum"
                       data-done={state === "output-available"}
                       data-error={state === "output-error"}
-                      key={i}
+                      key={`${message.id}-${part.type}-${i}`}
                     >
                       {state === "output-error"
                         ? "Action failed"
@@ -441,6 +451,36 @@ export function AgentPanel({ account }: { account: string }) {
               })}
             </motion.div>
           ))}
+
+          {(() => {
+            // Tappable follow-up chips on the latest answer, shown only when idle
+            // (tapping one re-enters the loop and clears them; never mid-stream).
+            const last = messages[messages.length - 1];
+            if (busy || last?.role !== "assistant") return null;
+            const part = last.parts.find(
+              (p) => p.type === "data-suggestions",
+            ) as { data?: Suggestion[] } | undefined;
+            const chips = part?.data;
+            if (!chips?.length) return null;
+            return (
+              <div
+                className="agent-suggest-follow"
+                role="group"
+                aria-label="Suggested follow-ups"
+              >
+                {chips.map((c, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => submit(c.prompt)}
+                    title={c.prompt}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
 
           {thinking && (
             <div className="agent-msg" data-role="assistant">

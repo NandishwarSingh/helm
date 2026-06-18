@@ -142,7 +142,7 @@ export async function runScriptSandboxed(
             }
           }
           return fail(
-            `CONFIRM_REQUIRED: "${pathStr}" is now STAGED for the user to confirm on a card. This is expected — do NOT retry it. Write one short sentence telling the user exactly what you staged.`,
+            `CONFIRM_REQUIRED: "${pathStr}" is now STAGED for the user to confirm on a card. This is expected — do NOT retry it, do NOT catch/swallow this, and do NOT fabricate a result: the action did NOT run and will only run after the user clicks Confirm. Write ONE short sentence telling the user exactly what you staged.`,
           );
         }
         // Shared across every run_script call this turn, so one confirmation
