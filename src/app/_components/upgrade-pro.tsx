@@ -38,17 +38,6 @@ function loadCheckout(): Promise<boolean> {
   });
 }
 
-function Spark() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M8 1l1.6 4.4L14 7l-4.4 1.6L8 13l-1.6-4.4L2 7l4.4-1.6L8 1z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
 /** Rail CTA: starts a ₹99/month Helm Pro subscription via Razorpay Checkout. */
 export function UpgradePro() {
   const utils = api.useUtils();
@@ -64,7 +53,7 @@ export function UpgradePro() {
   if (status.data?.pro) {
     return (
       <div className="pro-badge" title="Helm Pro is active">
-        <Spark /> Helm Pro
+        Helm Pro
       </div>
     );
   }

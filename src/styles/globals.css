@@ -390,13 +390,18 @@
   }
   .pro-badge {
     margin-top: auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 0.3rem 0.55rem;
-    color: var(--color-accent);
-    font-size: 0.82rem;
+    align-self: flex-start;
+    margin-left: 0.15rem;
+    margin-bottom: 0.55rem;
+    padding: 0.32rem 0.6rem;
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent) 38%, var(--color-line));
+    border-radius: var(--radius-sm);
+    background: var(--color-accent-wash);
+    color: var(--color-accent-strong);
+    font-size: 0.76rem;
     font-weight: 600;
+    letter-spacing: 0.01em;
   }
 
   /* ---- account switcher (rail foot) ---- */
