@@ -47,14 +47,13 @@ export function UpgradePro() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reserve the bottom slot while loading so the account switcher stays pinned
-  // (the wrap carries the margin-top:auto that pushes the rail foot down).
-  if (status.isLoading) return <div className="upgrade-pro-wrap" aria-hidden />;
+  // Nothing until we know the state (avoids flashing the wrong CTA in the topbar).
+  if (status.isLoading) return null;
   if (status.data?.pro) {
     return (
-      <div className="pro-badge" title="Helm Pro is active">
+      <span className="pro-badge" title="Helm Pro is active">
         Helm Pro
-      </div>
+      </span>
     );
   }
 
@@ -97,16 +96,14 @@ export function UpgradePro() {
   }
 
   return (
-    <div className="upgrade-pro-wrap">
-      <button
-        type="button"
-        className="upgrade-pro"
-        onClick={() => void upgrade()}
-        disabled={busy}
-      >
-        {busy ? "Opening…" : "Upgrade to Pro"}
-      </button>
-      {error && <span className="upgrade-pro-err">{error}</span>}
-    </div>
+    <button
+      type="button"
+      className="btn upgrade-pro"
+      onClick={() => void upgrade()}
+      disabled={busy}
+      title={error ?? "Unlock Helm Pro"}
+    >
+      {busy ? "Opening…" : "Upgrade to Pro"}
+    </button>
   );
 }

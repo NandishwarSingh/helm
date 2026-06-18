@@ -370,8 +370,6 @@ export function AppShell() {
             ))}
           </nav>
 
-          <UpgradePro />
-
           <div className="rail-foot">
             <div className="acct-switch">
               <button
@@ -501,6 +499,7 @@ export function AppShell() {
               {view === "mail" ? "Mail" : view === "calendar" ? "Calendar" : "Agent"}
             </span>
             <span className="topbar-spacer" />
+            <UpgradePro />
             <button
               type="button"
               className="icon-btn"

@@ -1,20 +1,28 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { db } from "@/server/db";
 import { subscriptions } from "@/server/db/schema";
-import { getSession } from "@/server/lib/session";
+import { getActiveAccount, getUserAccounts } from "@/server/lib/users";
 
 /** Razorpay subscription statuses that grant Pro access. */
 const PRO_STATES = new Set(["active", "authenticated"]);
 
+/** Normalize an email to a stable subscription key (empty/missing → null). */
+function key(email: string | undefined | null): string | null {
+  const e = email?.trim().toLowerCase();
+  if (!e) return null;
+  return e;
+}
+
 /**
- * The billing identity for the current session: the user id for a multi-account
- * session, else the active tenant id (both come back as `session.id`). One
- * subscription per identity.
+ * The billing identity for WRITES: the active account's Google email. Email is
+ * stable across logout/login (the session/tenant id is NOT), so a subscription
+ * persists when the same Google account signs back in. Null when no email is
+ * known yet (e.g. mid first-connect) — callers treat that as "can't bill".
  */
 export async function getSubscriberId(): Promise<string | null> {
-  return (await getSession())?.id ?? null;
+  return key((await getActiveAccount())?.email);
 }
 
 export type ProStatus = {
@@ -23,20 +31,27 @@ export type ProStatus = {
   currentEnd: string | null;
 };
 
-/** Current Pro status for the session. */
+/**
+ * Pro status for the session: Pro if ANY of the session's connected account
+ * emails has an active subscription. So a multi-account user stays Pro whichever
+ * account is active, and signing back in restores Pro (it's keyed by email, not
+ * the ephemeral session id).
+ */
 export async function getProStatus(): Promise<ProStatus> {
-  const subscriberId = await getSubscriberId();
-  if (!subscriberId) return { pro: false, status: "none", currentEnd: null };
-  const [row] = await db
+  const emails = (await getUserAccounts())
+    .map((a) => key(a.email))
+    .filter((e): e is string => e !== null);
+  if (emails.length === 0) return { pro: false, status: "none", currentEnd: null };
+  const rows = await db
     .select()
     .from(subscriptions)
-    .where(eq(subscriptions.subscriberId, subscriberId))
-    .limit(1);
-  if (!row) return { pro: false, status: "none", currentEnd: null };
+    .where(inArray(subscriptions.subscriberId, emails));
+  const active = rows.find((r) => PRO_STATES.has(r.status));
+  const row = active ?? rows[0];
   return {
-    pro: PRO_STATES.has(row.status),
-    status: row.status,
-    currentEnd: row.currentEnd ? row.currentEnd.toISOString() : null,
+    pro: Boolean(active),
+    status: row?.status ?? "none",
+    currentEnd: row?.currentEnd ? row.currentEnd.toISOString() : null,
   };
 }
 
