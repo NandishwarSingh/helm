@@ -1956,6 +1956,271 @@
 }
 
 /* ------------------------------------------------------------------ *
+ * Documents — attachment library (collect / categorise / search / preview)
+ * ------------------------------------------------------------------ */
+@layer components {
+  .docs {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .docs-toolbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .docs-search {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 0.4rem 0 0.65rem;
+    color: var(--color-ink-3);
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-md);
+    transition: border-color 0.12s var(--ease-snap);
+  }
+  .docs-search:focus-within {
+    border-color: var(--color-accent);
+  }
+  .docs-search input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    color: var(--color-ink);
+    background: none;
+    border: none;
+    outline: none;
+  }
+  .docs-search .icon-btn {
+    width: 24px;
+    height: 24px;
+  }
+  .docs-chips {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.55rem 0.9rem;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--color-line);
+    scrollbar-width: none;
+  }
+  .docs-chips::-webkit-scrollbar {
+    display: none;
+  }
+  .docs-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: none;
+    height: 26px;
+    padding: 0 0.6rem;
+    color: var(--color-ink-2);
+    background: var(--color-paper-sunken);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition:
+      color 0.12s var(--ease-snap),
+      background 0.12s var(--ease-snap);
+  }
+  .docs-chip:hover {
+    color: var(--color-ink);
+  }
+  .docs-chip[data-active="true"] {
+    color: var(--color-on-accent);
+    background: var(--color-accent);
+    font-weight: 550;
+  }
+  .docs-chip-n {
+    font-size: 0.72rem;
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+  }
+  .docs-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.4rem 0.55rem 1.5rem;
+  }
+  .docs-group {
+    margin-top: 0.5rem;
+  }
+  .docs-group-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.45rem 0.3rem;
+    color: var(--color-ink-3);
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .docs-group-n {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .docs-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .docs-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.55rem;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background 0.12s var(--ease-snap);
+  }
+  .docs-row:hover {
+    background: var(--color-paper-sunken);
+  }
+  .docs-row[data-pinned="true"] {
+    background: var(--color-accent-wash);
+  }
+  .docs-row-icon {
+    flex: none;
+    display: inline-flex;
+    color: var(--color-ink-3);
+  }
+  .docs-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .docs-row-name {
+    color: var(--color-ink);
+    font-size: 0.86rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .docs-row-sub {
+    color: var(--color-ink-3);
+    font-size: 0.76rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .docs-row-size {
+    flex: none;
+    color: var(--color-ink-3);
+    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+    width: 56px;
+    text-align: right;
+  }
+  .docs-row-date {
+    flex: none;
+    color: var(--color-ink-3);
+    font-size: 0.76rem;
+    width: 58px;
+    text-align: right;
+  }
+  .docs-row-act {
+    flex: none;
+    transition: opacity 0.12s var(--ease-snap);
+  }
+  /* Hover-reveal only where a fine pointer can hover; touch always shows the
+     actions (no hover state there, or Pin/Download would be unreachable). */
+  @media (hover: hover) and (pointer: fine) {
+    .docs-row-act {
+      opacity: 0;
+    }
+    .docs-row:hover .docs-row-act,
+    .docs-row:focus-within .docs-row-act,
+    .docs-row-act[data-on="true"] {
+      opacity: 1;
+    }
+  }
+  .docs-row-act[data-on="true"] {
+    color: var(--color-accent);
+  }
+  .docs-more {
+    display: flex;
+    justify-content: center;
+    padding: 1rem 0 0.4rem;
+  }
+  .docs-empty {
+    gap: 0.7rem;
+    color: var(--color-ink-3);
+  }
+  .docs-empty p {
+    max-width: 30ch;
+    font-size: 0.85rem;
+  }
+
+  /* Preview slide-over reuses .agent-drawer geometry but runs wider for PDFs. */
+  .doc-preview {
+    width: min(720px, calc(100vw - 3rem));
+  }
+  .doc-preview-title {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .doc-preview-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+  }
+  .doc-preview-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-paper-sunken);
+  }
+  .doc-preview-frame {
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: #fff;
+  }
+  .doc-preview-imgwrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 1rem;
+  }
+  .doc-preview-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-pop);
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * Calendar — week time-grid
  * ------------------------------------------------------------------ */
 @layer components {

@@ -39,8 +39,17 @@ function secretMatches(provided: string, expected: string): boolean {
 function syncAndNotify(tenantId: string): void {
   const inflight = runningSync.get(tenantId);
   if (inflight) {
-    // A sync is already pulling this window; just ride it, then notify.
-    void inflight.finally(() => notifyTenant(tenantId));
+    // A sync is already pulling this window; ride it, then notify AND run a doc
+    // scan. The fresh-sync branch only scans for its OWN run, so a burst push
+    // whose mail lands mid-flight would otherwise never get its attachments
+    // indexed. scanTenantDocuments is coalesced per tenant, so this shares the
+    // in-flight scan rather than double-fetching.
+    void inflight.finally(() => {
+      notifyTenant(tenantId);
+      void scanTenantDocuments(tenantId).finally(() =>
+        notifyTenant(tenantId, "documents"),
+      );
+    });
     return;
   }
 

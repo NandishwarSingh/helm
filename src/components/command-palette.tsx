@@ -9,6 +9,7 @@ import {
   CalendarIcon,
   ComposeIcon,
   ContrastIcon,
+  DocumentsIcon,
   HelpIcon,
   MailIcon,
   PlusIcon,
@@ -23,7 +24,7 @@ import { paletteDrop, scrim } from "@/lib/motion";
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onNavigate: (view: "mail" | "calendar" | "agent") => void;
+  onNavigate: (view: "mail" | "calendar" | "agent" | "documents") => void;
   onCompose: () => void;
   onNewEvent: () => void;
   onHelp: () => void;
@@ -153,6 +154,15 @@ export function CommandPalette({
                     Agent
                     <span className="palette-keys">
                       <Kbd>3</Kbd>
+                    </span>
+                  </Command.Item>
+                  <Command.Item
+                    onSelect={() => run(() => onNavigate("documents"))}
+                  >
+                    <DocumentsIcon size={15} />
+                    Documents
+                    <span className="palette-keys">
+                      <Kbd>4</Kbd>
                     </span>
                   </Command.Item>
                 </Command.Group>

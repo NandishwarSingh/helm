@@ -33,6 +33,32 @@ export const CalendarIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const DocumentsIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5M9 13h6M9 17h6" />
+  </Svg>
+);
+
+export const PinIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 17v5M9 3h6l-1 7 3 3H7l3-3z" />
+  </Svg>
+);
+
+export const DownloadIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16" />
+  </Svg>
+);
+
+export const SearchIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Svg>
+);
+
 export const ComposeIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 20h16" />

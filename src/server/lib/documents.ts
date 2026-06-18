@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 
 import { and, eq, inArray } from "drizzle-orm";
 
+import { corsair } from "@/server/corsair";
 import { conn, db } from "@/server/db";
-import { documents } from "@/server/db/schema";
+import { documents, userAccounts } from "@/server/db/schema";
 import { mapLimit } from "@/server/lib/concurrency";
 import { categorize, extractDocText, isExtractable } from "@/server/lib/doc-text";
 import {
@@ -14,15 +15,18 @@ import {
 } from "@/server/lib/email";
 import { embedTexts, toVectorLiteral } from "@/server/lib/embeddings";
 import { fetchAttachmentBytes } from "@/server/lib/gmail-attachments";
+import { messageTimestamp } from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
-import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
+import { type AccountClient } from "@/server/lib/tenant";
 
-// Recent cached messages scanned per account; only NEW/CHANGED attachments cost
-// a format:"full" get + a bytes fetch, capped so a backlog drains over scans —
-// steady state is ~0 Gmail calls (same economics as reindexSearch).
+// Recent cached messages scanned per account; only NEW messages cost a
+// format:"full" get + a bytes fetch (already-cataloged messages are skipped),
+// capped so a backlog drains over scans — steady state is ~0 Gmail calls.
 const SCAN_WINDOW = 400;
 const SCAN_FULL_CAP = 40;
 const READ_CONCURRENCY = 6;
+// Don't buffer + parse attachments past this — catalog them, skip text extraction.
+const MAX_EXTRACT_BYTES = 10 * 1024 * 1024;
 
 function docHash(a: RawAttachment): string {
   return createHash("sha256")
@@ -57,14 +61,32 @@ type DocRow = {
   embedText: string;
 };
 
-type CachedRow = { entity_id?: string | null };
+type CachedRow = {
+  entity_id?: string | null;
+  data?: { internalDate?: string | null } | null;
+};
 type FullMessage = {
   internalDate?: string | null;
   payload?: { headers?: { name?: string; value?: string }[] } | null;
 };
 
-/** Scan ONE account: catalog its attachments, (re)extract + embed changed ones. */
-export async function scanAccountDocuments(
+// One in-flight scan per tenant. Realtime (scanTenantDocuments), the manual
+// "Scan now" (scanAllDocuments), and a second tab all funnel through here, so
+// concurrent triggers share one run instead of double-fetching Gmail + embeds.
+const scanInFlight = new Map<string, Promise<{ found: number; embedded: number }>>();
+
+/** Scan ONE account: catalog its attachments, extract + embed new ones. Coalesced per tenant. */
+export function scanAccountDocuments(
+  c: AccountClient,
+): Promise<{ found: number; embedded: number }> {
+  const existing = scanInFlight.get(c.tenantId);
+  if (existing) return existing;
+  const work = runAccountScan(c).finally(() => scanInFlight.delete(c.tenantId));
+  scanInFlight.set(c.tenantId, work);
+  return work;
+}
+
+async function runAccountScan(
   c: AccountClient,
 ): Promise<{ found: number; embedded: number }> {
   const known = await db
@@ -78,18 +100,33 @@ export async function scanAccountDocuments(
   const have = new Map(
     known.map((r) => [`${r.messageId}:${r.attachmentId}`, r.contentHash]),
   );
+  // Messages that already have ≥1 cataloged attachment — skip them wholesale so
+  // the SCAN_FULL_CAP budget is spent only on genuinely-new mail (and unchanged
+  // rows are never re-written, preserving textExtracted/pins).
+  const scannedMsgs = new Set(known.map((r) => r.messageId));
 
   const cached = (await Promise.resolve(
     c.client.gmail.db.messages.list({ limit: SCAN_WINDOW, offset: 0 }),
   ).catch(() => [])) as CachedRow[];
-  const ids = [
-    ...new Set(
-      cached.map((r) => r.entity_id).filter((id): id is string => Boolean(id)),
-    ),
-  ];
+  // Corsair's db.messages.list has no ORDER BY, so sort newest-first here; the
+  // cap then targets the most recent unseen messages and older ones drain on
+  // subsequent scans.
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const r of [...cached].sort(
+    (a, b) =>
+      messageTimestamp(b.data?.internalDate) -
+      messageTimestamp(a.data?.internalDate),
+  )) {
+    const id = r.entity_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
 
   let fulls = 0;
   const rows = await mapLimit(ids, READ_CONCURRENCY, async (id): Promise<DocRow[]> => {
+    if (scannedMsgs.has(id)) return []; // already cataloged → no Gmail call, no re-write
     if (fulls >= SCAN_FULL_CAP) return [];
     fulls++;
     const full = (await withRetry(() =>
@@ -109,7 +146,11 @@ export async function scanAccountDocuments(
         const key = `${id}:${a.attachmentId}`;
         const hash = docHash(a);
         let text = "";
-        if (have.get(key) !== hash && isExtractable(a.mimeType, a.filename)) {
+        if (
+          have.get(key) !== hash &&
+          a.sizeBytes <= MAX_EXTRACT_BYTES &&
+          isExtractable(a.mimeType, a.filename)
+        ) {
           const bytes = await fetchAttachmentBytes(c.tenantId, id, a.attachmentId);
           if (bytes) text = await extractDocText(a.mimeType, a.filename, bytes);
         }
@@ -234,11 +275,40 @@ export async function scanAllDocuments(
   );
 }
 
-/** Realtime path: scan the single account behind a webhook's tenant. */
+/**
+ * Realtime path: scan the account behind a webhook's tenant. Webhook pushes carry
+ * NO session cookie, so the AccountClient is built directly from the tenant id —
+ * NEVER via getAccountClients()/getUserAccounts() (those read the session and
+ * return [] for an unauthenticated push, which silently skipped every scan).
+ */
 export async function scanTenantDocuments(tenantId: string): Promise<void> {
-  const clients = await getAccountClients();
-  const c = clients.find((x) => x.tenantId === tenantId);
-  if (c) await scanAccountDocuments(c).catch(() => undefined);
+  const rows = await db
+    .select({ accountId: userAccounts.id, email: userAccounts.email })
+    .from(userAccounts)
+    .where(eq(userAccounts.tenantId, tenantId));
+  // user_accounts_tenant_uniq → 0 or 1 row. No row = a single-account (tenant)
+  // session never promoted to a user, where account id == tenant id (matching
+  // getUserAccounts' synthetic branch). documents.accountId is what list/facets/
+  // vectorSearch filter on, so it MUST be the userAccounts.id when one exists.
+  const clients: AccountClient[] =
+    rows.length > 0
+      ? rows.map((r) => ({
+          accountId: r.accountId,
+          tenantId,
+          email: r.email,
+          client: corsair.withTenant(tenantId),
+        }))
+      : [
+          {
+            accountId: tenantId,
+            tenantId,
+            email: "",
+            client: corsair.withTenant(tenantId),
+          },
+        ];
+  for (const c of clients) {
+    await scanAccountDocuments(c).catch(() => undefined);
+  }
 }
 
 /** Drop docs + their embeddings for permanently-deleted messages. */

@@ -2,12 +2,18 @@ import "server-only";
 
 import { freshAccessToken } from "@/server/lib/gmail-watch";
 
+// Hard ceiling on a single fetched attachment. Gmail allows up to ~50MB; the
+// bytes are buffered whole here, so cap to bound server memory on BOTH callers
+// that funnel through this function (the preview-stream route + scan extraction).
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
 /**
  * Fetch one attachment's bytes via the Gmail REST API with the access token
  * Corsair manages. Corsair's Gmail plugin exposes no attachments endpoint, so we
  * call Gmail directly — the same proven pattern as armGmailWatch / getGmailEmail.
  * Large attachments carry only an attachmentId (no inline data), so this fetch is
- * required. Returns null on any failure; callers treat that as "bytes missing".
+ * required. Returns null on any failure (incl. oversize); callers treat that as
+ * "bytes missing".
  */
 export async function fetchAttachmentBytes(
   tenantId: string,
@@ -21,10 +27,16 @@ export async function fetchAttachmentBytes(
       { headers: { Authorization: `Bearer ${token}` } },
     );
     if (!res.ok) return null;
-    const data = (await res.json()) as { data?: string };
+    const data = (await res.json()) as { data?: string; size?: number };
     if (!data.data) return null;
+    // Gmail reports the decoded size; reject oversize before allocating the buffer.
+    if (typeof data.size === "number" && data.size > MAX_ATTACHMENT_BYTES) {
+      return null;
+    }
     // Gmail returns base64url; Buffer's "base64url" handles the -_ alphabet.
-    return Buffer.from(data.data, "base64url");
+    const buf = Buffer.from(data.data, "base64url");
+    if (buf.length > MAX_ATTACHMENT_BYTES) return null;
+    return buf;
   } catch {
     return null;
   }

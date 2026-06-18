@@ -1,5 +1,5 @@
-import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { conn, db } from "@/server/db";
@@ -7,7 +7,7 @@ import { documents } from "@/server/db/schema";
 import { mapLimit } from "@/server/lib/concurrency";
 import { scanAllDocuments } from "@/server/lib/documents";
 import { embedQuery, toVectorLiteral } from "@/server/lib/embeddings";
-import { fetchAttachmentBytes } from "@/server/lib/gmail-attachments";
+import { notifyTenant } from "@/server/lib/realtime";
 import { getAccountClients } from "@/server/lib/tenant";
 import { opAccount, readClients } from "@/server/api/routers/gmail";
 import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
@@ -101,12 +101,22 @@ export const documentsRouter = createTRPCRouter({
       const clients = await readClients(input.account);
       if (clients.length === 0 || !input.query.trim()) return { items: [] };
       const literal = toVectorLiteral(await embedQuery(input.query));
+      const cat = input.category;
       const per = await mapLimit(clients, 4, async (c) => {
         try {
+          // Join the doc metadata so the category filter rides INSIDE the KNN —
+          // filtering after a global top-K would under-return (often near-empty)
+          // when a type chip is active. attachment_key = message_id:attachment_id.
           const rows = await conn<{ attachment_key: string; score: number }[]>`
-            select attachment_key, 1 - (embedding <=> ${literal}::vector) as score
-            from doc_embeddings where tenant_id = ${c.tenantId}
-            order by embedding <=> ${literal}::vector limit ${input.limit}
+            select e.attachment_key, 1 - (e.embedding <=> ${literal}::vector) as score
+            from doc_embeddings e
+            join documents d
+              on d.tenant_id = e.tenant_id
+             and (d.message_id || ':' || d.attachment_id) = e.attachment_key
+            where e.tenant_id = ${c.tenantId}
+              ${cat === "all" ? conn`` : conn`and d.category = ${cat}`}
+            order by e.embedding <=> ${literal}::vector
+            limit ${input.limit}
           `;
           return rows.map((r) => ({
             accountId: c.accountId,
@@ -143,10 +153,10 @@ export const documentsRouter = createTRPCRouter({
         ]),
       );
       const emailByAccount = new Map(clients.map((c) => [c.accountId, c.email]));
+      // Category is already enforced in the KNN join, so no JS post-filter here.
       const items = hits
         .map((h) => byKey.get(`${h.accountId}:${h.attachmentKey}`))
         .filter((r): r is NonNullable<typeof r> => Boolean(r))
-        .filter((r) => input.category === "all" || r.category === input.category)
         .map((r) => ({ ...r, accountEmail: emailByAccount.get(r.accountId) ?? "" }));
       return { items };
     }),
@@ -176,48 +186,18 @@ export const documentsRouter = createTRPCRouter({
       return { ok: true };
     }),
 
-  // Bytes for the explicit Download button (base64). Preview streams via a route.
-  download: authedProcedure
-    .input(
-      z.object({
-        messageId: z.string().min(1),
-        attachmentId: z.string().min(1),
-        account: accountInput,
+  // Manual "scan now" (realtime also auto-scans on new mail). Fire-and-forget so
+  // a multi-account scan (per-account Gmail full-gets + extraction + embeds) can't
+  // block the request past a proxy timeout; the SSE "documents" event refreshes
+  // the view when each tenant's scan settles. Scans are coalesced per tenant, so
+  // a concurrent realtime scan and this one share a single run.
+  scan: authedProcedure.mutation(async () => {
+    const clients = await getAccountClients();
+    after(() =>
+      scanAllDocuments(clients).finally(() => {
+        for (const c of clients) notifyTenant(c.tenantId, "documents");
       }),
-    )
-    .mutation(async ({ input }) => {
-      const { tenantId } = await opAccount(input.account, { requireAccount: true });
-      const bytes = await fetchAttachmentBytes(
-        tenantId,
-        input.messageId,
-        input.attachmentId,
-      );
-      if (!bytes) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "attachment bytes unavailable",
-        });
-      }
-      const [row] = await db
-        .select({ filename: documents.filename, mimeType: documents.mimeType })
-        .from(documents)
-        .where(
-          and(
-            eq(documents.tenantId, tenantId),
-            eq(documents.messageId, input.messageId),
-            eq(documents.attachmentId, input.attachmentId),
-          ),
-        )
-        .limit(1);
-      return {
-        filename: row?.filename ?? "attachment",
-        mimeType: row?.mimeType ?? "application/octet-stream",
-        base64: bytes.toString("base64"),
-      };
-    }),
-
-  // Manual "scan now" (realtime also auto-scans on new mail).
-  scan: authedProcedure.mutation(async () =>
-    scanAllDocuments(await getAccountClients()),
-  ),
+    );
+    return { ok: true };
+  }),
 });

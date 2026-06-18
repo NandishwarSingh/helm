@@ -23,6 +23,7 @@ import {
   CalendarIcon,
   CloseIcon,
   ComposeIcon,
+  DocumentsIcon,
   FlagIcon,
   HelpIcon,
   InboxIcon,
@@ -43,7 +44,7 @@ import { useFocusTrap } from "@/lib/use-focus-trap";
 import { chordBar, iconMorph, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
-type View = "mail" | "calendar" | "agent";
+type View = "mail" | "calendar" | "agent" | "documents";
 
 // The agent (and its chat runtime) loads only when the view is opened.
 const AgentPanel = dynamic(
@@ -63,6 +64,19 @@ const AgentPanel = dynamic(
 const AgentDrawer = dynamic(
   () => import("@/app/_components/agent-drawer").then((m) => m.AgentDrawer),
   { ssr: false },
+);
+
+const DocumentsPanel = dynamic(
+  () =>
+    import("@/app/_components/documents-panel").then((m) => m.DocumentsPanel),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="empty" style={{ flex: 1 }}>
+        <HelmLoader size={40} />
+      </div>
+    ),
+  },
 );
 
 const MAIL_FOLDERS: {
@@ -183,6 +197,7 @@ export function AppShell() {
     void utils.gmail.invalidate();
     void utils.triage.invalidate();
     void utils.calendar.invalidate();
+    void utils.documents.invalidate();
   }
   const activeLabel =
     activeAccount === "all"
@@ -299,6 +314,7 @@ export function AppShell() {
         case "d": go("drafts"); break;
         case "m": setView("mail"); break;
         case "c": setView("calendar"); break;
+        case "f": setView("documents"); break;
         default: break; // unknown key just cancels the chord
       }
     }
@@ -342,6 +358,9 @@ export function AppShell() {
           break;
         case "3":
           setView("agent");
+          break;
+        case "4":
+          setView("documents");
           break;
         case "c":
           setView("mail");
@@ -422,6 +441,16 @@ export function AppShell() {
               <AgentIcon />
               Agent
               <Kbd>3</Kbd>
+            </button>
+            <button
+              type="button"
+              className="rail-item"
+              data-active={view === "documents"}
+              onClick={() => setView("documents")}
+            >
+              <DocumentsIcon />
+              Documents
+              <Kbd>4</Kbd>
             </button>
           </nav>
 
@@ -592,7 +621,13 @@ export function AppShell() {
         <div className="frame">
           <header className="topbar">
             <span className="topbar-title">
-              {view === "mail" ? "Mail" : view === "calendar" ? "Calendar" : "Agent"}
+              {view === "mail"
+                ? "Mail"
+                : view === "calendar"
+                  ? "Calendar"
+                  : view === "documents"
+                    ? "Documents"
+                    : "Agent"}
             </span>
             <span className="topbar-spacer" />
             <UpgradePro />
@@ -676,7 +711,9 @@ export function AppShell() {
                 exit="exit"
                 style={{ height: "100%" }}
               >
-                {view === "agent" ? (
+                {view === "documents" ? (
+                  <DocumentsPanel key={activeAccount} account={activeAccount} />
+                ) : view === "agent" ? (
                   <AgentPanel account={activeAccount} />
                 ) : view === "mail" ? (
                   <GmailPanel
@@ -750,8 +787,11 @@ export function AppShell() {
               <span><Kbd>A</Kbd> archive</span>
               <span><Kbd>P</Kbd> spam</span>
               <span><Kbd>T</Kbd> trash</span>
+              <span><Kbd>E</Kbd> sent</span>
               <span><Kbd>D</Kbd> drafts</span>
+              <span><Kbd>M</Kbd> mail</span>
               <span><Kbd>C</Kbd> calendar</span>
+              <span><Kbd>F</Kbd> documents</span>
             </span>
           </motion.div>
         )}
