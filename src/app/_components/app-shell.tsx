@@ -21,6 +21,7 @@ import {
   AgentIcon,
   ArchiveIcon,
   CalendarIcon,
+  CloseIcon,
   ComposeIcon,
   FlagIcon,
   HelpIcon,
@@ -39,7 +40,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
 import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
 import { useFocusTrap } from "@/lib/use-focus-trap";
-import { chordBar, viewSwap } from "@/lib/motion";
+import { chordBar, iconMorph, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
 type View = "mail" | "calendar" | "agent";
@@ -56,6 +57,12 @@ const AgentPanel = dynamic(
       </div>
     ),
   },
+);
+
+// The agent slide-over reuses AgentPanel (same module Chat); lazy like the tab.
+const AgentDrawer = dynamic(
+  () => import("@/app/_components/agent-drawer").then((m) => m.AgentDrawer),
+  { ssr: false },
 );
 
 const MAIL_FOLDERS: {
@@ -104,6 +111,18 @@ export function AppShell() {
   const [eventSeed, setEventSeed] = useState<EventSeed | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  // Never mount AgentPanel twice on the one module-level Chat (tab + drawer) —
+  // that doubles its effects/invalidations. The drawer is "actually open" only
+  // when NOT on the Agent tab; opening the tab closes it.
+  const agentDrawerActuallyOpen = agentDrawerOpen && view !== "agent";
+  function toggleAgentDrawer() {
+    if (view === "agent") return;
+    setAgentDrawerOpen((open) => !open);
+  }
+  useEffect(() => {
+    if (view === "agent" && agentDrawerOpen) setAgentDrawerOpen(false);
+  }, [view, agentDrawerOpen]);
   // The first load straight out of Google consent gets the tearable veil while
   // the initial sync runs. The ?connected=1 marker is stripped immediately so a
   // refresh never replays it.
@@ -127,6 +146,7 @@ export function AppShell() {
   useOverlay(createOpen);
   useOverlay(paletteOpen);
   useOverlay(helpOpen);
+  useOverlay(agentDrawerActuallyOpen);
 
   const status = api.connection.status.useQuery();
   const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
@@ -154,7 +174,7 @@ export function AppShell() {
   // render INSIDE .app, so inerting .app would swallow them too — those rely on
   // their own focus trap + scrim instead. The overlay registry (useOverlay) is
   // a non-reactive counter for key handlers, so we derive this from state.
-  const backgroundInert = paletteOpen || helpOpen;
+  const backgroundInert = paletteOpen || helpOpen || agentDrawerActuallyOpen;
   const setActiveAccountM = api.accounts.setActive.useMutation();
   function pickAccount(id: string) {
     setActiveAccount(id);
@@ -295,6 +315,14 @@ export function AppShell() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen((open) => !open);
+        return;
+      }
+      // Toggle the agent slide-over from anywhere. Uses the stable setter (the
+      // keyboard effect registers once); the render-level `agentDrawerActuallyOpen`
+      // guard + the close-on-agent-tab effect keep it inert on the Agent tab.
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        setAgentDrawerOpen((open) => !open);
         return;
       }
 
@@ -578,6 +606,34 @@ export function AppShell() {
             >
               <HelpIcon size={15} />
             </button>
+            {view !== "agent" && (
+              <button
+                type="button"
+                className="icon-btn"
+                data-tip="Agent — ⌘J"
+                data-tip-pos="down"
+                aria-label="Toggle agent"
+                aria-pressed={agentDrawerActuallyOpen}
+                onClick={toggleAgentDrawer}
+              >
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={agentDrawerActuallyOpen ? "close" : "agent"}
+                    variants={iconMorph}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                    style={{ display: "inline-flex" }}
+                  >
+                    {agentDrawerActuallyOpen ? (
+                      <CloseIcon size={15} />
+                    ) : (
+                      <AgentIcon size={15} />
+                    )}
+                  </motion.span>
+                </AnimatePresence>
+              </button>
+            )}
             <button
               type="button"
               className="btn"
@@ -669,6 +725,11 @@ export function AppShell() {
         onSwitchAccount={pickAccount}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
+      <AgentDrawer
+        open={agentDrawerActuallyOpen}
+        account={activeAccount}
+        onClose={() => setAgentDrawerOpen(false)}
+      />
       {firstRun && <FirstSyncVeil onEnter={() => setFirstRun(false)} />}
       <AnimatePresence>
         {chordPending && (

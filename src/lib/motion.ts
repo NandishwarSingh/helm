@@ -54,3 +54,19 @@ export const paletteDrop: Variants = {
   animate: { opacity: 1, x: "-50%", y: 0, scale: 1, transition: snap },
   exit: { opacity: 0, x: "-50%", y: 8, scale: 0.985, transition: snapFast },
 };
+
+// Right-anchored drawer: the agent slide-over + the documents preview. Slides in
+// from the right edge (NOT slideOver, which is a centred modal).
+export const drawerRight: Variants = {
+  initial: { x: "100%", opacity: 0.6 },
+  animate: { x: "0%", opacity: 1, transition: snap },
+  exit: { x: "100%", opacity: 0.6, transition: snapFast },
+};
+
+// Minimal icon morph for a toggle (open ⇄ close) — a scale/rotate/opacity swap
+// under AnimatePresence mode="wait", not a path tween (no morph dependency).
+export const iconMorph: Variants = {
+  initial: { opacity: 0, scale: 0.7, rotate: -30 },
+  animate: { opacity: 1, scale: 1, rotate: 0, transition: snapFast },
+  exit: { opacity: 0, scale: 0.7, rotate: 30, transition: snapFast },
+};

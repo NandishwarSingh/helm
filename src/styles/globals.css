@@ -1837,6 +1837,37 @@
     background: var(--scrim);
     backdrop-filter: saturate(1.1) blur(2px);
   }
+  /* Right-anchored slide-over: the agent drawer (and the documents preview). */
+  .agent-drawer {
+    position: fixed;
+    right: 0;
+    top: 0;
+    z-index: 50;
+    width: min(460px, calc(100vw - 3rem));
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--color-line-strong);
+    background: var(--color-paper);
+  }
+  .agent-drawer-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0.7rem 0.65rem 0.95rem;
+    border-bottom: 1px solid var(--color-line);
+  }
+  .agent-drawer-title {
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+  .agent-drawer-body {
+    flex: 1;
+    min-height: 0; /* bound .agent's height:100% so .agent-scroll can scroll */
+    display: flex;
+    flex-direction: column;
+  }
   .compose {
     position: fixed;
     left: 50%;
