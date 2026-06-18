@@ -220,10 +220,13 @@ export function AppShell() {
   });
   const removeM = api.accounts.remove.useMutation({
     onSuccess: () => {
+      // The account row is already unlinked server-side, so these refetches drop
+      // the removed mailbox's mail/docs/events from every list right away.
       void utils.accounts.list.invalidate();
       void utils.gmail.invalidate();
       void utils.triage.invalidate();
       void utils.calendar.invalidate();
+      void utils.documents.invalidate();
     },
   });
   // "Add account" is an authenticated form POST (intent=add); submit one
@@ -561,11 +564,20 @@ export function AppShell() {
                                 className="acct-mini"
                                 title="Make primary"
                                 aria-label={`Make ${displayEmail} primary`}
+                                disabled={
+                                  setPrimaryM.isPending &&
+                                  setPrimaryM.variables?.accountId === a.id
+                                }
                                 onClick={() =>
                                   setPrimaryM.mutate({ accountId: a.id })
                                 }
                               >
-                                <StarIcon size={12} />
+                                {setPrimaryM.isPending &&
+                                setPrimaryM.variables?.accountId === a.id ? (
+                                  <span className="mini-spinner" />
+                                ) : (
+                                  <StarIcon size={12} />
+                                )}
                               </button>
                             )
                           )}
@@ -576,19 +588,35 @@ export function AppShell() {
                               className="acct-mini acct-remove"
                               title="Remove account"
                               aria-label={`Remove ${displayEmail}`}
+                              disabled={
+                                removeM.isPending &&
+                                removeM.variables?.accountId === a.id
+                              }
                               onClick={() => {
+                                if (
+                                  removeM.isPending &&
+                                  removeM.variables?.accountId === a.id
+                                ) {
+                                  return;
+                                }
                                 if (
                                   window.confirm(
                                     `Remove ${displayEmail}? It will be disconnected and its cached data deleted.`,
                                   )
                                 ) {
+                                  // Keep the menu open so the spinner stays
+                                  // visible; the row vanishes on refetch.
                                   if (activeAccount === a.id) setActiveAccount("all");
                                   removeM.mutate({ accountId: a.id });
-                                  setAcctMenuOpen(false);
                                 }
                               }}
                             >
-                              <TrashIcon size={12} />
+                              {removeM.isPending &&
+                              removeM.variables?.accountId === a.id ? (
+                                <span className="mini-spinner" />
+                              ) : (
+                                <TrashIcon size={12} />
+                              )}
                             </button>
                           )}
                         </div>

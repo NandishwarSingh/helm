@@ -33,7 +33,7 @@ export const documentsRouter = createTRPCRouter({
       z.object({
         category: categorySchema.default("all"),
         account: accountInput,
-        limit: z.number().min(1).max(200).default(60),
+        limit: z.number().min(1).max(300).default(60),
         offset: z.number().min(0).default(0),
       }),
     )
@@ -191,13 +191,20 @@ export const documentsRouter = createTRPCRouter({
   // block the request past a proxy timeout; the SSE "documents" event refreshes
   // the view when each tenant's scan settles. Scans are coalesced per tenant, so
   // a concurrent realtime scan and this one share a single run.
-  scan: authedProcedure.mutation(async () => {
-    const clients = await getAccountClients();
-    after(() =>
-      scanAllDocuments(clients, { deep: true }).finally(() => {
-        for (const c of clients) notifyTenant(c.tenantId, "documents");
-      }),
-    );
-    return { ok: true };
-  }),
+  // deep=true pages Gmail's full has:attachment history (manual "Scan now" + the
+  // first open of a mailbox); deep=false is the cheap recent-cache pass used by
+  // routine re-opens. Both coalesce per tenant and skip already-cataloged mail,
+  // so a repeat scan only does work for genuinely-new attachments.
+  scan: authedProcedure
+    .input(z.object({ deep: z.boolean().default(true) }).optional())
+    .mutation(async ({ input }) => {
+      const deep = input?.deep ?? true;
+      const clients = await getAccountClients();
+      after(() =>
+        scanAllDocuments(clients, { deep }).finally(() => {
+          for (const c of clients) notifyTenant(c.tenantId, "documents");
+        }),
+      );
+      return { ok: true };
+    }),
 });

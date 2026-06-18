@@ -59,8 +59,19 @@ const CATEGORY_ORDER = [
 ] as const;
 const SYNC_TIMEOUT_MS = 120_000;
 const PAGE_SIZE = 60;
-const MAX_LIMIT = 200;
+const MAX_LIMIT = 300;
 const LOAD_MORE_MIN_MS = 650;
+// Re-opening Documents within this window skips the cheap auto-sync (the realtime
+// SSE already keeps it fresh) — a deep/new-account scan always bypasses it.
+const AUTO_SCAN_THROTTLE_MS = 20_000;
+
+// Module-level so a sync — and its indicator — survives this panel unmounting
+// when you switch views (the scan itself runs server-side regardless). Keyed by
+// the `account` scope prop ("all" or an account id).
+const deepScannedScopes = new Set<string>(); // scopes given their first deep scan
+const knownAccountIds = new Set<string>(); // every account id seen this session
+const lastAutoScanAt = new Map<string, number>(); // throttle the cheap auto-sync
+const syncStartedAt = new Map<string, number>(); // scope -> sync start ms (bg overlay)
 
 type GroupBy = "type" | "sender" | "date";
 
@@ -189,13 +200,20 @@ export function DocumentsPanel({ account }: { account: string }) {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [preview, setPreview] = useState<DocItem | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  // Restore the syncing indicator if a scan started in another mount of this
+  // scope is still in its window — so the overlay survives a view switch.
+  const [syncing, setSyncing] = useState(() => {
+    const started = syncStartedAt.get(account);
+    return started !== undefined && Date.now() - started < SYNC_TIMEOUT_MS;
+  });
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeDocKey, setActiveDocKey] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const syncTimeoutRef = useRef<number | null>(null);
   const loadMoreStartedRef = useRef(0);
   const previewWarmRef = useRef<Set<string>>(new Set());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const limit = limits[category] ?? PAGE_SIZE;
 
   // Suppress the app's global key layer (1/2/3/4, g-chord, ⌘J, c, n, /) while a
@@ -340,26 +358,32 @@ export function DocumentsPanel({ account }: { account: string }) {
   const finishSyncRef = useRef(() => undefined as void);
   finishSyncRef.current = () => {
     clearSyncTimeout();
+    syncStartedAt.delete(account);
     setSyncing(false);
     refreshRef.current();
   };
 
-  function startScan() {
+  function startScan(opts: { deep?: boolean } = {}) {
     if (scan.isPending || syncing) return;
     setSyncing(true);
+    syncStartedAt.set(account, Date.now());
     clearSyncTimeout();
-    scan.mutate(undefined, {
-      onSuccess: () => {
-        syncTimeoutRef.current = window.setTimeout(
-          () => finishSyncRef.current(),
-          SYNC_TIMEOUT_MS,
-        );
+    scan.mutate(
+      { deep: opts.deep ?? true },
+      {
+        onSuccess: () => {
+          syncTimeoutRef.current = window.setTimeout(
+            () => finishSyncRef.current(),
+            SYNC_TIMEOUT_MS,
+          );
+        },
+        onError: () => {
+          clearSyncTimeout();
+          syncStartedAt.delete(account);
+          setSyncing(false);
+        },
       },
-      onError: () => {
-        clearSyncTimeout();
-        setSyncing(false);
-      },
-    });
+    );
   }
 
   useEffect(
@@ -368,6 +392,48 @@ export function DocumentsPanel({ account }: { account: string }) {
     },
     [],
   );
+
+  // Background-sync restore: if a scan for this scope is still in its window
+  // (started in a prior mount), re-arm the completion timeout for the remainder.
+  useEffect(() => {
+    const started = syncStartedAt.get(account);
+    if (started === undefined) return;
+    const remaining = SYNC_TIMEOUT_MS - (Date.now() - started);
+    if (remaining <= 0) {
+      finishSyncRef.current();
+      return;
+    }
+    clearSyncTimeout();
+    syncTimeoutRef.current = window.setTimeout(
+      () => finishSyncRef.current(),
+      remaining,
+    );
+    return () => clearSyncTimeout();
+  }, [account]);
+
+  // Sync on open: a deep scan the first time a scope (or a newly-appeared
+  // account) is opened so older attachments get indexed; a cheap incremental
+  // scan (throttled) on routine re-opens — only genuinely-new attachments cost
+  // work server-side. startScan no-ops while a sync is already running.
+  const accountSig =
+    account === "all"
+      ? accountList
+          .map((a) => a.id)
+          .sort()
+          .join(",")
+      : account;
+  useEffect(() => {
+    const ids = account === "all" ? accountList.map((a) => a.id) : [account];
+    const newAccount = ids.some((id) => id && !knownAccountIds.has(id));
+    ids.forEach((id) => id && knownAccountIds.add(id));
+    const deep = !deepScannedScopes.has(account) || newAccount;
+    const last = lastAutoScanAt.get(account) ?? 0;
+    if (!deep && Date.now() - last < AUTO_SCAN_THROTTLE_MS) return;
+    deepScannedScopes.add(account);
+    lastAutoScanAt.set(account, Date.now());
+    startScan({ deep });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, accountSig]);
 
   // Keep the live-refresh handlers current without re-subscribing the SSE.
   const refreshRef = useRef(() => undefined as void);
@@ -418,7 +484,12 @@ export function DocumentsPanel({ account }: { account: string }) {
   }
 
   function loadMore() {
-    if (!hasMore || loadingMore) return;
+    if (
+      loadingMore ||
+      !hasMore ||
+      (limits[category] ?? PAGE_SIZE) >= MAX_LIMIT
+    )
+      return;
     loadMoreStartedRef.current = performance.now();
     setLoadingMore(true);
     setLimits((prev) => ({
@@ -426,6 +497,26 @@ export function DocumentsPanel({ account }: { account: string }) {
       [category]: Math.min((prev[category] ?? PAGE_SIZE) + PAGE_SIZE, MAX_LIMIT),
     }));
   }
+  // Always call the freshest loadMore from the (mount-stable) observer below.
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+
+  // Infinite scroll: a sentinel near the bottom of the scroller auto-loads the
+  // next page. loadMore() guards on hasMore + the window cap, so this is a no-op
+  // once everything's loaded; the Load more button stays as an explicit control.
+  useEffect(() => {
+    const root = scrollRef.current;
+    const target = sentinelRef.current;
+    if (!root || !target || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMoreRef.current();
+      },
+      { root, rootMargin: "320px 0px" },
+    );
+    io.observe(target);
+    return () => io.disconnect();
+  }, []);
 
   function triggerDownload(doc: DocItem) {
     const a = document.createElement("a");
@@ -473,6 +564,7 @@ export function DocumentsPanel({ account }: { account: string }) {
     [activeDocKey, visibleDocs],
   );
   const hasMore = !searching && (listQuery.data?.hasMore ?? false);
+  const canLoadMore = hasMore && limit < MAX_LIMIT;
   const loading =
     (searching ? searchQuery.isLoading : listQuery.isLoading) &&
     items.length === 0;
@@ -600,7 +692,7 @@ export function DocumentsPanel({ account }: { account: string }) {
         <button
           type="button"
           className="icon-btn"
-          onClick={startScan}
+          onClick={() => startScan()}
           data-spinning={scan.isPending || syncing}
           disabled={scan.isPending || syncing}
           aria-label="Scan for new documents"
@@ -611,12 +703,6 @@ export function DocumentsPanel({ account }: { account: string }) {
           <RefreshIcon size={16} />
         </button>
       </div>
-
-      {syncing && (
-        <div className="docs-syncbar" role="status" aria-live="polite">
-          <span>Syncing mail attachments</span>
-        </div>
-      )}
 
       <div className="docs-chips" role="group" aria-label="Filter by type">
         <span className="docs-chip-keys" aria-label="Previous and next type filter">
@@ -646,7 +732,7 @@ export function DocumentsPanel({ account }: { account: string }) {
         ))}
       </div>
 
-      <div className="docs-scroll">
+      <div className="docs-scroll" ref={scrollRef}>
         {loading && (
           <div className="empty">
             <HelmLoader size={36} />
@@ -667,7 +753,7 @@ export function DocumentsPanel({ account }: { account: string }) {
               <button
                 type="button"
                 className="btn"
-                onClick={startScan}
+                onClick={() => startScan()}
                 disabled={scan.isPending || syncing}
               >
                 {scan.isPending || syncing ? "Scanning…" : "Scan now"}
@@ -781,15 +867,51 @@ export function DocumentsPanel({ account }: { account: string }) {
             </section>
           ))}
 
-        {hasMore && (
+        {/* Sentinel for infinite scroll — always rendered so the observer binds
+            on mount; loadMore() self-guards on hasMore + the window cap. */}
+        <div ref={sentinelRef} className="docs-sentinel" aria-hidden="true" />
+
+        {canLoadMore && (
           <div className="docs-more">
             <LoadMoreButton loading={loadingMore} onClick={loadMore} />
           </div>
         )}
       </div>
 
+      <SyncOverlay open={syncing} />
+
       <DocPreview doc={preview} onClose={() => setPreview(null)} />
     </motion.div>
+  );
+}
+
+function SyncOverlay({ open }: { open: boolean }) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="docs-sync-overlay"
+          role="status"
+          aria-live="polite"
+          initial={{ opacity: 0, y: 12, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 12, scale: 0.96 }}
+          transition={snap}
+        >
+          <motion.svg
+            className="docs-sync-overlay-spin"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            animate={{ rotate: 360 }}
+            transition={{ duration: 0.7, repeat: Infinity, ease: "linear" }}
+          >
+            <circle className="docs-load-more-spin-track" cx="12" cy="12" r="8" />
+            <path className="docs-load-more-spin-arc" d="M12 4a8 8 0 0 1 8 8" />
+          </motion.svg>
+          <span>Syncing attachments…</span>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

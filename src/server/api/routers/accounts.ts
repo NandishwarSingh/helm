@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { db } from "@/server/db";
@@ -90,6 +91,10 @@ export const accountsRouter = createTRPCRouter({
           message: "cannot remove the last account",
         });
       }
+      // Unlink the account FIRST and synchronously — this is the only step the
+      // UI waits on, so the mailbox vanishes from the list immediately. Reads
+      // (getAccountClients) key off userAccounts, so its mail drops on the next
+      // refetch the moment this row is gone.
       await db
         .delete(userAccounts)
         .where(
@@ -98,10 +103,7 @@ export const accountsRouter = createTRPCRouter({
             eq(userAccounts.id, input.accountId),
           ),
         );
-      // Revoke the grant + purge the removed mailbox's data entirely (incl. its
-      // watch routing), so nothing token-bearing lingers.
-      await teardownTenant(target.tenantId);
-      // If the primary was removed, promote whatever remains.
+      // If the primary was removed, promote whatever remains (also fast).
       if (target.isPrimary) {
         const [next] = await db
           .select({ id: userAccounts.id })
@@ -115,6 +117,10 @@ export const accountsRouter = createTRPCRouter({
             .where(eq(userAccounts.id, next.id));
         }
       }
+      // Revoke the grant + purge the removed mailbox's data entirely (incl. its
+      // watch routing) in the background — nothing token-bearing lingers, but the
+      // slow Google revoke + multi-table purge never blocks the response.
+      after(() => teardownTenant(target.tenantId));
       return { ok: true };
     }),
 });

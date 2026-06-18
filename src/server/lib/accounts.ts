@@ -14,26 +14,12 @@ import {
   userAccounts,
   users,
 } from "@/server/db/schema";
+import { ACCOUNT_COLORS, pickUnusedColor } from "@/server/lib/account-colors";
 import { stopCalendarWatch } from "@/server/lib/calendar-watch";
 import { MAX_ACCOUNTS } from "@/server/lib/concurrency";
 import { deleteTenantDocuments } from "@/server/lib/documents";
 import { getGmailEmail } from "@/server/lib/gmail-watch";
 import { issueUserCookie, setActiveAccountCookie } from "@/server/lib/session";
-
-/** A small palette so each account gets a distinct dot in the UI. */
-export const ACCOUNT_COLORS = [
-  "#38bdf8",
-  "#34d399",
-  "#f59e0b",
-  "#f472b6",
-  "#a78bfa",
-  "#fb7185",
-  "#22d3ee",
-];
-
-function pickColor(index: number): string {
-  return ACCOUNT_COLORS[index % ACCOUNT_COLORS.length]!;
-}
 
 /** The verified address for a tenant — from the watch map, else a live lookup. */
 async function emailForTenant(tenantId: string): Promise<string> {
@@ -124,7 +110,7 @@ export async function linkAddedAccount(opts: {
 
   if (ownerKind === "user") {
     const existing = await db
-      .select({ id: userAccounts.id })
+      .select({ id: userAccounts.id, color: userAccounts.color })
       .from(userAccounts)
       .where(eq(userAccounts.userId, ownerId));
     // Re-enforce the cap here too: /oauth/start checks it, but two concurrent
@@ -141,7 +127,8 @@ export async function linkAddedAccount(opts: {
         userId: ownerId,
         tenantId: newTenantId,
         email,
-        color: pickColor(existing.length),
+        // Never reuse a colour already taken by one of this user's accounts.
+        color: pickUnusedColor(existing.map((e) => e.color)),
         isPrimary: false,
       })
       .onConflictDoNothing();
@@ -184,7 +171,7 @@ export async function linkAddedAccount(opts: {
       tenantId: ownerId,
       email: oldEmail,
       isPrimary: true,
-      color: pickColor(0),
+      color: ACCOUNT_COLORS[0],
     });
     await tx
       .insert(userAccounts)
@@ -194,7 +181,7 @@ export async function linkAddedAccount(opts: {
         tenantId: newTenantId,
         email,
         isPrimary: false,
-        color: pickColor(1),
+        color: ACCOUNT_COLORS[1],
       })
       .onConflictDoNothing();
   });

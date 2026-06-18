@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 
 import { db } from "@/server/db";
 import { gmailWatch, userAccounts } from "@/server/db/schema";
+import { assignUniqueColors } from "@/server/lib/account-colors";
 import { getActiveAccountCookie, getSession } from "@/server/lib/session";
 
 export type Account = {
@@ -28,7 +29,7 @@ export async function getUserAccounts(): Promise<Account[]> {
       .select()
       .from(userAccounts)
       .where(eq(userAccounts.userId, s.id));
-    return rows
+    const sorted = rows
       .map((r) => ({
         id: r.id,
         tenantId: r.tenantId,
@@ -42,6 +43,9 @@ export async function getUserAccounts(): Promise<Account[]> {
           Number(b.isPrimary) - Number(a.isPrimary) ||
           a.email.localeCompare(b.email),
       );
+    // Invariant: no two accounts share a dot colour. Deduped here (the single
+    // read path), so it holds everywhere and self-heals any stored collision.
+    return assignUniqueColors(sorted);
   }
   // Single-account (tenant) session → one synthetic account, id == tenant id.
   const watch = await db
