@@ -17,18 +17,26 @@ const ddl = readFileSync(
 );
 
 // postgres.js runs one statement per call, so split the DDL on statement
-// boundaries (the file has no `;` inside any statement body).
+// boundaries (the file has no `;` inside any statement body). Strip comment
+// LINES from each statement — a leading comment block must not drop the SQL it
+// precedes (it did: the whole CREATE TABLE was filtered when it started with --).
 const statements = ddl
   .split(/;\s*$/m)
-  .map((statement) => statement.trim())
-  .filter((statement) => statement.length > 0 && !statement.startsWith("--"));
+  .map((statement) =>
+    statement
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n")
+      .trim(),
+  )
+  .filter((statement) => statement.length > 0);
 
 const sql = postgres(url, { max: 1 });
 try {
   for (const statement of statements) {
     await sql.unsafe(statement);
   }
-  console.log("[pgvector] extension + mail_embeddings ready");
+  console.log("[pgvector] extension + mail_embeddings + doc_embeddings ready");
 } finally {
   await sql.end();
 }
