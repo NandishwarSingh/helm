@@ -1482,20 +1482,27 @@ export function GmailPanel({
     return () => window.clearInterval(id);
   }, [autoSync]);
 
-  // Spam, trash and sent sync on first open when empty.
-  const syncedFolders = useRef(new Set<string>());
+  // Spam, trash and sent are excluded from the inbox poll, so they're ONLY kept
+  // fresh by this on-open pull. Re-sync on every open (throttled per folder so
+  // re-entering can't spam Gmail) rather than the old "once per mount, only when
+  // empty" guard — that left a folder synced once then stale, so re-opening a
+  // non-empty Trash showed a partial list until a manual refresh. It's a
+  // background pull: the cached list stays visible and fills in when it lands.
+  const FOLDER_SYNC_THROTTLE_MS = 20_000;
+  const folderSyncAt = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     if (folder !== "spam" && folder !== "trash" && folder !== "sent") return;
-    if (inbox.isLoading || emails.length > 0) return;
-    if (syncedFolders.current.has(folder)) return;
+    if (inbox.isLoading || syncFolder.isPending) return;
+    const last = folderSyncAt.current.get(folder) ?? 0;
+    if (Date.now() - last < FOLDER_SYNC_THROTTLE_MS) return;
     const target = folder;
-    syncedFolders.current.add(target);
-    // Drop the guard on failure so the folder re-syncs on its next open.
+    folderSyncAt.current.set(target, Date.now());
+    // Drop the stamp on failure so the folder re-syncs on its next open.
     syncFolder.mutate(
       { folder: target },
-      { onError: () => syncedFolders.current.delete(target) },
+      { onError: () => folderSyncAt.current.delete(target) },
     );
-  }, [folder, inbox.isLoading, emails.length, syncFolder]);
+  }, [folder, inbox.isLoading, syncFolder]);
 
   // Infinite scroll: reveal more of the stable list as the sentinel nears,
   // then deep-sync the cache (inbox only) once the window is exhausted.
