@@ -9,6 +9,7 @@ import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { FirstSyncVeil } from "@/components/first-sync-veil";
 import { Landing } from "@/app/_components/landing";
 import { ProUpsell } from "@/app/_components/pro-upsell";
+import { SubscriptionsManager } from "@/app/_components/subscriptions-manager";
 import { UpgradePro } from "@/app/_components/upgrade-pro";
 import {
   GmailPanel,
@@ -151,6 +152,7 @@ export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [proUpsellOpen, setProUpsellOpen] = useState(false);
+  const [subsOpen, setSubsOpen] = useState(false);
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // Never mount AgentPanel twice on the one module-level Chat (tab + drawer) —
   // that doubles its effects/invalidations. The drawer is "actually open" only
@@ -200,6 +202,7 @@ export function AppShell() {
   useOverlay(paletteOpen);
   useOverlay(helpOpen);
   useOverlay(proUpsellOpen);
+  useOverlay(subsOpen);
 
   const status = api.connection.status.useQuery();
   const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
@@ -318,6 +321,16 @@ export function AppShell() {
     form.appendChild(field);
     document.body.appendChild(form);
     form.submit();
+  }
+  // Subscriptions manager is Pro-only. Same gate as addAccount: a known-not-Pro
+  // session sees the upsell; otherwise open the manager (its data calls are
+  // Pro-gated server-side too, so this is convenience, not the security).
+  function openSubscriptions() {
+    if (billing.data && !billing.data.pro) {
+      setProUpsellOpen(true);
+      return;
+    }
+    setSubsOpen(true);
   }
   // Esc closes the open account menu; Up/Down/Home/End rove between menuitems.
   useEffect(() => {
@@ -769,6 +782,16 @@ export function AppShell() {
             <button
               type="button"
               className="icon-btn"
+              data-tip="Manage subscriptions"
+              data-tip-pos="down"
+              aria-label="Manage subscriptions"
+              onClick={openSubscriptions}
+            >
+              <SpamIcon size={15} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
               data-tip="Keyboard shortcuts — ?"
               data-tip-pos="down"
               aria-label="Keyboard shortcuts"
@@ -935,6 +958,12 @@ export function AppShell() {
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
       <ProUpsell open={proUpsellOpen} onOpenChange={setProUpsellOpen} />
+      <SubscriptionsManager
+        open={subsOpen}
+        onOpenChange={setSubsOpen}
+        account={activeAccount}
+        accounts={accountList.map((a) => ({ id: a.id, email: a.email }))}
+      />
       {firstRun && <FirstSyncVeil onEnter={() => setFirstRun(false)} />}
       <AnimatePresence>
         {chordPending && (

@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -12,7 +12,7 @@ import {
 } from "@/lib/search-operators";
 import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
-import { mailSync } from "@/server/db/schema";
+import { mailSync, unsubscribedSenders } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
 import { deleteMessageDocuments } from "@/server/lib/documents";
 import {
@@ -20,10 +20,7 @@ import {
   mapLimit,
   requireExplicitAccount,
 } from "@/server/lib/concurrency";
-import {
-  isNotConnectedError,
-  listOrEmpty,
-} from "@/server/lib/corsair-errors";
+import { isNotConnectedError, listOrEmpty } from "@/server/lib/corsair-errors";
 import {
   encodeRawEmail,
   extractBodyFromPayload,
@@ -48,8 +45,16 @@ import {
 } from "@/server/lib/semantic-search";
 import { getTenantId } from "@/server/lib/session";
 import { type AccountClient, getAccountClients } from "@/server/lib/tenant";
+import {
+  parseListUnsubscribe,
+  postOneClickUnsubscribe,
+} from "@/server/lib/unsubscribe";
 import { getUserAccounts, resolveAccountTenant } from "@/server/lib/users";
-import { authedProcedure, createTRPCRouter } from "@/server/api/trpc";
+import {
+  authedProcedure,
+  createTRPCRouter,
+  proProcedure,
+} from "@/server/api/trpc";
 
 const paginationSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
@@ -112,11 +117,13 @@ async function hydrateMessages(tenant: Tenant, ids: string[]): Promise<number> {
   let hydrated = 0;
   for (let i = 0; i < ids.length; i += SYNC_CONCURRENCY) {
     const results = await Promise.all(
-      ids.slice(i, i + SYNC_CONCURRENCY).map((id) =>
-        withRetry(() =>
-          tenant.gmail.api.messages.get({ id, format: "metadata" }),
-        ).catch(() => null),
-      ),
+      ids
+        .slice(i, i + SYNC_CONCURRENCY)
+        .map((id) =>
+          withRetry(() =>
+            tenant.gmail.api.messages.get({ id, format: "metadata" }),
+          ).catch(() => null),
+        ),
     );
     hydrated += results.filter((result) => result !== null).length;
   }
@@ -182,6 +189,103 @@ export async function opAccount(
   }
   return { tenant: corsair.withTenant(tenantId), tenantId };
 }
+
+/** A subscription action result. */
+type UnsubResult = {
+  method: "one-click" | "email" | "manual" | "none";
+  sender: string;
+  manualUrl: string | null;
+};
+
+/**
+ * Read one message's List-Unsubscribe header and act on it — a one-click HTTPS
+ * POST (RFC 8058) or an unsubscribe email sent from the user's own mailbox —
+ * then archive + mark it read when we actually unsubscribed. Shared by the
+ * single (`unsubscribe`) and bulk (`unsubscribeMany`) Pro mutations. The tenant
+ * is already ownership-resolved by the caller via opAccount.
+ */
+async function performUnsubscribe(
+  tenant: Tenant,
+  tenantId: string,
+  id: string,
+): Promise<UnsubResult> {
+  const message = await withRetry(() =>
+    tenant.gmail.api.messages.get({ id, format: "metadata" }),
+  );
+  const headers = message.payload?.headers;
+  const fromHeader = getHeader(headers, "From");
+  const { email: senderEmail, name } = parseFromHeader(fromHeader);
+  const sender = name || senderEmail || fromHeader.trim();
+
+  const parsed = parseListUnsubscribe(
+    getHeader(headers, "List-Unsubscribe"),
+    getHeader(headers, "List-Unsubscribe-Post"),
+  );
+
+  let method: UnsubResult["method"] = "none";
+  let manualUrl: string | null = null;
+
+  if (parsed.oneClick) {
+    const ok = await postOneClickUnsubscribe(parsed.oneClick);
+    method = ok ? "one-click" : "manual";
+    if (!ok) manualUrl = parsed.oneClick;
+  } else if (parsed.mailto) {
+    // encodeRawEmail CR/LF-strips the address + subject, so a crafted header
+    // can't inject extra headers (e.g. a hidden Bcc).
+    const raw = encodeRawEmail({
+      to: parsed.mailto.to,
+      subject: parsed.mailto.subject,
+      body: "Please unsubscribe this address from your mailing list.",
+    });
+    await withRetry(() => tenant.gmail.api.messages.send({ raw }));
+    method = "email";
+  } else if (parsed.httpManual) {
+    method = "manual";
+    manualUrl = parsed.httpManual;
+  }
+
+  // Clear it from the inbox only when we actually unsubscribed, and remember the
+  // sender so a re-scan (which reads All Mail) never lists them again.
+  if (method === "one-click" || method === "email") {
+    await withRetry(() =>
+      tenant.gmail.api.messages.modify({
+        id,
+        removeLabelIds: ["INBOX", "UNREAD"],
+      }),
+    );
+    if (senderEmail) {
+      await db
+        .insert(unsubscribedSenders)
+        .values({ tenantId, senderEmail })
+        .onConflictDoNothing();
+    }
+    await hydrateMessages(tenant, [id]);
+    notifyTenant(tenantId, "mail");
+  }
+
+  return { method, sender, manualUrl };
+}
+
+/** Split a From header into a lowercased address + a display name. */
+function parseFromHeader(from: string): { email: string; name: string } {
+  const m = /^(.*?)<([^>]+)>\s*$/.exec(from.trim());
+  if (m) {
+    return {
+      email: m[2]!.trim().toLowerCase(),
+      name: m[1]!.trim().replace(/^"|"$/g, "").trim(),
+    };
+  }
+  const bare = from.trim().toLowerCase();
+  return {
+    email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(bare) ? bare : "",
+    name: from.trim(),
+  };
+}
+
+// A scan groups by sender first (cheap, from cache) and only fetches headers for
+// the newest message per sender — bounded so a huge mailbox can't fan out without
+// limit. Senders are ranked by how much they send, so the noisiest come first.
+const MAX_SUBSCRIPTION_SENDERS = 80;
 
 /** Read + tag one account's hydrated messages (plain recency, free text, or operator filters). */
 async function readAccountMessages(
@@ -311,7 +415,9 @@ export const gmailRouter = createTRPCRouter({
         const all = sortMessagesNewestFirst(
           per
             .flatMap((p) => p.items)
-            .filter((m) => matchesFlags(m, parsed) && matchesOperators(m, parsed))
+            .filter(
+              (m) => matchesFlags(m, parsed) && matchesOperators(m, parsed),
+            )
             .filter(FOLDER_FILTERS[input.folder]),
         );
         return {
@@ -322,34 +428,45 @@ export const gmailRouter = createTRPCRouter({
 
       // Free text → per-account semantic candidate pool, re-ranked by the tiered
       // keyword boost, then merged across accounts by the blended score.
-      const perAccount = await mapLimit(clients, READ_CONCURRENCY, async (c) => {
-        try {
-          const hits = await semanticSearchIds(c.tenantId, text, SMART_POOL);
-          if (hits.length === 0) return [];
-          const semScore = new Map(hits.map((hit) => [hit.messageId, hit.score]));
-          const window = await listOrEmpty(async () =>
-            c.client.gmail.db.messages.list({ limit: SEARCH_WINDOW, offset: 0 }),
-          );
-          const byId = new Map(
-            dedupeByEntityId(window)
-              .map(mapMessage)
-              .filter((message) => message.hydrated)
-              .map((message) => [message.id, message] as const),
-          );
-          return hits
-            .map((hit) => byId.get(hit.messageId))
-            .filter((m): m is NonNullable<typeof m> => Boolean(m))
-            .filter((m) => matchesFlags(m, parsed) && matchesOperators(m, parsed))
-            .filter(FOLDER_FILTERS[input.folder])
-            .map((m) => ({
-              msg: { ...m, accountId: c.accountId, accountEmail: c.email },
-              score: (semScore.get(m.id) ?? 0) + tieredBoost(text, m),
-            }));
-        } catch {
-          // One account's semantic query failing must not 500 the whole search.
-          return [];
-        }
-      });
+      const perAccount = await mapLimit(
+        clients,
+        READ_CONCURRENCY,
+        async (c) => {
+          try {
+            const hits = await semanticSearchIds(c.tenantId, text, SMART_POOL);
+            if (hits.length === 0) return [];
+            const semScore = new Map(
+              hits.map((hit) => [hit.messageId, hit.score]),
+            );
+            const window = await listOrEmpty(async () =>
+              c.client.gmail.db.messages.list({
+                limit: SEARCH_WINDOW,
+                offset: 0,
+              }),
+            );
+            const byId = new Map(
+              dedupeByEntityId(window)
+                .map(mapMessage)
+                .filter((message) => message.hydrated)
+                .map((message) => [message.id, message] as const),
+            );
+            return hits
+              .map((hit) => byId.get(hit.messageId))
+              .filter((m): m is NonNullable<typeof m> => Boolean(m))
+              .filter(
+                (m) => matchesFlags(m, parsed) && matchesOperators(m, parsed),
+              )
+              .filter(FOLDER_FILTERS[input.folder])
+              .map((m) => ({
+                msg: { ...m, accountId: c.accountId, accountEmail: c.email },
+                score: (semScore.get(m.id) ?? 0) + tieredBoost(text, m),
+              }));
+          } catch {
+            // One account's semantic query failing must not 500 the whole search.
+            return [];
+          }
+        },
+      );
       const ranked = perAccount
         .flat()
         .sort((a, b) => b.score - a.score)
@@ -516,7 +633,9 @@ export const gmailRouter = createTRPCRouter({
         requireAccount: true,
       });
       if (input.action === "trash") {
-        await withRetry(() => tenant.gmail.api.messages.trash({ id: input.id }));
+        await withRetry(() =>
+          tenant.gmail.api.messages.trash({ id: input.id }),
+        );
         // Re-hydrate so a reconcile refetch reads the new labels (TRASH added,
         // INBOX gone) — mirrors bulkModify; without it the row can flicker back.
         await hydrateMessages(tenant, [input.id]);
@@ -532,12 +651,18 @@ export const gmailRouter = createTRPCRouter({
         return { ok: true };
       }
       if (input.action === "deleteForever") {
-        await withRetry(() => tenant.gmail.api.messages.delete({ id: input.id }));
+        await withRetry(() =>
+          tenant.gmail.api.messages.delete({ id: input.id }),
+        );
         await purgeCachedEntity(tenantId, input.id);
         // Best-effort: drop the orphaned embedding, but never let a failed
         // index cleanup surface as a failed delete.
-        await deleteMessageEmbeddings(tenantId, [input.id]).catch(() => undefined);
-        await deleteMessageDocuments(tenantId, [input.id]).catch(() => undefined);
+        await deleteMessageEmbeddings(tenantId, [input.id]).catch(
+          () => undefined,
+        );
+        await deleteMessageDocuments(tenantId, [input.id]).catch(
+          () => undefined,
+        );
         notifyTenant(tenantId, "mail");
         return { ok: true };
       }
@@ -618,6 +743,206 @@ export const gmailRouter = createTRPCRouter({
       return { ok: true, count: input.ids.length };
     }),
 
+  // PRO: auto-unsubscribe one newsletter. Reads the message's List-Unsubscribe
+  // header server-side and acts on it — a one-click HTTPS POST (RFC 8058) or an
+  // unsubscribe email sent from the user's own mailbox — then archives + marks
+  // it read so it disappears now. Everything (entitlement, ownership, the
+  // outbound request, SSRF guarding) happens here; the client only triggers it
+  // and renders the result. Falls back to a `manual` URL when we can't safely
+  // auto-act (an HTTPS link the sender didn't mark one-click, etc.).
+  unsubscribe: proProcedure
+    .input(z.object({ id: z.string().min(1).max(128), account: accountInput }))
+    .mutation(async ({ input }) => {
+      // Ownership gate: resolves (and verifies) the account belongs to this
+      // session, exactly like every other per-message write.
+      const { tenant, tenantId } = await opAccount(input.account, {
+        requireAccount: true,
+      });
+      return performUnsubscribe(tenant, tenantId, input.id);
+    }),
+
+  // PRO: scan the user's mail and list the senders they can unsubscribe from,
+  // grouped by sender, newest-first per sender. Spans EVERY connected account
+  // when account is "all"/omitted, and looks at all mail (inbox + archived),
+  // not just the inbox — so a newsletter already auto-filed still shows up.
+  // Grouping happens from the cache (cheap); only the newest message per sender
+  // is fetched for its List-Unsubscribe header, capped at MAX_SUBSCRIPTION_SENDERS.
+  listSubscriptions: proProcedure
+    .input(z.object({ account: accountInput }).optional())
+    .query(async ({ input }) => {
+      const clients = await readClients(input?.account);
+
+      // 1) Pull cached messages per account; keep real mail (drop spam/trash/
+      //    sent/drafts), tag each with the account it came from.
+      const perAccount = await mapLimit(
+        clients,
+        READ_CONCURRENCY,
+        async (c) => {
+          const cached = await listOrEmpty(async () =>
+            c.client.gmail.db.messages.list({
+              limit: SEARCH_WINDOW,
+              offset: 0,
+            }),
+          );
+          return dedupeByEntityId(cached)
+            .map(mapMessage)
+            .filter((m) => m.hydrated && !m.spam && !m.trashed && !m.sent)
+            .map((m) => ({
+              id: m.id,
+              from: m.from,
+              timestamp: m.timestamp,
+              accountId: c.accountId,
+              tenantId: c.tenantId,
+              tenant: c.client,
+            }));
+        },
+      );
+
+      // Senders we've already unsubscribed from stay hidden even though their old
+      // mail still lives in All Mail.
+      const tenantIds = clients.map((c) => c.tenantId);
+      const suppressed = new Set(
+        tenantIds.length === 0
+          ? []
+          : (
+              await db
+                .select({
+                  tenantId: unsubscribedSenders.tenantId,
+                  senderEmail: unsubscribedSenders.senderEmail,
+                })
+                .from(unsubscribedSenders)
+                .where(inArray(unsubscribedSenders.tenantId, tenantIds))
+            ).map((r) => `${r.tenantId} ${r.senderEmail}`),
+      );
+
+      // 2) Group by (account, sender): newest message id + a running count.
+      type Group = {
+        email: string;
+        name: string;
+        count: number;
+        lastTimestamp: number;
+        messageId: string;
+        accountId: string;
+        tenantId: string;
+        tenant: Tenant;
+      };
+      const groups = new Map<string, Group>();
+      for (const m of perAccount.flat()) {
+        const { email, name } = parseFromHeader(m.from);
+        if (!email) continue;
+        if (suppressed.has(`${m.tenantId} ${email}`)) continue;
+        const key = `${m.accountId} ${email}`;
+        const g = groups.get(key);
+        if (!g) {
+          groups.set(key, {
+            email,
+            name: name || email,
+            count: 1,
+            lastTimestamp: m.timestamp,
+            messageId: m.id,
+            accountId: m.accountId,
+            tenantId: m.tenantId,
+            tenant: m.tenant,
+          });
+        } else {
+          g.count += 1;
+          if (m.timestamp > g.lastTimestamp) {
+            g.lastTimestamp = m.timestamp;
+            g.messageId = m.id;
+            if (name) g.name = name;
+          }
+        }
+      }
+
+      // 3) For the noisiest senders, fetch the newest message's headers and keep
+      //    only those that actually expose an unsubscribe method.
+      const candidates = [...groups.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, MAX_SUBSCRIPTION_SENDERS);
+
+      const detected = await mapLimit(
+        candidates,
+        SYNC_CONCURRENCY,
+        async (g) => {
+          const message = await withRetry(() =>
+            g.tenant.gmail.api.messages.get({
+              id: g.messageId,
+              format: "metadata",
+            }),
+          ).catch(() => null);
+          if (!message) return null;
+          const headers = message.payload?.headers;
+          const parsed = parseListUnsubscribe(
+            getHeader(headers, "List-Unsubscribe"),
+            getHeader(headers, "List-Unsubscribe-Post"),
+          );
+          const method: "one-click" | "email" | "manual" | null =
+            parsed.oneClick
+              ? "one-click"
+              : parsed.mailto
+                ? "email"
+                : parsed.httpManual
+                  ? "manual"
+                  : null;
+          if (!method) return null;
+          return {
+            senderEmail: g.email,
+            senderName: g.name,
+            count: g.count,
+            lastTimestamp: g.lastTimestamp,
+            messageId: g.messageId,
+            accountId: g.accountId,
+            method,
+          };
+        },
+      );
+
+      const subscriptions = detected
+        .filter((s): s is NonNullable<typeof s> => s !== null)
+        .sort((a, b) => b.count - a.count);
+      return { subscriptions, scanned: candidates.length };
+    }),
+
+  // PRO: unsubscribe from many senders at once. Each item is its own message +
+  // account; every one is ownership-checked via opAccount, so the batch can span
+  // accounts safely. Runs as ONE mutation (counts once against the write limit)
+  // with bounded concurrency. Returns a per-item result the client renders.
+  unsubscribeMany: proProcedure
+    .input(
+      z.object({
+        items: z
+          .array(
+            z.object({
+              id: z.string().min(1).max(128),
+              account: z.string().min(1).max(64),
+            }),
+          )
+          .min(1)
+          .max(50),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const results = await mapLimit(input.items, 5, async (it) => {
+        try {
+          const { tenant, tenantId } = await opAccount(it.account, {
+            requireAccount: true,
+          });
+          const r = await performUnsubscribe(tenant, tenantId, it.id);
+          return { id: it.id, account: it.account, ok: true, ...r };
+        } catch {
+          return {
+            id: it.id,
+            account: it.account,
+            ok: false,
+            method: "none" as const,
+            sender: "",
+            manualUrl: null,
+          };
+        }
+      });
+      return { results };
+    }),
+
   // Permanently delete a multiselect on one account (no batch endpoint upstream).
   bulkDelete: authedProcedure
     .input(
@@ -661,8 +986,7 @@ export const gmailRouter = createTRPCRouter({
         const result = await c.client.gmail.api.messages.list({
           maxResults: input.folder === "starred" ? 50 : 30,
           labelIds: [label],
-          includeSpamTrash:
-            input.folder === "spam" || input.folder === "trash",
+          includeSpamTrash: input.folder === "spam" || input.folder === "trash",
         });
         const ids = messageIds(result);
         await hydrateMessages(c.client, ids);
@@ -690,7 +1014,12 @@ export const gmailRouter = createTRPCRouter({
     }),
 
   updateDraft: authedProcedure
-    .input(composeSchema.extend({ draftId: z.string().min(1), account: accountInput }))
+    .input(
+      composeSchema.extend({
+        draftId: z.string().min(1),
+        account: accountInput,
+      }),
+    )
     .mutation(async ({ input }) => {
       const { tenant } = await opAccount(input.account, {
         requireAccount: true,
@@ -777,7 +1106,9 @@ export const gmailRouter = createTRPCRouter({
           format: "metadata",
         });
         const from = getHeader(message.payload?.headers, "From");
-        const email = (/<([^>]+)>/.exec(from)?.[1] ?? from).trim().toLowerCase();
+        const email = (/<([^>]+)>/.exec(from)?.[1] ?? from)
+          .trim()
+          .toLowerCase();
         // Only return a real address, so reply-all never excludes a junk value.
         return { email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : "" };
       } catch (error) {
@@ -806,10 +1137,14 @@ export const gmailRouter = createTRPCRouter({
             subject: getHeader(headers, "Subject"),
             messageIdHeader: getHeader(headers, "Message-ID"),
             references: getHeader(headers, "References"),
-            date: message.internalDate != null ? String(message.internalDate) : null,
+            date:
+              message.internalDate != null
+                ? String(message.internalDate)
+                : null,
             snippet: message.snippet ?? "",
             body:
-              extractBodyFromPayload(message.payload) || (message.snippet ?? ""),
+              extractBodyFromPayload(message.payload) ||
+              (message.snippet ?? ""),
             html: extractHtmlFromPayload(message.payload),
             unread: labels.includes("UNREAD"),
           };

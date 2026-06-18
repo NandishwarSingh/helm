@@ -11,6 +11,7 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { db } from "@/server/db";
+import { getProStatus } from "@/server/lib/billing";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
 import { getTenantId } from "@/server/lib/session";
 
@@ -122,6 +123,23 @@ const authMiddleware = t.middleware(async ({ next }) => {
 });
 
 /**
+ * Gates a procedure behind an active Helm Pro subscription, server-side. Pro is
+ * derived from the live subscription (keyed by the session's account emails), so
+ * a client can never grant itself a Pro-only capability by flipping a flag — the
+ * entitlement is checked here, on every call, on top of auth.
+ */
+const proMiddleware = t.middleware(async ({ next }) => {
+  const { pro } = await getProStatus();
+  if (!pro) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This is a Helm Pro feature.",
+    });
+  }
+  return next();
+});
+
+/**
  * Public procedure — rate limited, no session required. Only for endpoints
  * that must work before sign-in (connection status).
  */
@@ -138,3 +156,10 @@ export const authedProcedure = t.procedure
   .use(rateLimitMiddleware)
   .use(authMiddleware)
   .use(timingMiddleware);
+
+/**
+ * Pro-only procedure — an authed procedure that additionally requires an active
+ * Helm Pro subscription. Use for every paywalled capability (e.g. auto-
+ * unsubscribe) so the gate lives on the server, not in the client.
+ */
+export const proProcedure = authedProcedure.use(proMiddleware);
