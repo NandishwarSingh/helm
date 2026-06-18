@@ -13,6 +13,13 @@ import "./src/env.js";
 // the solution back to challenges.cloudflare.com — allowlisted on the three
 // directives it touches and nowhere else.
 const TURNSTILE = "https://challenges.cloudflare.com";
+// Razorpay Checkout loads its script from checkout.razorpay.com, opens the
+// payment UI in an iframe from api.razorpay.com, and posts telemetry to
+// lumberjack.razorpay.com — allowlisted only on the directives it needs.
+const RAZORPAY_SCRIPT = "https://checkout.razorpay.com";
+const RAZORPAY_FRAME = "https://api.razorpay.com https://checkout.razorpay.com";
+const RAZORPAY_CONNECT =
+  "https://api.razorpay.com https://lumberjack.razorpay.com https://*.razorpay.com";
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -22,12 +29,12 @@ const csp = [
   "form-action 'self' https://accounts.google.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
-  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: ${TURNSTILE}`,
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: ${TURNSTILE} ${RAZORPAY_SCRIPT}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https: blob:",
   "font-src 'self' data:",
-  `connect-src 'self' ${TURNSTILE}`,
-  `frame-src 'self' ${TURNSTILE}`,
+  `connect-src 'self' ${TURNSTILE} ${RAZORPAY_CONNECT}`,
+  `frame-src 'self' ${TURNSTILE} ${RAZORPAY_FRAME}`,
   "worker-src 'self' blob:",
   "media-src 'self' https: data:",
 ].join("; ");

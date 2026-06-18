@@ -126,3 +126,17 @@ export const calendarWatch = pgTable('calendar_watch', {
 }, (table) => [
     index('calendar_watch_tenant_idx').on(table.tenantId),
 ]);
+
+// ── Pro subscriptions (Razorpay) ────────────────────────────────────────────
+// One row per billing identity: the session id (a user id for a multi-account
+// session, else the active tenant id). Status is driven by Razorpay webhooks.
+export const subscriptions = pgTable('subscriptions', {
+    subscriberId: text('subscriber_id').primaryKey(),
+    razorpaySubscriptionId: text('razorpay_subscription_id'),
+    status: text('status').notNull().default('inactive'),
+    currentEnd: timestamp('current_end', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+    // Webhooks look the row up by the Razorpay subscription id.
+    index('subscriptions_rzp_idx').on(table.razorpaySubscriptionId),
+]);

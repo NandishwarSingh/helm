@@ -35,6 +35,14 @@ export const env = createEnv({
     // bot check is skipped (so dev and an un-keyed prod still connect), and it
     // activates the moment a key is configured.
     TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
+    // Razorpay (Pro subscription). ALL optional so the app builds + deploys
+    // without them; the "Upgrade to Pro" flow stays inert until all four are
+    // set, then activates with no code change. The Key ID is returned to the
+    // client at checkout (it is public), so no NEXT_PUBLIC var is needed.
+    RAZORPAY_KEY_ID: z.string().min(1).optional(),
+    RAZORPAY_KEY_SECRET: z.string().min(1).optional(),
+    RAZORPAY_WEBHOOK_SECRET: z.string().min(1).optional(),
+    RAZORPAY_PLAN_ID: z.string().min(1).optional(),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -67,6 +75,10 @@ export const env = createEnv({
     TENANT_ID: process.env.TENANT_ID,
     WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
     TURNSTILE_SECRET_KEY: process.env.TURNSTILE_SECRET_KEY,
+    RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID,
+    RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET,
+    RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET,
+    RAZORPAY_PLAN_ID: process.env.RAZORPAY_PLAN_ID,
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
     NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,

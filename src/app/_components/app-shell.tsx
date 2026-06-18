@@ -8,6 +8,7 @@ import dynamic from "next/dynamic";
 import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { FirstSyncVeil } from "@/components/first-sync-veil";
 import { Landing } from "@/app/_components/landing";
+import { UpgradePro } from "@/app/_components/upgrade-pro";
 import {
   GmailPanel,
   type EventSeed,
@@ -368,6 +369,8 @@ export function AppShell() {
               </button>
             ))}
           </nav>
+
+          <UpgradePro />
 
           <div className="rail-foot">
             <div className="acct-switch">

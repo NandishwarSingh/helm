@@ -24,5 +24,6 @@ export default {
     "calendar_watch",
     "users",
     "user_accounts",
+    "subscriptions",
   ],
 } satisfies Config;

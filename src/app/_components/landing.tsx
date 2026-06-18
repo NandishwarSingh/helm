@@ -586,6 +586,7 @@ export function Landing() {
         <div className="lp-nav-links">
           <a href="#features">Features</a>
           <a href="#compare">Compare</a>
+          <a href="#pricing">Pricing</a>
           <a href="#faq">FAQ</a>
         </div>
         <span className="topbar-spacer" />
@@ -752,6 +753,66 @@ export function Landing() {
           </div>
         </section>
 
+        {/* pricing */}
+        <section className="lp-section" id="pricing">
+          <SectionHead
+            label="PRICING"
+            title="Free to start. Pro when you're ready."
+          />
+          <div className="lp-pricing lp-rise">
+            <div className="lp-price-card">
+              <h3>Free</h3>
+              <p className="lp-price">
+                ₹0<span>/forever</span>
+              </p>
+              <ul>
+                <li>One Gmail + Calendar account</li>
+                <li>Keyboard-first triage, search and scheduling</li>
+                <li>Sub-second cached search</li>
+              </ul>
+              <button
+                type="button"
+                className="btn lp-price-cta"
+                onClick={() => {
+                  const form = document.getElementById(
+                    "hero-connect",
+                  ) as HTMLFormElement | null;
+                  form?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  form?.requestSubmit();
+                }}
+              >
+                Get started
+              </button>
+            </div>
+            <div className="lp-price-card" data-featured="true">
+              <span className="lp-price-tag">Pro</span>
+              <h3>Pro</h3>
+              <p className="lp-price">
+                ₹99<span>/month</span>
+              </p>
+              <ul>
+                <li>Everything in Free</li>
+                <li>Unlimited accounts + a unified inbox</li>
+                <li>The AI agent that acts across your mail and calendar</li>
+                <li>Priority support</li>
+              </ul>
+              <button
+                type="button"
+                className="btn btn-primary lp-price-cta"
+                onClick={() => {
+                  const form = document.getElementById(
+                    "hero-connect",
+                  ) as HTMLFormElement | null;
+                  form?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  form?.requestSubmit();
+                }}
+              >
+                Get Pro
+              </button>
+            </div>
+          </div>
+        </section>
+
         {/* trust */}
         <section className="lp-section" id="trust">
           <SectionHead label="YOUR DATA" title="Your account stays yours" />
@@ -814,6 +875,7 @@ export function Landing() {
           <div className="lp-foot-links">
             <a href="#features">Features</a>
             <a href="#compare">Compare</a>
+            <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
           </div>
           <span className="topbar-spacer" />
