@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 
 import {
   AgentIcon,
+  CheckIcon,
   CloseIcon,
   DocumentsIcon,
   PaperclipIcon,
@@ -17,7 +18,6 @@ import {
   TrashIcon,
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
-import { Skeleton } from "@/components/skeleton";
 import { dispatchOpenRecord, useAction } from "@/lib/actions";
 import { formatAccountEmail } from "@/lib/display";
 import { listRow } from "@/lib/motion";
@@ -144,6 +144,57 @@ function greetingText(): string {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
   return "Good evening";
+}
+
+// Phases for the "thinking" loader — shown ONLY before the agent's real tool
+// steps start streaming (those take over after). Honest, generic stages so it's
+// never claiming progress it doesn't have; it advances on a timer and HOLDS on
+// the last stage until the real work appears.
+const LOADER_STEPS = [
+  "Reading your request",
+  "Searching your mail and calendar",
+  "Pulling the details together",
+  "Preparing a response",
+];
+
+/**
+ * A compact multi-step loader (in the spirit of the Aceternity component, built
+ * in-house in Helm's design language). Fills the brief gap between sending and
+ * the agent's first visible step, so the panel never looks frozen.
+ */
+function AgentLoader() {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    if (step >= LOADER_STEPS.length - 1) return; // hold on the final stage
+    const id = window.setTimeout(() => setStep((s) => s + 1), 1700);
+    return () => window.clearTimeout(id);
+  }, [step]);
+  return (
+    <div className="agent-loader" role="status" aria-label="Agent is working">
+      {LOADER_STEPS.map((label, i) => {
+        const state = i < step ? "done" : i === step ? "active" : "todo";
+        return (
+          <motion.div
+            key={i}
+            className="agent-loader-step"
+            data-state={state}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: state === "todo" ? 0.45 : 1, y: 0 }}
+            transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
+          >
+            <span className="agent-loader-mark">
+              {state === "done" ? (
+                <CheckIcon size={11} />
+              ) : state === "active" ? (
+                <span className="agent-loader-spin" />
+              ) : null}
+            </span>
+            <span className="agent-loader-label">{label}</span>
+          </motion.div>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -613,19 +664,15 @@ export function AgentPanel({
     }
   }
 
-  // Show a thinking skeleton whenever the agent is busy but no text is
-  // visibly streaming: before the first token, and between tool steps.
+  // The multi-step loader fills the "thinking" gap — from sending until the
+  // agent's REAL tool steps start streaming. Once a tool step appears, those
+  // (with their own spinners) take over, so the loader never fakes progress on
+  // top of real progress.
   const last = messages[messages.length - 1];
-  // Ignore trailing data parts (sources/suggestions/card) so the answer being
-  // followed by a citations block doesn't re-trip the "working" skeleton.
-  const lastContentPart = last?.parts
-    .filter((p) => p.type === "text" || p.type.startsWith("tool-"))
-    .at(-1);
-  const thinking =
-    busy &&
-    (!last ||
-      last.role === "user" ||
-      (last.role === "assistant" && lastContentPart?.type !== "text"));
+  const hasToolActivity =
+    last?.role === "assistant" &&
+    last.parts.some((p) => p.type.startsWith("tool-"));
+  const showLoader = busy && !hasToolActivity;
 
   function submit(text: string) {
     const ready = pending.filter((a) => a.status === "ready");
@@ -967,17 +1014,24 @@ export function AgentPanel({
             >
               {message.parts.map((part, i) => {
                 if (part.type === "text") {
-                  // Suppress per-step narration: the weak model writes a line
-                  // before every tool call despite the prompt. Any assistant text
-                  // FOLLOWED by a tool call is intermediate chatter — only the
-                  // final text (nothing tool-like after it) is the real answer.
-                  const toolAfter = message.parts
-                    .slice(i + 1)
-                    .some((p) => p.type.startsWith("tool-"));
-                  if (message.role === "assistant" && toolAfter) return null;
-                  return message.role === "assistant" ? (
-                    <AgentText key={`${message.id}-t${i}`} text={part.text} />
-                  ) : (
+                  if (message.role === "assistant") {
+                    const toolAfter = message.parts
+                      .slice(i + 1)
+                      .some((p) => p.type.startsWith("tool-"));
+                    const toolBefore = message.parts
+                      .slice(0, i)
+                      .some((p) => p.type.startsWith("tool-"));
+                    // Hide narration so it never sits there looking frozen: text
+                    // with a tool AFTER it is intermediate chatter; trailing text
+                    // BEFORE any tool while still working is the model warming up
+                    // — the loader covers both. Show the settled answer and the
+                    // post-tool recap (which streams while busy).
+                    if (toolAfter || (busy && !toolBefore)) return null;
+                    return (
+                      <AgentText key={`${message.id}-t${i}`} text={part.text} />
+                    );
+                  }
+                  return (
                     <p className="agent-text" key={`${message.id}-t${i}`}>
                       {part.text}
                     </p>
@@ -1059,13 +1113,16 @@ export function AgentPanel({
             </div>
           )}
 
-          {thinking && (
-            <div className="agent-msg" data-role="assistant">
-              <span className="agent-thinking" aria-label="Agent is working">
-                <Skeleton width="58%" height={11} />
-                <Skeleton width="36%" height={11} />
-              </span>
-            </div>
+          {showLoader && (
+            <motion.div
+              className="agent-msg"
+              data-role="assistant"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+            >
+              <AgentLoader />
+            </motion.div>
           )}
 
           {error && (
