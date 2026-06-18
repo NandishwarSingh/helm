@@ -196,6 +196,11 @@ export async function runScriptSandboxed(
       promise: true,
       timeout: SYNC_TIMEOUT_MS,
     }) as Promise<string>;
+    // If the overall-timeout below wins the race and disposes the isolate, this
+    // promise rejects with nothing awaiting it. Attach a no-op handler so that
+    // late rejection can't surface as an unhandledRejection (which can take down
+    // the Next.js worker). The race still observes the original rejection.
+    runPromise.catch(() => undefined);
 
     const overall = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {

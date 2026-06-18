@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 
 import dynamic from "next/dynamic";
@@ -38,6 +38,7 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
 import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { chordBar, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
 
@@ -139,6 +140,21 @@ export function AppShell() {
   const multiAccount = accounts.data?.multi ?? false;
   const [activeAccount, setActiveAccount] = useState<string>("all");
   const [acctMenuOpen, setAcctMenuOpen] = useState(false);
+  // The menu element gets a stable id so the trigger can point aria-controls at
+  // it; the ref drives both the focus trap and arrow-key roving navigation.
+  const acctMenuId = "acct-menu";
+  const acctMenuRef = useRef<HTMLDivElement>(null);
+  // Tab is trapped inside the open menu; on close useFocusTrap returns focus to
+  // whatever held it when the menu opened — i.e. the trigger button.
+  useFocusTrap(acctMenuRef, acctMenuOpen);
+  // Background inert: when a full-screen overlay that renders OUTSIDE the .app
+  // container is open (the command palette, the shortcuts dialog), make the
+  // whole app inert + aria-hidden so a screen-reader virtual cursor can't reach
+  // the obscured background. The account menu and the compose/event dialogs all
+  // render INSIDE .app, so inerting .app would swallow them too — those rely on
+  // their own focus trap + scrim instead. The overlay registry (useOverlay) is
+  // a non-reactive counter for key handlers, so we derive this from state.
+  const backgroundInert = paletteOpen || helpOpen;
   const setActiveAccountM = api.accounts.setActive.useMutation();
   function pickAccount(id: string) {
     setActiveAccount(id);
@@ -184,11 +200,42 @@ export function AppShell() {
     document.body.appendChild(form);
     form.submit();
   }
-  // Esc closes the open account menu.
+  // Esc closes the open account menu; Up/Down/Home/End rove between menuitems.
   useEffect(() => {
     if (!acctMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setAcctMenuOpen(false);
+      if (e.key === "Escape") {
+        setAcctMenuOpen(false);
+        return;
+      }
+      if (
+        e.key !== "ArrowDown" &&
+        e.key !== "ArrowUp" &&
+        e.key !== "Home" &&
+        e.key !== "End"
+      ) {
+        return;
+      }
+      const menu = acctMenuRef.current;
+      if (!menu) return;
+      const items = Array.from(
+        menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      ).filter((el) => el.offsetParent !== null);
+      if (items.length === 0) return;
+      e.preventDefault();
+      const current = document.activeElement as HTMLElement | null;
+      const index = current ? items.indexOf(current) : -1;
+      let next: HTMLElement | undefined;
+      if (e.key === "Home") {
+        next = items[0];
+      } else if (e.key === "End") {
+        next = items[items.length - 1];
+      } else if (e.key === "ArrowDown") {
+        next = items[index < 0 ? 0 : (index + 1) % items.length];
+      } else {
+        next = items[index <= 0 ? items.length - 1 : index - 1];
+      }
+      next?.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -306,7 +353,11 @@ export function AppShell() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="app">
+      <div
+        className="app"
+        inert={backgroundInert}
+        aria-hidden={backgroundInert || undefined}
+      >
         <aside className="rail">
           <div className="rail-brand">
             <BrandMark />
@@ -376,7 +427,9 @@ export function AppShell() {
                 type="button"
                 className="acct-current"
                 onClick={() => setAcctMenuOpen((o) => !o)}
+                aria-haspopup="menu"
                 aria-expanded={acctMenuOpen}
+                aria-controls={acctMenuId}
                 title={activeLabel}
               >
                 <span className="acct-dot" style={{ background: activeDot }} />
@@ -387,12 +440,20 @@ export function AppShell() {
                 <>
                   <div
                     className="acct-menu-scrim"
+                    aria-hidden="true"
                     onClick={() => setAcctMenuOpen(false)}
                   />
-                  <div className="acct-menu" role="menu">
+                  <div
+                    id={acctMenuId}
+                    ref={acctMenuRef}
+                    className="acct-menu"
+                    role="menu"
+                    aria-label="Switch account"
+                  >
                     {multiAccount && (
                       <button
                         type="button"
+                        role="menuitem"
                         className="acct-opt"
                         data-on={activeAccount === "all"}
                         onClick={() => pickAccount("all")}
@@ -412,6 +473,7 @@ export function AppShell() {
                       >
                         <button
                           type="button"
+                          role="menuitem"
                           className="acct-opt acct-pick"
                           onClick={() => pickAccount(a.id)}
                           title={a.email}
@@ -430,9 +492,10 @@ export function AppShell() {
                           multiAccount && (
                             <button
                               type="button"
+                              role="menuitem"
                               className="acct-mini"
                               title="Make primary"
-                              aria-label="Make primary"
+                              aria-label={`Make ${a.email} primary`}
                               onClick={() =>
                                 setPrimaryM.mutate({ accountId: a.id })
                               }
@@ -444,9 +507,10 @@ export function AppShell() {
                         {multiAccount && (
                           <button
                             type="button"
+                            role="menuitem"
                             className="acct-mini acct-remove"
                             title="Remove account"
-                            aria-label="Remove account"
+                            aria-label={`Remove ${a.email}`}
                             onClick={() => {
                               if (
                                 window.confirm(
@@ -470,7 +534,11 @@ export function AppShell() {
                       className="acct-add-form"
                     >
                       <input type="hidden" name="intent" value="add" />
-                      <button type="submit" className="acct-opt acct-add">
+                      <button
+                        type="submit"
+                        role="menuitem"
+                        className="acct-opt acct-add"
+                      >
                         <PlusIcon size={13} />
                         Add account
                       </button>

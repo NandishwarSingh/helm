@@ -60,8 +60,10 @@ export async function createCorsairMcp(
     if (!result.ok) {
       return { isError: true, content: [{ type: "text", text: `Error: ${result.error}` }] };
     }
+    // Compact (no indent): this text is re-fed into the model's growing context
+    // every subsequent step, so the 2-space pretty-print was ~30% wasted tokens.
     return {
-      content: [{ type: "text", text: JSON.stringify(result.value ?? null, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(result.value ?? null) }],
     };
   };
 

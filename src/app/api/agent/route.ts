@@ -161,7 +161,7 @@ Create an event and invite people — CALL this to STAGE it for confirmation (re
   return { created:true, id:e.id, link:e.htmlLink };
 
 # Rules
-- Plan the whole task first, then act. Prefer ONE run_script that does everything over many small calls. Tool budget: about 10 calls per request; never repeat an identical call.
+- Plan the whole task first, then act. Prefer ONE run_script that does everything over many small calls — batch reads/writes and use Promise.all to fan out across accounts or messages in a single script. Tool budget: about 6 calls per request; never repeat an identical call.
 - Do NOT narrate between tool calls. Call tools silently; all prose belongs in ONE final answer after the work is done.
 - In run_script, ALWAYS filter and map to the few fields you need and cap lists at about 10 items — never return whole API responses.
 - To locate mail prefer the cached \`gmail.db\` search; use \`gmail.api\` for reading one message in full and for every write.
@@ -290,11 +290,14 @@ export async function POST(request: NextRequest) {
     // If the client disconnects mid-stream, stop generating and let onAbort tear
     // the MCP bridge down — otherwise the server/client/transport leak.
     abortSignal: request.signal,
-    stopWhen: stepCountIs(16),
+    // The playbook pushes "one run_script that does everything", so real tasks
+    // finish in a few steps; a tighter ceiling caps the worst case (every step
+    // is a full, uncached round-trip) without clipping legitimate work.
+    stopWhen: stepCountIs(10),
     // Near the budget, withdraw the tools so the model must write its final
     // answer instead of dying mid-loop.
     prepareStep: ({ stepNumber }) =>
-      stepNumber >= 12 ? { activeTools: [] } : undefined,
+      stepNumber >= 8 ? { activeTools: [] } : undefined,
     // Tear the MCP bridge down once the run is over (success, error, or abort).
     // close() is idempotent, so firing from several callbacks is safe.
     onFinish: () => {
@@ -322,23 +325,32 @@ export async function POST(request: NextRequest) {
       await result.finishReason; // wait for the model to finish staging
       const proposed = mcp.gate.proposed;
       if (proposed && isAllowedPath(proposed.op) && isDestructive(proposed.op)) {
+        // Bind the action to the account it was STAGED on. A script that named a
+        // mailbox via corsair.account("email") sets proposed.targetAccount; one
+        // that didn't ran on the active account — capture THAT here (resolve the
+        // active tenant to its email), so the confirm replays on the same mailbox
+        // even if the user switches accounts between seeing the card and clicking
+        // Confirm. Single-account sessions leave it unset (the tenant can't
+        // change, and it keeps the card uncluttered).
+        const boundAccount =
+          proposed.targetAccount ??
+          (accounts.length > 1
+            ? accounts.find((a) => a.tenantId === tenantId)?.email
+            : undefined);
         const token = signAction(
           env.AUTH_SECRET,
           {
             tenantId,
             op: proposed.op,
             args: proposed.args,
-            targetAccount: proposed.targetAccount,
+            targetAccount: boundAccount,
           },
           Date.now(),
         );
         const summary = summarizeAction(proposed.op, proposed.args);
         // Show which mailbox the action runs on, so the card stays faithful.
-        if (proposed.targetAccount) {
-          summary.fields.unshift({
-            label: "Account",
-            value: proposed.targetAccount,
-          });
+        if (boundAccount) {
+          summary.fields.unshift({ label: "Account", value: boundAccount });
         }
         writer.write({
           type: "data-pendingAction",

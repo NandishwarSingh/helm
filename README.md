@@ -14,10 +14,51 @@ Every Gmail and Google Calendar action runs through [Corsair](https://corsair.de
 which handles OAuth, token refresh, webhooks and a local Postgres cache of every
 synced message and event.
 
+## Try it
+
+- **Live app:** [helm.houndcode.com](https://helm.houndcode.com) — sign in with Google to use it on your own inbox.
+- **▶ Demo video:** _recording in progress_ <!-- TODO: drop a 2-min walkthrough at docs/demo.mp4 and link it here -->
+
+> Access is Google-OAuth-only (no guest mode). A short walkthrough video is being
+> added so judges who'd rather not connect a real inbox can still see it working.
+
+## How Helm maps to the judging criteria
+
+| Criterion | What Helm does | Where |
+|---|---|---|
+| **Corsair Integration** | Multi-tenant **and** multi-account; strict `.db` cache reads / `.api` live writes; per-account realtime push for **both** Gmail (Pub/Sub `email→tenant`) and Calendar (`events.watch` `channel→tenant`, channel-token verified); base64url RFC2822 send with CRLF-injection defense; dedupe-by-`entity_id`; cross-user isolation via a single `resolveAccountTenant` gate + a unique tenant index | `server/corsair.ts`, `server/lib/{gmail-watch,calendar-watch,email,users,tenant}.ts`, `app/api/webhooks/route.ts` |
+| **Gmail Workflow** | List, semantic + operator search, read/thread, full draft CRUD, send, bulk label/trash/delete (chunked to server caps), all six folders, optimistic edits + 7s undo, per-row account badges | `server/api/routers/gmail.ts`, `app/_components/gmail-panel.tsx` |
+| **Calendar Workflow** | Week view, search, create/update/delete, send-invite (`sendUpdates:'all'`), per-account refresh with `timeMin/timeMax`, per-account push, local-midnight all-day boundary handling, `(accountId,id)`-keyed selection | `server/api/routers/calendar.ts`, `app/_components/calendar-panel.tsx`, `lib/calendar.ts` |
+| **Productivity UX** | J/K nav, `g`-chords (capture-phase), ⌘K command palette, optimistic label model with in-flight reconciliation, 7s reversible undo, realtime SSE, focus-trapped `aria-modal` overlays, reduced-motion | `app/_components/app-shell.tsx`, `components/command-palette.tsx`, `lib/use-focus-trap.ts` |
+| **AI & MCP** | In-process **Corsair MCP** bridged to the AI SDK; `run_script` runs in an **isolated-vm** sandbox (no Node globals, allowlisted tenant-scoped bridge, CPU/mem/result caps); **action-fingerprinted HMAC Confirm/Deny** card replayed server-side with the model out of the loop; multi-account agent with fail-closed ownership; pgvector semantic search; LLM triage | `server/lib/{corsair-mcp,run-script-sandbox,agent-action,agent-policy,sandbox-accounts,semantic-search}.ts`, `app/api/agent/route.ts` |
+| **Engineering Quality** | End-to-end typed (tRPC + Zod + Drizzle), passing `build`/`lint`/`typecheck`, a focused adversarial test suite, clean ordered migrations, deployed CSP + HSTS + PKCE + Turnstile | `test/`, `next.config.js`, `drizzle/` |
+| **Demo & Documentation** | Live deploy, five real legal pages, this writeup | [helm.houndcode.com](https://helm.houndcode.com), `app/(legal)/*` |
+
+## Security model
+
+- **Sandboxed agent.** The model's `run_script` executes in a bare `isolated-vm`
+  V8 isolate — no `process`/`fetch`/`fs`, only an allowlisted, tenant-scoped
+  `corsair` bridge; args/results cross as JSON copies, with memory/CPU/wall-clock
+  and result-size caps (`server/lib/run-script-sandbox.ts`).
+- **Action-fingerprinted confirmation.** Destructive ops (send/trash/delete,
+  draft send/overwrite/delete, label edits, calendar writes) are *staged*, then
+  HMAC-signed over the exact op + args (including the MIME `raw`, so Bcc/Reply-To
+  are bound and shown on the card) and **replayed server-side with the model out
+  of the loop** — a prompt-injected recipient substitution can't pass
+  (`server/lib/{agent-action,agent-policy}.ts`).
+- **Multi-account isolation.** Every Corsair call resolves its tenant only from
+  the signed session's own connected accounts and **fails closed** on an unknown
+  account/email; a unique tenant index makes cross-user sharing structurally
+  impossible (`server/lib/{users,sandbox-accounts}.ts`).
+- **Transport & auth.** PKCE (S256) + session-bound OAuth state, signed
+  expiring session cookies, Cloudflare Turnstile on connect, timing-safe webhook
+  signatures, and a least-privilege CSP + HSTS deployed in production
+  (`next.config.js`).
+
 ## Stack
 
 - **Next.js** (App Router) and **tRPC** for an end-to-end typed API
-- **Postgres** with **Drizzle** — also Corsair's entity cache
+- **Postgres** with **Drizzle** — also Corsair's entity cache (+ `pgvector`)
 - **Corsair** for the Gmail and Google Calendar integrations
 - **Motion** for interface animation
 
@@ -103,5 +144,6 @@ that URL during webhook setup.
 - `pnpm dev` — start the dev server
 - `pnpm build` — production build
 - `pnpm typecheck` — types only
+- `pnpm test` — run the vitest suite
 - `pnpm db:generate` / `pnpm db:migrate` — create and apply timestamped migrations
 - `pnpm db:studio` — inspect the database

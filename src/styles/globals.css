@@ -469,7 +469,8 @@
     cursor: pointer;
     text-align: left;
   }
-  .acct-opt:hover {
+  .acct-opt:hover,
+  .acct-opt:focus-visible {
     background: var(--color-paper-sunken);
     color: var(--color-ink);
   }

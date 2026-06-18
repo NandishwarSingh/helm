@@ -181,6 +181,17 @@ function rowKey(row: { accountId?: string; id: string }): string {
   return `${row.accountId ?? ""}:${row.id}`;
 }
 
+// The inverse of rowKey: splits a composite key back into its bare Gmail id and
+// owning account. Gmail ids and account ids contain no ':', so the FIRST ':'
+// is the only boundary. An empty account segment (single-account view) means
+// "no specific account" — callers fall back to the active mailbox.
+function parseRowKey(key: string): { account: string | undefined; id: string } {
+  const sep = key.indexOf(":");
+  if (sep === -1) return { account: undefined, id: key };
+  const account = key.slice(0, sep);
+  return { account: account || undefined, id: key.slice(sep + 1) };
+}
+
 /**
  * True when a list query's PREVIOUS result was for the same account + folder, so
  * `placeholderData` can keep rows across limit/poll refetches yet drop them the
@@ -534,9 +545,11 @@ export function GmailPanel({
   ]);
 
   // Which account a per-message op targets: in the unified ("all") view it's the
-  // row's own account; otherwise the single selected account.
-  const accountOf = (id: string): string | undefined =>
-    account === "all" ? emails.find((e) => e.id === id)?.accountId : account;
+  // row's own account, parsed straight from its composite key (exact — never a
+  // bare-id first-match that could resolve to the wrong mailbox); otherwise the
+  // single selected account.
+  const accountOf = (key: string): string | undefined =>
+    account === "all" ? parseRowKey(key).account : account;
   // Group ids by owning account so a bulk action over the unified view fires one
   // Gmail call per mailbox.
   function groupByPairs(pairs: UndoItem[]): Map<string | undefined, string[]> {
@@ -561,11 +574,13 @@ export function GmailPanel({
     return () => window.clearTimeout(id);
   }, [selectedId]);
 
+  // readId holds the composite key; the server wants the bare id + exact account.
   const readAccount = readId ? accountOf(readId) : undefined;
+  const readMessageId = readId ? parseRowKey(readId).id : null;
   const selectedEmail = api.gmail.getMessage.useQuery(
-    { id: readId!, account: readAccount },
+    { id: readMessageId!, account: readAccount },
     {
-      enabled: !!readId,
+      enabled: !!readMessageId,
       refetchOnWindowFocus: false,
       staleTime: 5 * 60 * 1000,
       retry: 1,
@@ -607,12 +622,13 @@ export function GmailPanel({
   );
   // The mailbox a draft lives in, so its edit/send/delete hit the right account.
   // In a single-account view that's the active account; in the unified view it's
-  // the draft's own account. Always resolved (so the server's requireAccount
-  // guard never trips for a real op).
-  const draftAccountOf = (id: string | null): string | undefined =>
+  // the draft's own account, parsed straight from its composite key (exact —
+  // never a bare-id first-match). Always resolved (so the server's
+  // requireAccount guard never trips for a real op).
+  const draftAccountOf = (key: string | null): string | undefined =>
     account === "all"
-      ? id
-        ? drafts.data?.find((d) => d.id === id)?.accountId
+      ? key
+        ? parseRowKey(key).account
         : undefined
       : account;
 
@@ -830,34 +846,40 @@ export function GmailPanel({
     });
   }
 
-  // Moves the cursor off rows that are about to leave the current view.
-  function advanceSelectionPast(ids: string[]) {
-    const leaving = new Set(ids);
+  // Moves the cursor off rows that are about to leave the current view. Operates
+  // on composite row keys, matching the selection state.
+  function advanceSelectionPast(keys: string[]) {
+    const leaving = new Set(keys);
     if (!selectedId || !leaving.has(selectedId)) return;
-    const index = emails.findIndex((email) => email.id === selectedId);
+    const index = emails.findIndex((email) => rowKey(email) === selectedId);
     const next =
-      emails.slice(index + 1).find((email) => !leaving.has(email.id)) ??
+      emails.slice(index + 1).find((email) => !leaving.has(rowKey(email))) ??
       emails
         .slice(0, Math.max(index, 0))
         .reverse()
-        .find((email) => !leaving.has(email.id));
-    setSelectedId(next ? next.id : null);
+        .find((email) => !leaving.has(rowKey(email)));
+    setSelectedId(next ? rowKey(next) : null);
   }
 
   // Applies an action to one or many messages. The local truth updates
-  // before the network is touched, so every view is correct instantly.
-  function performAction(ids: string[], action: MessageAction) {
-    if (ids.length === 0) return;
-    // Resolve each row's owning account up front, while the rows are still in
-    // view (undo/chained actions can't re-derive it once they've left).
-    let items: UndoItem[] = ids.map((id) => ({ id, account: accountOf(id) }));
+  // before the network is touched, so every view is correct instantly. Takes
+  // composite row keys (`${accountId}:${id}`) so each op routes to the exact
+  // owning mailbox, never a bare-id first-match.
+  function performAction(keys: string[], action: MessageAction) {
+    if (keys.length === 0) return;
+    // Resolve each row's bare id + owning account up front, while the rows are
+    // still in view (undo/chained actions can't re-derive it once they've left).
+    let items: UndoItem[] = keys.map((key) => ({
+      id: parseRowKey(key).id,
+      account: accountOf(key),
+    }));
     // In the unified view, never act on a row whose account we can't resolve —
     // a write with account:undefined would fall back to the active mailbox.
     if (account === "all") items = items.filter((p) => p.account !== undefined);
     if (items.length === 0) return;
 
     if (view !== "drafts" && LEAVES_FOLDER[folder].includes(action)) {
-      advanceSelectionPast(items.map((p) => p.id));
+      advanceSelectionPast(keys);
     }
     applyLocal(items, action);
 
@@ -937,10 +959,13 @@ export function GmailPanel({
   function runConfirm() {
     if (!confirm) return;
     if (confirm.kind === "draft") {
-      const draftId = confirm.ids[0];
-      if (draftId) {
-        if (selectedDraftId === draftId) setSelectedDraftId(null);
-        deleteDraft.mutate({ draftId, account: draftAccountOf(draftId) });
+      const draftKey = confirm.ids[0];
+      if (draftKey) {
+        if (selectedDraftId === draftKey) setSelectedDraftId(null);
+        deleteDraft.mutate({
+          draftId: parseRowKey(draftKey).id,
+          account: draftAccountOf(draftKey),
+        });
       }
     } else {
       performAction(
@@ -951,18 +976,19 @@ export function GmailPanel({
     setConfirm(null);
   }
 
-  // Roving selection for the drafts list.
+  // Roving selection for the drafts list. selectedDraftId holds a composite key.
   function moveDraftSelection(step: 1 | -1) {
     const list = drafts.data ?? [];
     if (list.length === 0) return;
-    const index = list.findIndex((draft) => draft.id === selectedDraftId);
+    const index = list.findIndex((draft) => rowKey(draft) === selectedDraftId);
     const next =
       index === -1 ? 0 : Math.min(Math.max(index + step, 0), list.length - 1);
     const target = list[next];
     if (!target) return;
-    setSelectedDraftId(target.id);
+    const targetKey = rowKey(target);
+    setSelectedDraftId(targetKey);
     document
-      .querySelector(`[data-draft-id="${target.id}"]`)
+      .querySelector(`[data-draft-id="${CSS.escape(targetKey)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }
 
@@ -983,7 +1009,7 @@ export function GmailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirm]);
 
-  const selectedMeta = emails.find((email) => email.id === selectedId);
+  const selectedMeta = emails.find((email) => rowKey(email) === selectedId);
 
   function toggleStar() {
     if (!selectedId) return;
@@ -993,11 +1019,11 @@ export function GmailPanel({
     if (!selectedId) return;
     performAction([selectedId], selectedMeta?.unread ? "read" : "unread");
   }
-  function toggleBulk(id: string) {
+  function toggleBulk(key: string) {
     setBulkIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -1005,10 +1031,12 @@ export function GmailPanel({
   // Opening a message marks it read, like every mail client.
   useEffect(() => {
     if (!readId || !selectedEmail.data) return;
-    const meta = emails.find((email) => email.id === readId);
+    const meta = emails.find((email) => rowKey(email) === readId);
     if (meta?.unread) {
-      applyLocal([{ id: readId, account: accountOf(readId) }], "read");
-      modifyMessage.mutate({ id: readId, account: accountOf(readId), action: "read" });
+      const id = parseRowKey(readId).id;
+      const acct = accountOf(readId);
+      applyLocal([{ id, account: acct }], "read");
+      modifyMessage.mutate({ id, account: acct, action: "read" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readId, selectedEmail.data]);
@@ -1109,15 +1137,16 @@ export function GmailPanel({
 
   // ---- drafts -------------------------------------------------------------------
 
-  async function openDraft(draftId: string) {
-    setOpeningDraftId(draftId);
+  // draftKey is the composite row key; the server wants the bare id + account.
+  async function openDraft(draftKey: string) {
+    setOpeningDraftId(draftKey);
     setDraftsNotice(null);
     try {
       const draft = await utils.gmail.getDraft.fetch({
-        id: draftId,
-        account: draftAccountOf(draftId),
+        id: parseRowKey(draftKey).id,
+        account: draftAccountOf(draftKey),
       });
-      setEditingDraftId(draftId);
+      setEditingDraftId(draftKey);
       setTo(draft.to);
       setCc(draft.cc);
       setBcc(draft.bcc);
@@ -1134,13 +1163,14 @@ export function GmailPanel({
 
   async function sendEditedDraft() {
     if (!editingDraftId) return;
+    const draftId = parseRowKey(editingDraftId).id;
     const draftAccount = draftAccountOf(editingDraftId);
     await updateDraft.mutateAsync({
       ...composePayload(),
-      draftId: editingDraftId,
+      draftId,
       account: draftAccount,
     });
-    await sendDraft.mutateAsync({ draftId: editingDraftId, account: draftAccount });
+    await sendDraft.mutateAsync({ draftId, account: draftAccount });
     closeCompose();
   }
 
@@ -1148,7 +1178,7 @@ export function GmailPanel({
     if (!editingDraftId) return;
     await updateDraft.mutateAsync({
       ...composePayload(),
-      draftId: editingDraftId,
+      draftId: parseRowKey(editingDraftId).id,
       account: draftAccountOf(editingDraftId),
     });
     await utils.gmail.listDrafts.invalidate();
@@ -1176,14 +1206,15 @@ export function GmailPanel({
 
   function moveSelection(step: 1 | -1) {
     if (emails.length === 0) return;
-    const index = emails.findIndex((email) => email.id === selectedId);
+    const index = emails.findIndex((email) => rowKey(email) === selectedId);
     const next =
       index === -1 ? 0 : Math.min(Math.max(index + step, 0), emails.length - 1);
     const target = emails[next];
     if (!target) return;
-    setSelectedId(target.id);
+    const targetKey = rowKey(target);
+    setSelectedId(targetKey);
     document
-      .querySelector(`[data-mail-id="${target.id}"]`)
+      .querySelector(`[data-mail-id="${CSS.escape(targetKey)}"]`)
       ?.scrollIntoView({ block: "nearest" });
     // Pull more into view as the selection nears the end.
     if (next >= emails.length - 3) revealMore();
@@ -1228,7 +1259,7 @@ export function GmailPanel({
         emails.length > 0
       ) {
         event.preventDefault();
-        setBulkIds(new Set(emails.map((email) => email.id)));
+        setBulkIds(new Set(emails.map((email) => rowKey(email))));
         return;
       }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -1252,7 +1283,10 @@ export function GmailPanel({
         case "o":
           if (inMessages) {
             if (emails.length === 0) return;
-            if (!selectedId) setSelectedId(emails[0]?.id ?? null);
+            if (!selectedId) {
+              const first = emails[0];
+              setSelectedId(first ? rowKey(first) : null);
+            }
           } else {
             if (!selectedDraftId) return;
             void openDraft(selectedDraftId);
@@ -1472,20 +1506,24 @@ export function GmailPanel({
   const renderRow = (email: (typeof emails)[number], i: number) => {
     const chip = email.priority ? PRIORITY_CHIPS[email.priority] : undefined;
     const sub = isPriority && email.reason ? email.reason : email.snippet;
+    // Selection + multiselect key on the composite (accountId, id) so the same
+    // Gmail id in two mailboxes never resolves to the wrong row.
+    const key = rowKey(email);
+    const checked = bulkIds.has(key);
     return (
       <motion.div
-        key={rowKey(email)}
+        key={key}
         className="row"
         role="button"
         tabIndex={0}
-        data-active={selectedId === email.id}
+        data-active={selectedId === key}
         data-unread={email.unread}
-        data-checked={bulkIds.has(email.id)}
-        data-mail-id={email.id}
-        aria-current={selectedId === email.id || undefined}
-        onClick={() => setSelectedId(email.id)}
+        data-checked={checked}
+        data-mail-id={key}
+        aria-current={selectedId === key || undefined}
+        onClick={() => setSelectedId(key)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") setSelectedId(email.id);
+          if (e.key === "Enter") setSelectedId(key);
         }}
         variants={listRow}
         initial="initial"
@@ -1496,14 +1534,12 @@ export function GmailPanel({
           <button
             type="button"
             className="row-check"
-            aria-pressed={bulkIds.has(email.id)}
-            aria-label={
-              bulkIds.has(email.id) ? "Deselect message" : "Select message"
-            }
-            data-checked={bulkIds.has(email.id)}
+            aria-pressed={checked}
+            aria-label={checked ? "Deselect message" : "Select message"}
+            data-checked={checked}
             onClick={(e) => {
               e.stopPropagation();
-              toggleBulk(email.id);
+              toggleBulk(key);
             }}
           >
             <CheckIcon size={11} />
@@ -1845,61 +1881,66 @@ export function GmailPanel({
                 No drafts. Save one from Compose.
               </p>
             ) : (
-              drafts.data.map((draft) => (
-                <div
-                  key={rowKey(draft)}
-                  className="draft-row"
-                  data-active={selectedDraftId === draft.id}
-                  data-draft-id={draft.id}
-                >
-                  <button
-                    type="button"
-                    className="draft-main"
-                    onClick={() => {
-                      setSelectedDraftId(draft.id);
-                      void openDraft(draft.id);
-                    }}
-                    disabled={openingDraftId === draft.id}
+              drafts.data.map((draft) => {
+                // Selection + confirm state key on the composite (accountId, id);
+                // the inline send/delete read account straight off the draft row.
+                const key = rowKey(draft);
+                return (
+                  <div
+                    key={key}
+                    className="draft-row"
+                    data-active={selectedDraftId === key}
+                    data-draft-id={key}
                   >
-                    <span className="row-from">
-                      {openingDraftId === draft.id ? "Opening…" : "Draft"}
-                    </span>
-                    {draft.createdAt && (
-                      <span className="row-date tnum">
-                        {formatMessageDate(new Date(draft.createdAt))}
+                    <button
+                      type="button"
+                      className="draft-main"
+                      onClick={() => {
+                        setSelectedDraftId(key);
+                        void openDraft(key);
+                      }}
+                      disabled={openingDraftId === key}
+                    >
+                      <span className="row-from">
+                        {openingDraftId === key ? "Opening…" : "Draft"}
                       </span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="link"
-                    onClick={() =>
-                      sendDraft.mutate({
-                        draftId: draft.id,
-                        account: draft.accountId,
-                      })
-                    }
-                    disabled={sendDraft.isPending}
-                  >
-                    Send
-                  </button>
-                  <button
-                    type="button"
-                    className="link draft-delete"
-                    onClick={() =>
-                      confirmDeleteId === draft.id
-                        ? deleteDraft.mutate({
-                            draftId: draft.id,
-                            account: draft.accountId,
-                          })
-                        : setConfirmDeleteId(draft.id)
-                    }
-                    disabled={deleteDraft.isPending}
-                  >
-                    {confirmDeleteId === draft.id ? "Confirm" : "Delete"}
-                  </button>
-                </div>
-              ))
+                      {draft.createdAt && (
+                        <span className="row-date tnum">
+                          {formatMessageDate(new Date(draft.createdAt))}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() =>
+                        sendDraft.mutate({
+                          draftId: draft.id,
+                          account: draft.accountId,
+                        })
+                      }
+                      disabled={sendDraft.isPending}
+                    >
+                      Send
+                    </button>
+                    <button
+                      type="button"
+                      className="link draft-delete"
+                      onClick={() =>
+                        confirmDeleteId === key
+                          ? deleteDraft.mutate({
+                              draftId: draft.id,
+                              account: draft.accountId,
+                            })
+                          : setConfirmDeleteId(key)
+                      }
+                      disabled={deleteDraft.isPending}
+                    >
+                      {confirmDeleteId === key ? "Confirm" : "Delete"}
+                    </button>
+                  </div>
+                );
+              })
             ))}
         </div>
       </div>

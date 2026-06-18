@@ -1,12 +1,10 @@
 import "server-only";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, lte, or } from "drizzle-orm";
 
 import { db } from "@/server/db";
 import { subscriptions } from "@/server/db/schema";
+import { PRO_STATES } from "@/server/lib/billing-policy";
 import { getActiveAccount, getUserAccounts } from "@/server/lib/users";
-
-/** Razorpay subscription statuses that grant Pro access. */
-const PRO_STATES = new Set(["active", "authenticated"]);
 
 /** Normalize an email to a stable subscription key (empty/missing → null). */
 function key(email: string | undefined | null): string | null {
@@ -99,10 +97,11 @@ export async function upsertSubscription(opts: {
 
 /**
  * Set status by Razorpay subscription id (webhook-driven, the source of truth).
- * `eventAt` is the webhook event time: when given, the write is applied ONLY if
- * it's at least as new as the last event we recorded — so a retried or
- * out-of-order event can't clobber a newer state (e.g. a stale "charged"
- * arriving after a "cancelled"). With no `eventAt` it applies unconditionally.
+ * `eventAt` orders writes (see `shouldApplyStatus`): a Pro-granting status must
+ * be STRICTLY newer than the last recorded event, while a cancellation/other
+ * status wins an exact-second tie — so a stale OR same-second "charged" can never
+ * revive a "cancelled" sub regardless of delivery order (Razorpay's `created_at`
+ * is only 1-second resolution). With no `eventAt` it applies unconditionally.
  */
 export async function setStatusByRazorpayId(
   razorpaySubscriptionId: string,
@@ -122,9 +121,15 @@ export async function setStatusByRazorpayId(
       eventAt
         ? and(
             eq(subscriptions.razorpaySubscriptionId, razorpaySubscriptionId),
+            // Mirrors shouldApplyStatus(): a Pro-granting status needs a STRICTLY
+            // newer event (lt) so a stale/same-second "charged" can't revive a
+            // cancelled sub; any other status wins an exact tie (lte) so a
+            // cancellation always beats a same-second charge, whatever the order.
             or(
               isNull(subscriptions.lastEventAt),
-              lte(subscriptions.lastEventAt, eventAt),
+              PRO_STATES.has(status)
+                ? lt(subscriptions.lastEventAt, eventAt)
+                : lte(subscriptions.lastEventAt, eventAt),
             ),
           )
         : eq(subscriptions.razorpaySubscriptionId, razorpaySubscriptionId),

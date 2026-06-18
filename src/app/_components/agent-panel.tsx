@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { Chat, useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import { motion } from "motion/react";
 
 import { AgentIcon, SendIcon } from "@/components/icons";
@@ -247,31 +247,68 @@ function toolLabel(
   return done ? name : `${name}…`;
 }
 
-export function AgentPanel() {
-  const [input, setInput] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+/** Decode a server error body — the route returns JSON; the SDK surfaces the raw text. */
+function agentErrorText(error: Error): string {
+  try {
+    const parsed = JSON.parse(error.message) as { error?: unknown };
+    if (typeof parsed.error === "string") return parsed.error;
+  } catch {
+    /* not JSON — use the message as-is */
+  }
+  return error.message;
+}
 
-  const { messages, sendMessage, status, error } = useChat({
-    // A stable id keeps the conversation alive across view switches.
+// The agent's chat state lives OUTSIDE the component so it survives the panel
+// unmounting on a view switch (Mail/Calendar/Agent swap via AnimatePresence —
+// useChat's own state is per-mount). A shared Chat instance plus module-level
+// stores keep the conversation, resolved cards, and unsent input intact. Created
+// lazily so the constructor only ever runs on the client.
+let agentChatRef: Chat<UIMessage> | undefined;
+function agentChat(): Chat<UIMessage> {
+  agentChatRef ??= new Chat<UIMessage>({
     id: "helm-agent",
     transport: new DefaultChatTransport({ api: "/api/agent" }),
   });
+  return agentChatRef;
+}
+const resolvedStore: Record<string, CardState> = {};
+let inputStore = "";
+
+export function AgentPanel() {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Seed from the module stores so a remount (view switch) restores state.
+  const [input, setInputState] = useState(inputStore);
+  const setInput = (v: string) => {
+    inputStore = v;
+    setInputState(v);
+  };
+
+  const { messages, sendMessage, status, error } = useChat({ chat: agentChat() });
 
   const busy = status === "submitted" || status === "streaming";
 
-  // Which staged actions the user has resolved locally, keyed by signed token.
-  const [resolved, setResolved] = useState<Record<string, CardState>>({});
+  // Which staged actions the user has resolved, keyed by signed token. Persisted
+  // in a module store so a confirmed card doesn't reset to live buttons after a
+  // view switch — which would re-invite a click on a destructive action.
+  const [resolved, setResolved] = useState<Record<string, CardState>>(() => ({
+    ...resolvedStore,
+  }));
+  function markResolved(token: string, state: Exclude<CardState, undefined>) {
+    resolvedStore[token] = state;
+    setResolved({ ...resolvedStore });
+  }
   function confirmAction(token: string) {
     if (resolved[token] || busy) return;
-    setResolved((r) => ({ ...r, [token]: "confirmed" }));
+    markResolved(token, "confirmed");
     // The token is HMAC-signed: the server replays the EXACT action it encodes,
     // never a write the model re-chooses. The text is just the visible bubble.
     void sendMessage({ text: "Confirm" }, { body: { confirm: token } });
   }
   function denyAction(token: string) {
-    if (resolved[token]) return;
-    setResolved((r) => ({ ...r, [token]: "denied" }));
+    if (resolved[token] || busy) return;
+    markResolved(token, "denied");
   }
 
   // The agent acts on real mail and events server-side; when a run ends,
@@ -305,10 +342,13 @@ export function AgentPanel() {
     setInput("");
   }
 
-  // Keep the newest message in view.
+  // Keep the newest message in view — but only when the user is already near the
+  // bottom, so scrolling up to read history mid-stream isn't yanked back down.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages, status]);
 
   useEffect(() => {
@@ -410,7 +450,7 @@ export function AgentPanel() {
 
           {error && (
             <p className="error agent-error">
-              The agent hit a problem: {error.message}
+              The agent hit a problem: {agentErrorText(error)}
             </p>
           )}
         </div>
@@ -432,6 +472,8 @@ export function AgentPanel() {
           placeholder="Tell the agent what to do…"
           onKeyDown={(e) => {
             if (e.key === "Escape") inputRef.current?.blur();
+            // Don't let an Enter that only commits an IME candidate submit.
+            if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault();
           }}
         />
         <button
