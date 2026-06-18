@@ -206,6 +206,14 @@ export const SendIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const HistoryIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 9a9 9 0 1 1-1 4" />
+    <path d="M3.5 5v4h4" />
+    <path d="M12 8v4l2.5 1.5" />
+  </Svg>
+);
+
 export const SpamIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2L8.2 3Z" />

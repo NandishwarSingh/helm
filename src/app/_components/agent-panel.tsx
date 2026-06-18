@@ -7,7 +7,14 @@ import { motion } from "motion/react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { AgentIcon, SendIcon } from "@/components/icons";
+import {
+  AgentIcon,
+  CloseIcon,
+  HistoryIcon,
+  PlusIcon,
+  SendIcon,
+  TrashIcon,
+} from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
@@ -223,6 +230,44 @@ function agentChat(): Chat<UIMessage> {
 }
 const resolvedStore: Record<string, CardState> = {};
 let inputStore = "";
+// The id of the conversation currently loaded in the singleton Chat. Created
+// lazily on the first send of a fresh chat and persisted (with the thread) to
+// the DB so History can resume it. Module-level so it survives a view switch.
+let currentConversationId = "";
+function newConversationId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `c-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+}
+
+/** First user line, used as the History list title. */
+function deriveTitle(messages: UIMessage[]): string {
+  const firstUser = messages.find((m) => m.role === "user");
+  const part = firstUser?.parts.find((p) => p.type === "text");
+  const text = part && "text" in part ? part.text : "";
+  return text.trim().replace(/\s+/g, " ").slice(0, 80) || "New conversation";
+}
+
+/** Drop staged-action cards before persisting: their signed tokens expire, so a
+ *  resumed thread must never show a stale, clickable destructive confirmation. */
+function sanitizeForSave(messages: UIMessage[]): UIMessage[] {
+  return messages.map((m) => ({
+    ...m,
+    parts: m.parts.filter((p) => p.type !== "data-pendingAction"),
+  }));
+}
+
+function relTime(value: Date | string): string {
+  const date = new Date(value);
+  const mins = Math.round((Date.now() - date.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 export function AgentPanel({ account }: { account: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -235,9 +280,12 @@ export function AgentPanel({ account }: { account: string }) {
     setInputState(v);
   };
 
-  const { messages, sendMessage, status, error } = useChat({ chat: agentChat() });
+  const { messages, sendMessage, setMessages, status, error } = useChat({
+    chat: agentChat(),
+  });
 
   const busy = status === "submitted" || status === "streaming";
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Which staged actions the user has resolved, keyed by signed token. Persisted
   // in a module store so a confirmed card doesn't reset to live buttons after a
@@ -264,6 +312,16 @@ export function AgentPanel({ account }: { account: string }) {
   // The agent acts on real mail and events server-side; when a run ends,
   // refetch every data view so its work is visible immediately.
   const utils = api.useUtils();
+  const historyQuery = api.conversations.list.useQuery(undefined, {
+    staleTime: 10_000,
+  });
+  const history = historyQuery.data?.items ?? [];
+  const saveConversation = api.conversations.save.useMutation({
+    onSuccess: () => void utils.conversations.list.invalidate(),
+  });
+  const removeConversation = api.conversations.remove.useMutation({
+    onSuccess: () => void utils.conversations.list.invalidate(),
+  });
   const wasBusy = useRef(false);
   useEffect(() => {
     if (wasBusy.current && !busy) {
@@ -271,9 +329,44 @@ export function AgentPanel({ account }: { account: string }) {
       void utils.gmail.listDrafts.invalidate();
       void utils.triage.overview.invalidate();
       void utils.calendar.searchEvents.invalidate();
+      // Persist the settled thread so History can resume it later.
+      if (messages.length > 0) {
+        if (!currentConversationId) currentConversationId = newConversationId();
+        saveConversation.mutate({
+          id: currentConversationId,
+          title: deriveTitle(messages),
+          messages: sanitizeForSave(messages),
+        });
+      }
     }
     wasBusy.current = busy;
-  }, [busy, utils]);
+  }, [busy, utils, messages, saveConversation]);
+
+  function newChat() {
+    if (busy) return;
+    setMessages([]);
+    currentConversationId = "";
+    setHistoryOpen(false);
+    setInput("");
+    inputRef.current?.focus();
+  }
+
+  async function loadConversation(id: string) {
+    if (busy) return;
+    const data = await utils.conversations.get.fetch({ id });
+    if (!data) return;
+    setMessages((data.messages as UIMessage[]) ?? []);
+    currentConversationId = id;
+    setHistoryOpen(false);
+  }
+
+  function deleteConversation(id: string) {
+    removeConversation.mutate({ id });
+    if (id === currentConversationId) {
+      setMessages([]);
+      currentConversationId = "";
+    }
+  }
 
   // Show a thinking skeleton whenever the agent is busy but no text is
   // visibly streaming: before the first token, and between tool steps.
@@ -292,6 +385,8 @@ export function AgentPanel({ account }: { account: string }) {
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
+    // Open a conversation id for a fresh chat so the settled thread persists.
+    if (!currentConversationId) currentConversationId = newConversationId();
     // Tell the server which mailbox(es) the user is looking at: a specific
     // account id, or "all" so the agent fans out across every connected inbox
     // instead of silently defaulting to one.
@@ -316,6 +411,95 @@ export function AgentPanel({ account }: { account: string }) {
 
   return (
     <div className="agent">
+      <div className="agent-bar">
+        <button
+          type="button"
+          className="agent-bar-btn"
+          data-on={historyOpen}
+          aria-expanded={historyOpen}
+          onClick={() => setHistoryOpen((open) => !open)}
+        >
+          <HistoryIcon size={15} />
+          History
+          {history.length > 0 && (
+            <span className="agent-bar-count tnum">{history.length}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="agent-bar-btn"
+          onClick={newChat}
+          disabled={busy || messages.length === 0}
+        >
+          <PlusIcon size={15} />
+          New chat
+        </button>
+      </div>
+
+      {historyOpen && (
+        <div className="agent-history">
+          <div className="agent-history-head">
+            <span>Chat history</span>
+            <div className="agent-history-actions">
+              <button
+                type="button"
+                className="agent-bar-btn"
+                onClick={newChat}
+                disabled={busy || messages.length === 0}
+              >
+                <PlusIcon size={14} />
+                New
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setHistoryOpen(false)}
+                aria-label="Close history"
+              >
+                <CloseIcon size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="agent-history-list">
+            {history.length === 0 ? (
+              <p className="agent-history-empty">
+                No past conversations yet. Your chats are saved here.
+              </p>
+            ) : (
+              history.map((c) => (
+                <div
+                  key={c.id}
+                  className="agent-history-row"
+                  data-active={c.id === currentConversationId}
+                >
+                  <button
+                    type="button"
+                    className="agent-history-open"
+                    onClick={() => void loadConversation(c.id)}
+                  >
+                    <span className="agent-history-title">
+                      {c.title || "New conversation"}
+                    </span>
+                    <span className="agent-history-time tnum">
+                      {relTime(c.updatedAt)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => deleteConversation(c.id)}
+                    aria-label="Delete conversation"
+                    title="Delete conversation"
+                  >
+                    <TrashIcon size={14} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="agent-scroll" ref={scrollRef}>
         <div className="agent-thread">
           {messages.length === 0 && (

@@ -75,6 +75,15 @@ export async function getUserId(): Promise<string | null> {
 }
 
 /**
+ * Stable per-login owner key: the user id for a multi-account session, else the
+ * tenant id. Used to scope data that belongs to the person across their
+ * connected accounts (e.g. agent chat history), not to one mailbox.
+ */
+export async function getOwnerId(): Promise<string | null> {
+  return (await getSession())?.id ?? null;
+}
+
+/**
  * Tenant id of the session's ACTIVE account — back-compat for every
  * single-account procedure. A tenant session is its own account; a user session
  * resolves to the active-account cookie (if it belongs to them) or the primary.

@@ -176,3 +176,20 @@ export const documents = pgTable('documents', {
     index('documents_account_received_idx').on(table.accountId, table.receivedAt),
     index('documents_tenant_idx').on(table.tenantId),
 ]);
+
+// ── Agent conversations (chat history) ───────────────────────────────────────
+// One row per conversation, owned by the session identity (ownerId = the user id
+// for a multi-account session, else the tenant id) so history follows the person
+// across their connected accounts. The full UIMessage[] thread is stored as
+// jsonb; title is derived from the first user turn.
+export const conversations = pgTable('conversations', {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    title: text('title').notNull().default(''),
+    messages: jsonb('messages').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+    // History list: the owner's conversations, newest first.
+    index('conversations_owner_idx').on(table.ownerId, table.updatedAt),
+]);
