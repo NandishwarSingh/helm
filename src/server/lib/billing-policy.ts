@@ -7,6 +7,20 @@
 /** Razorpay subscription statuses that grant Pro access. */
 export const PRO_STATES = new Set(["active", "authenticated"]);
 
+/** Mailboxes a free (non-Pro) session may connect: the primary account only. */
+export const FREE_ACCOUNT_LIMIT = 1;
+
+/**
+ * How many mailboxes a session may connect. Multi-account is a Pro entitlement:
+ * free is capped at the primary account, Pro unlocks the full fan-out (`max`,
+ * i.e. MAX_ACCOUNTS). The single source of truth for the cap — both
+ * `/oauth/start` and `linkAddedAccount` derive their gate from it, so the limit
+ * lives server-side and a client can never grant itself a second account.
+ */
+export function accountCap(opts: { pro: boolean; max: number }): number {
+  return opts.pro ? opts.max : FREE_ACCOUNT_LIMIT;
+}
+
 /**
  * Whether a webhook status write should apply, given event ordering. Razorpay's
  * `created_at` has only 1-second resolution and webhook delivery is unordered,

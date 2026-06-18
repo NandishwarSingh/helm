@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
+import { getProStatus } from "@/server/lib/billing";
+import { accountCap } from "@/server/lib/billing-policy";
 import { MAX_ACCOUNTS } from "@/server/lib/concurrency";
 import {
   buildAuthUrl,
@@ -29,7 +31,11 @@ async function startConsent(
   request: NextRequest,
   intent: "connect" | "add",
 ): Promise<NextResponse> {
-  const { ok } = await rateLimit(`oauth:${clientIp(request.headers)}`, 10, 60_000);
+  const { ok } = await rateLimit(
+    `oauth:${clientIp(request.headers)}`,
+    10,
+    60_000,
+  );
   if (!ok) {
     return NextResponse.redirect(appUrl(request, "/?error=rate_limited"), 303);
   }
@@ -38,13 +44,18 @@ async function startConsent(
   if (intent === "add") {
     const session = await getSession();
     if (session) {
-      // Bound the per-user account count so a unified fan-out can't grow without limit.
+      // Multi-account is a Pro entitlement: a free session gets only its primary
+      // mailbox; Pro unlocks the fan-out up to MAX_ACCOUNTS. The cap is derived
+      // server-side from the live subscription, so a tampered client can never
+      // start a second consent — and `linkAddedAccount` re-checks at link time.
       const owned = await getUserAccounts();
-      if (owned.length >= MAX_ACCOUNTS) {
-        return NextResponse.redirect(
-          appUrl(request, "/?error=account_limit"),
-          303,
-        );
+      const { pro } = await getProStatus();
+      const cap = accountCap({ pro, max: MAX_ACCOUNTS });
+      if (owned.length >= cap) {
+        // Free user hitting the wall → upsell (client opens the Pro modal);
+        // a Pro user genuinely at MAX_ACCOUNTS → the plain limit.
+        const reason = pro ? "account_limit" : "pro_required";
+        return NextResponse.redirect(appUrl(request, `/?error=${reason}`), 303);
       }
       state = {
         tenantId: randomUUID(),

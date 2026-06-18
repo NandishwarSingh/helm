@@ -399,6 +399,39 @@
     white-space: nowrap;
   }
 
+  /* ---- Pro upsell modal (add-account gate) ---- */
+  .compose.pro-upsell {
+    width: min(420px, calc(100vw - 2.2rem));
+  }
+  .pro-upsell-body {
+    gap: 0.7rem;
+  }
+  .pro-upsell-lead {
+    margin: 0;
+    font-size: 0.92rem;
+    color: var(--color-ink-1);
+  }
+  .pro-upsell-perks {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.86rem;
+    color: var(--color-ink-2);
+  }
+  .pro-upsell-cta {
+    margin-top: 0.25rem;
+    width: 100%;
+    justify-content: center;
+  }
+  .pro-upsell-fine {
+    margin: 0;
+    text-align: center;
+    font-size: 0.74rem;
+    color: var(--color-ink-3);
+  }
+
   /* ---- account switcher (rail foot) ---- */
   .acct-switch {
     position: relative;

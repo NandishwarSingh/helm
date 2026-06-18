@@ -1,0 +1,103 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "motion/react";
+
+import { useProCheckout } from "@/app/_components/use-pro-checkout";
+import { CloseIcon } from "@/components/icons";
+import { scrim, slideOver } from "@/lib/motion";
+import { useFocusTrap } from "@/lib/use-focus-trap";
+
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+/**
+ * Upsell shown when a free session tries to add a second mailbox. Connecting
+ * more than the primary account is a Pro entitlement enforced server-side
+ * (/oauth/start + linkAddedAccount) — this modal only sells the upgrade. A
+ * verified payment refreshes billing.status and closes the modal; the user can
+ * then add the account (the server now lets the consent through).
+ */
+export function ProUpsell({ open, onOpenChange }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
+  const { upgrade, busy, error } = useProCheckout();
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onOpenChange(false);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onOpenChange]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            className="scrim"
+            variants={scrim}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            onClick={() => onOpenChange(false)}
+          />
+          <motion.div
+            ref={dialogRef}
+            className="compose pro-upsell"
+            variants={slideOver}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Add another account with Helm Pro"
+          >
+            <div className="compose-head">
+              Add another account
+              <span className="topbar-spacer" />
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => onOpenChange(false)}
+                aria-label="Close"
+              >
+                <CloseIcon size={16} />
+              </button>
+            </div>
+            <div className="compose-body pro-upsell-body">
+              <p className="pro-upsell-lead">
+                Connecting more than one mailbox is a <strong>Helm Pro</strong>{" "}
+                feature.
+              </p>
+              <ul className="pro-upsell-perks">
+                <li>Up to six Google accounts in one unified inbox</li>
+                <li>Switch and fan out across every mailbox</li>
+                <li>Everything in the free plan, no limits</li>
+              </ul>
+              {error && <p className="error">{error}</p>}
+              <button
+                type="button"
+                className="btn btn-primary pro-upsell-cta"
+                onClick={() => void upgrade(() => onOpenChange(false))}
+                disabled={busy}
+              >
+                {busy ? "Opening…" : "Upgrade to Pro — ₹99/month"}
+              </button>
+              <p className="pro-upsell-fine">
+                Billed monthly via Razorpay. Cancel anytime.
+              </p>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}

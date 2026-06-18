@@ -39,7 +39,8 @@ export async function getProStatus(): Promise<ProStatus> {
   const emails = (await getUserAccounts())
     .map((a) => key(a.email))
     .filter((e): e is string => e !== null);
-  if (emails.length === 0) return { pro: false, status: "none", currentEnd: null };
+  if (emails.length === 0)
+    return { pro: false, status: "none", currentEnd: null };
   const rows = await db
     .select()
     .from(subscriptions)
@@ -51,6 +52,25 @@ export async function getProStatus(): Promise<ProStatus> {
     status: row?.status ?? "none",
     currentEnd: row?.currentEnd ? row.currentEnd.toISOString() : null,
   };
+}
+
+/**
+ * Whether ANY of these emails currently grants Pro (a subscription in
+ * PRO_STATES). The owner-keyed entitlement check used by `linkAddedAccount`'s
+ * server-side backstop, which runs in the OAuth callback and so can't read the
+ * session the way `getProStatus` does — it's handed the owner's email(s)
+ * explicitly. Mirrors `getProStatus`'s rule. Empty/blank emails → false.
+ */
+export async function isProForEmails(
+  emails: (string | null | undefined)[],
+): Promise<boolean> {
+  const ids = emails.map(key).filter((e): e is string => e !== null);
+  if (ids.length === 0) return false;
+  const rows = await db
+    .select({ status: subscriptions.status })
+    .from(subscriptions)
+    .where(inArray(subscriptions.subscriberId, ids));
+  return rows.some((r) => PRO_STATES.has(r.status));
 }
 
 /**

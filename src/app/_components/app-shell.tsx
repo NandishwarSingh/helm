@@ -8,6 +8,7 @@ import dynamic from "next/dynamic";
 import { CalendarPanel } from "@/app/_components/calendar-panel";
 import { FirstSyncVeil } from "@/components/first-sync-veil";
 import { Landing } from "@/app/_components/landing";
+import { ProUpsell } from "@/app/_components/pro-upsell";
 import { UpgradePro } from "@/app/_components/upgrade-pro";
 import {
   GmailPanel,
@@ -95,13 +96,28 @@ const MAIL_FOLDERS: {
   icon: React.ReactNode;
 }[] = [
   { id: "inbox", label: "Inbox", chord: "I", icon: <InboxIcon size={15} /> },
-  { id: "priority", label: "Priority", chord: "U", icon: <FlagIcon size={15} /> },
+  {
+    id: "priority",
+    label: "Priority",
+    chord: "U",
+    icon: <FlagIcon size={15} />,
+  },
   { id: "starred", label: "Starred", chord: "S", icon: <StarIcon size={15} /> },
-  { id: "archived", label: "Archive", chord: "A", icon: <ArchiveIcon size={15} /> },
+  {
+    id: "archived",
+    label: "Archive",
+    chord: "A",
+    icon: <ArchiveIcon size={15} />,
+  },
   { id: "spam", label: "Spam", chord: "P", icon: <SpamIcon size={15} /> },
   { id: "trash", label: "Trash", chord: "T", icon: <TrashIcon size={15} /> },
   { id: "sent", label: "Sent", chord: "E", icon: <SendIcon size={15} /> },
-  { id: "drafts", label: "Drafts", chord: "D", icon: <ComposeIcon size={15} /> },
+  {
+    id: "drafts",
+    label: "Drafts",
+    chord: "D",
+    icon: <ComposeIcon size={15} />,
+  },
 ];
 
 function ChevronIcon() {
@@ -134,6 +150,7 @@ export function AppShell() {
   const [eventSeed, setEventSeed] = useState<EventSeed | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [proUpsellOpen, setProUpsellOpen] = useState(false);
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // Never mount AgentPanel twice on the one module-level Chat (tab + drawer) —
   // that doubles its effects/invalidations. The drawer is "actually open" only
@@ -162,6 +179,19 @@ export function AppShell() {
         window.location.pathname + (query ? `?${query}` : ""),
       );
     }
+    // The server bounces a non-Pro "add account" attempt back here (the secure
+    // backstop to the client gate, e.g. on a stale billing status). Surface the
+    // upsell and strip the marker so a refresh doesn't replay it.
+    if (params.get("error") === "pro_required") {
+      setProUpsellOpen(true);
+      params.delete("error");
+      const query = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + (query ? `?${query}` : ""),
+      );
+    }
   }, []);
 
   // While any overlay is open, panel keyboard handlers stand down.
@@ -169,6 +199,7 @@ export function AppShell() {
   useOverlay(createOpen);
   useOverlay(paletteOpen);
   useOverlay(helpOpen);
+  useOverlay(proUpsellOpen);
 
   const status = api.connection.status.useQuery();
   const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
@@ -180,6 +211,10 @@ export function AppShell() {
   const accounts = api.accounts.list.useQuery(undefined, { staleTime: 30_000 });
   const accountList = accounts.data?.accounts ?? [];
   const multiAccount = accounts.data?.multi ?? false;
+  // Pro gates adding more than the primary mailbox. The hard enforcement is
+  // server-side (/oauth/start + linkAddedAccount); this status only decides
+  // whether "Add account" opens the consent flow or the upsell modal.
+  const billing = api.billing.status.useQuery(undefined, { staleTime: 60_000 });
   // Chat count for the top-bar History button (deduped with the agent panel's
   // own query). Only fetched while the agent surface is visible.
   const agentConvos = api.conversations.list.useQuery(undefined, {
@@ -262,7 +297,17 @@ export function AppShell() {
   });
   // "Add account" is an authenticated form POST (intent=add); submit one
   // programmatically so it can be triggered from the menu or the palette.
+  // Multi-account is Pro-only: when we already know the session isn't Pro, open
+  // the upsell instead of a pointless round-trip. If status is still unknown we
+  // let the request through — the server gate redirects a non-Pro caller back to
+  // ?error=pro_required, which reopens this same modal. Either way the real lock
+  // is server-side, so a tampered client can't add an account without Pro.
   function addAccount() {
+    if (billing.data && !billing.data.pro) {
+      setAcctMenuOpen(false);
+      setProUpsellOpen(true);
+      return;
+    }
     const form = document.createElement("form");
     form.method = "POST";
     form.action = "/api/oauth/start";
@@ -343,18 +388,41 @@ export function AppShell() {
         setMailView(folder);
       };
       switch (event.key.toLowerCase()) {
-        case "i": go("inbox"); break;
-        case "u": go("priority"); break;
-        case "s": go("starred"); break;
-        case "a": go("archived"); break;
-        case "p": go("spam"); break;
-        case "t": go("trash"); break;
-        case "e": go("sent"); break;
-        case "d": go("drafts"); break;
-        case "m": setView("mail"); break;
-        case "c": setView("calendar"); break;
-        case "f": setView("documents"); break;
-        default: break; // unknown key just cancels the chord
+        case "i":
+          go("inbox");
+          break;
+        case "u":
+          go("priority");
+          break;
+        case "s":
+          go("starred");
+          break;
+        case "a":
+          go("archived");
+          break;
+        case "p":
+          go("spam");
+          break;
+        case "t":
+          go("trash");
+          break;
+        case "e":
+          go("sent");
+          break;
+        case "d":
+          go("drafts");
+          break;
+        case "m":
+          setView("mail");
+          break;
+        case "c":
+          setView("calendar");
+          break;
+        case "f":
+          setView("documents");
+          break;
+        default:
+          break; // unknown key just cancels the chord
       }
     }
     window.addEventListener("keydown", onChordKey, { capture: true });
@@ -583,7 +651,9 @@ export function AppShell() {
                                 background: a.color ?? "var(--color-accent)",
                               }}
                             />
-                            <span className="acct-opt-email">{displayEmail}</span>
+                            <span className="acct-opt-email">
+                              {displayEmail}
+                            </span>
                           </button>
                           {a.isPrimary ? (
                             <span className="acct-tag">primary</span>
@@ -637,7 +707,8 @@ export function AppShell() {
                                 ) {
                                   // Keep the menu open so the spinner stays
                                   // visible; the row vanishes on refetch.
-                                  if (activeAccount === a.id) setActiveAccount("all");
+                                  if (activeAccount === a.id)
+                                    setActiveAccount("all");
                                   removeM.mutate({ accountId: a.id });
                                 }
                               }}
@@ -653,21 +724,17 @@ export function AppShell() {
                         </div>
                       );
                     })}
-                    <form
-                      action="/api/oauth/start"
-                      method="post"
-                      className="acct-add-form"
-                    >
-                      <input type="hidden" name="intent" value="add" />
+                    <div className="acct-add-form">
                       <button
-                        type="submit"
+                        type="button"
                         role="menuitem"
                         className="acct-opt acct-add"
+                        onClick={() => addAccount()}
                       >
                         <PlusIcon size={13} />
                         Add account
                       </button>
-                    </form>
+                    </div>
                   </div>
                 </>
               )}
@@ -757,7 +824,9 @@ export function AppShell() {
                   <HistoryIcon size={15} />
                   History
                   {agentHistoryCount > 0 && (
-                    <span className="agent-bar-count tnum">{agentHistoryCount}</span>
+                    <span className="agent-bar-count tnum">
+                      {agentHistoryCount}
+                    </span>
                   )}
                 </button>
                 <button
@@ -816,9 +885,7 @@ export function AppShell() {
                     onComposeOpenChange={setComposeOpen}
                     account={activeAccount}
                     autoSync={!firstRun}
-                    openEmail={
-                      openTarget?.kind === "email" ? openTarget : null
-                    }
+                    openEmail={openTarget?.kind === "email" ? openTarget : null}
                     onAddToCalendar={(seed) => {
                       setEventSeed(seed);
                       setView("calendar");
@@ -832,9 +899,7 @@ export function AppShell() {
                     seed={eventSeed}
                     onSeedConsumed={() => setEventSeed(null)}
                     account={activeAccount}
-                    openEvent={
-                      openTarget?.kind === "event" ? openTarget : null
-                    }
+                    openEvent={openTarget?.kind === "event" ? openTarget : null}
                   />
                 )}
               </motion.div>
@@ -869,6 +934,7 @@ export function AppShell() {
         onSwitchAccount={pickAccount}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
+      <ProUpsell open={proUpsellOpen} onOpenChange={setProUpsellOpen} />
       {firstRun && <FirstSyncVeil onEnter={() => setFirstRun(false)} />}
       <AnimatePresence>
         {chordPending && (
@@ -883,17 +949,39 @@ export function AppShell() {
             <span className="chord-inner">
               <Kbd>G</Kbd>
               <span className="chord-then">then</span>
-              <span><Kbd>I</Kbd> inbox</span>
-              <span><Kbd>U</Kbd> priority</span>
-              <span><Kbd>S</Kbd> starred</span>
-              <span><Kbd>A</Kbd> archive</span>
-              <span><Kbd>P</Kbd> spam</span>
-              <span><Kbd>T</Kbd> trash</span>
-              <span><Kbd>E</Kbd> sent</span>
-              <span><Kbd>D</Kbd> drafts</span>
-              <span><Kbd>M</Kbd> mail</span>
-              <span><Kbd>C</Kbd> calendar</span>
-              <span><Kbd>F</Kbd> documents</span>
+              <span>
+                <Kbd>I</Kbd> inbox
+              </span>
+              <span>
+                <Kbd>U</Kbd> priority
+              </span>
+              <span>
+                <Kbd>S</Kbd> starred
+              </span>
+              <span>
+                <Kbd>A</Kbd> archive
+              </span>
+              <span>
+                <Kbd>P</Kbd> spam
+              </span>
+              <span>
+                <Kbd>T</Kbd> trash
+              </span>
+              <span>
+                <Kbd>E</Kbd> sent
+              </span>
+              <span>
+                <Kbd>D</Kbd> drafts
+              </span>
+              <span>
+                <Kbd>M</Kbd> mail
+              </span>
+              <span>
+                <Kbd>C</Kbd> calendar
+              </span>
+              <span>
+                <Kbd>F</Kbd> documents
+              </span>
             </span>
           </motion.div>
         )}

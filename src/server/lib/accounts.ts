@@ -15,6 +15,7 @@ import {
   users,
 } from "@/server/db/schema";
 import { ACCOUNT_COLORS, pickUnusedColor } from "@/server/lib/account-colors";
+import { isProForEmails } from "@/server/lib/billing";
 import { stopCalendarWatch } from "@/server/lib/calendar-watch";
 import { MAX_ACCOUNTS } from "@/server/lib/concurrency";
 import { deleteTenantDocuments } from "@/server/lib/documents";
@@ -75,7 +76,9 @@ export async function teardownTenant(
     await db
       .delete(corsairEvents)
       .where(inArray(corsairEvents.accountId, accountIds));
-    await db.delete(corsairAccounts).where(eq(corsairAccounts.tenantId, tenantId));
+    await db
+      .delete(corsairAccounts)
+      .where(eq(corsairAccounts.tenantId, tenantId));
   }
   await db.delete(mailSync).where(eq(mailSync.tenantId, tenantId));
   await db.delete(mailTriage).where(eq(mailTriage.tenantId, tenantId));
@@ -110,13 +113,22 @@ export async function linkAddedAccount(opts: {
 
   if (ownerKind === "user") {
     const existing = await db
-      .select({ id: userAccounts.id, color: userAccounts.color })
+      .select({
+        id: userAccounts.id,
+        color: userAccounts.color,
+        email: userAccounts.email,
+      })
       .from(userAccounts)
       .where(eq(userAccounts.userId, ownerId));
-    // Re-enforce the cap here too: /oauth/start checks it, but two concurrent
-    // add flows could each pass that check and then both land here. A genuinely
-    // over-cap account is a distinct mailbox/grant, so revoke it as we drop it.
-    if (existing.length >= MAX_ACCOUNTS) {
+    // Re-enforce the entitlement here too: /oauth/start gates it, but a stale
+    // client OR two concurrent add flows could each pass that check and land
+    // here. Reject if the owner is no longer Pro (a lapsed subscription can't
+    // keep growing its fan-out) or is genuinely at the cap. Either way the new
+    // account is a distinct mailbox/grant, so revoke it as we drop it.
+    if (
+      existing.length >= MAX_ACCOUNTS ||
+      !(await isProForEmails(existing.map((e) => e.email)))
+    ) {
       await teardownTenant(newTenantId);
       return;
     }
@@ -162,6 +174,15 @@ export async function linkAddedAccount(opts: {
     return;
   }
 
+  // Multi-account is Pro-only: a single-account (free) session can't materialize
+  // into a two-account user. Server-side backstop to /oauth/start's gate, so a
+  // replayed/forged callback can't slip a second mailbox past it. The new tenant
+  // is a distinct grant we're rejecting, so revoke it as we tear it down.
+  if (!(await isProForEmails([oldEmail]))) {
+    await teardownTenant(newTenantId);
+    return;
+  }
+
   const userId = randomUUID();
   await db.transaction(async (tx) => {
     await tx.insert(users).values({ id: userId });
@@ -190,7 +211,10 @@ export async function linkAddedAccount(opts: {
     .select({ id: userAccounts.id })
     .from(userAccounts)
     .where(
-      and(eq(userAccounts.userId, userId), eq(userAccounts.tenantId, newTenantId)),
+      and(
+        eq(userAccounts.userId, userId),
+        eq(userAccounts.tenantId, newTenantId),
+      ),
     )
     .limit(1);
   await issueUserCookie(userId);
