@@ -130,7 +130,7 @@ Find mail (cached, fast — prefer this to locate messages):
   // search other fields with { from: { contains: "..." } } or { snippet: { contains: "..." } } — substring match ONLY; gmail.db.search has NO date/range/comparison operators (never put an internalDate range in search()).
 
 Latest inbox mail (cached):
-  const rows = await corsair.gmail.db.messages.list({ limit: 200, offset: 0 });
+  const rows = await corsair.gmail.db.messages.list({ limit: 60, offset: 0 });
   return rows.filter(m => (m.data.labelIds||[]).includes("INBOX"))
     .sort((a,b)=>Number(b.data.internalDate||0)-Number(a.data.internalDate||0)).slice(0,10)
     .map(m=>({ id:m.entity_id, from:m.data.from, subject:m.data.subject, unread:(m.data.labelIds||[]).includes("UNREAD") }));
@@ -138,14 +138,14 @@ Latest inbox mail (cached):
 All inboxes at once (ALL-ACCOUNTS MODE — fan out across EVERY connected mailbox, tag each by account):
   const out = [];
   for (const email of corsair.accounts) {
-    const rows = await corsair.account(email).gmail.db.messages.list({ limit: 100, offset: 0 });
+    const rows = await corsair.account(email).gmail.db.messages.list({ limit: 40, offset: 0 });
     for (const m of rows) if ((m.data.labelIds||[]).includes("INBOX")) out.push({ account: email, id: m.entity_id, from: m.data.from, subject: m.data.subject, ts: Number(m.data.internalDate||0), unread: (m.data.labelIds||[]).includes("UNREAD") });
   }
   return out.sort((a,b)=>b.ts-a.ts).slice(0,10);
 
 Mail in a date range — "this week", "today", "since Monday" (internalDate is epoch MILLISECONDS as a string, NOT ISO; gmail.db has NO date operators, so list then filter in JS on Number(internalDate)):
   const sinceMs = Date.now() - 7*24*60*60*1000;  // last 7 days — adjust the window to the request
-  const rows = await corsair.gmail.db.messages.list({ limit: 200, offset: 0 });
+  const rows = await corsair.gmail.db.messages.list({ limit: 60, offset: 0 });
   return rows.filter(m => (m.data.labelIds||[]).includes("INBOX") && Number(m.data.internalDate||0) >= sinceMs)
     .sort((a,b)=>Number(b.data.internalDate||0)-Number(a.data.internalDate||0)).slice(0,15)
     .map(m=>({ id:m.entity_id, from:m.data.from, subject:m.data.subject, snippet:(m.data.snippet||"").slice(0,120) }));

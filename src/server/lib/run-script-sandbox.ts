@@ -26,7 +26,7 @@ import {
 const MEMORY_LIMIT_MB = 128;
 const SYNC_TIMEOUT_MS = 8_000; // CPU time for one synchronous turn in the isolate
 const OVERALL_TIMEOUT_MS = 20_000; // wall-clock ceiling incl. awaited Corsair calls
-const MAX_RESULT_BYTES = 256 * 1024; // per Corsair call; forces scripts to filter inline
+const MAX_RESULT_BYTES = 512 * 1024; // per Corsair call; reduce a `limit:` if hit
 
 /**
  * Builds a recursive `corsair` Proxy inside the isolate. Property access
@@ -168,7 +168,10 @@ export async function runScriptSandboxed(
       const result = await (fn as (a: unknown) => unknown).call(parent, args);
       const dataJson = JSON.stringify(result === undefined ? null : result);
       if (dataJson.length > MAX_RESULT_BYTES) {
-        return fail("result too large — filter/slice inside the script and return only what you need");
+        // The cap is on THIS operation's raw return, before your script can touch
+        // it — so filtering in JS won't help. Call it again with a much smaller
+        // `limit:` (e.g. 25) and map to only the fields you need.
+        return fail("result too large — call this operation again with a smaller `limit:` (e.g. limit: 25); a single account rarely needs more than 50 rows to find recent mail");
       }
       return `{"ok":true,"data":${dataJson}}`;
     } catch (err) {

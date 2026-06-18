@@ -446,6 +446,14 @@ export function AgentPanel({ account }: { account: string }) {
             >
               {message.parts.map((part, i) => {
                 if (part.type === "text") {
+                  // Suppress per-step narration: the weak model writes a line
+                  // before every tool call despite the prompt. Any assistant text
+                  // FOLLOWED by a tool call is intermediate chatter — only the
+                  // final text (nothing tool-like after it) is the real answer.
+                  const toolAfter = message.parts
+                    .slice(i + 1)
+                    .some((p) => p.type.startsWith("tool-"));
+                  if (message.role === "assistant" && toolAfter) return null;
                   return message.role === "assistant" ? (
                     <AgentText key={`${message.id}-t${i}`} text={part.text} />
                   ) : (
