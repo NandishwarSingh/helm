@@ -1289,8 +1289,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    padding: 0.45rem 0.6rem;
+    padding: 0.5rem 0.85rem;
     border-bottom: 1px solid var(--color-line);
+    background: var(--color-paper-sunken);
   }
   .agent-bar-btn {
     display: inline-flex;
@@ -1319,6 +1320,17 @@
   }
   .agent-bar-btn[data-on="true"] {
     color: var(--color-accent);
+    background: var(--color-accent-wash);
+  }
+  /* New chat reads as a clear action: a bordered pill that accents on hover. */
+  .agent-bar-btn-accent {
+    border-color: var(--color-line-strong);
+    background: var(--color-paper-raised);
+  }
+  .agent-bar-btn-accent:hover:not(:disabled) {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    background: var(--color-accent-wash);
   }
   .agent-bar-count {
     min-width: 1.4em;
@@ -1477,6 +1489,57 @@
   .agent-suggest button:hover {
     border-color: var(--color-accent);
     color: var(--color-ink);
+  }
+  /* Empty state: a centred hero — greeting, the input itself, then suggestions.
+     On the first message the input slides to the bottom (motion layout). */
+  .agent-hero {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem;
+  }
+  .agent-hero-inner {
+    width: 100%;
+    max-width: 620px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .agent-hero-inner > svg {
+    color: var(--color-accent);
+  }
+  .agent-greeting {
+    margin: 0.85rem 0 0.3rem;
+    font-size: 1.5rem;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+  }
+  .agent-hero-sub {
+    margin: 0 0 1.4rem;
+    max-width: 30rem;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--color-ink-3);
+  }
+  .agent-hero .agent-suggest {
+    margin-top: 1.4rem;
+  }
+  /* The shared compose box: bottom-anchored in a thread, borderless in the hero. */
+  .agent-compose[data-hero="true"] {
+    max-width: 100%;
+    border-top: none;
+  }
+  .agent-compose[data-hero="true"] .agent-inputrow {
+    padding: 0;
+  }
+  .agent-compose[data-hero="true"] .agent-attach-chips {
+    padding: 0 0 0.5rem;
   }
   /* Follow-up chips under the latest answer — compact pills, not the 2-col grid. */
   .agent-suggest-follow {
@@ -1667,36 +1730,47 @@
   .agent-md :is(th, td):not(:last-child) {
     border-right: 1px solid var(--color-line);
   }
+  /* Agent work shown as a visible step: a spinner while running, an accent dot
+     when done, danger on error. Each step sits on its own row (a step list). */
   .agent-tool {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 3px 9px;
-    font-size: 0.72rem;
-    color: var(--color-ink-3);
-    border: 1px solid var(--color-line-strong);
-    border-radius: var(--radius-sm);
+    gap: 0.55rem;
+    width: fit-content;
+    max-width: 100%;
+    padding: 5px 12px 5px 9px;
+    font-size: 0.78rem;
+    color: var(--color-ink-2);
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
     background: var(--color-paper-raised);
   }
   .agent-tool::before {
     content: "";
-    width: 6px;
-    height: 6px;
+    flex: none;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: var(--color-ink-3);
+    border: 1.5px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+    border-top-color: var(--color-accent);
+    animation: spin 0.7s linear infinite;
   }
   .agent-tool[data-done="true"] {
-    color: var(--color-ink-2);
+    color: var(--color-ink-3);
   }
   .agent-tool[data-done="true"]::before {
+    border: none;
     background: var(--color-accent);
+    animation: none;
   }
   .agent-tool[data-error="true"] {
     color: var(--color-danger);
-    border-color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-line));
   }
   .agent-tool[data-error="true"]::before {
+    border: none;
     background: var(--color-danger);
+    animation: none;
   }
 
   /* Staged-action confirmation card (agent human-in-the-loop). */
@@ -1999,6 +2073,12 @@
     background: var(--color-line);
   }
   /* Attach popover: upload + a searchable list of mail attachments. */
+  /* Click-anywhere-outside scrim that dismisses the attach popover. */
+  .agent-attach-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 11;
+  }
   .agent-attach-pop {
     position: absolute;
     left: 1.5rem;
@@ -2007,12 +2087,39 @@
     z-index: 12;
     display: flex;
     flex-direction: column;
-    max-height: 320px;
+    max-height: 340px;
     background: var(--color-paper-raised);
     border: 1px solid var(--color-line-strong);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-pop);
     overflow: hidden;
+  }
+  /* Category filter chips inside the attach popover. */
+  .agent-attach-cats {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0 0.6rem 0.5rem;
+  }
+  .agent-attach-cat {
+    height: 24px;
+    padding: 0 0.6rem;
+    color: var(--color-ink-2);
+    background: var(--color-paper-sunken);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.74rem;
+  }
+  .agent-attach-cat:hover {
+    color: var(--color-ink);
+  }
+  .agent-attach-cat[data-active="true"] {
+    color: var(--color-accent);
+    background: var(--color-accent-wash);
+    border-color: color-mix(in srgb, var(--color-accent) 42%, transparent);
   }
   .agent-attach-pop-head {
     flex: none;

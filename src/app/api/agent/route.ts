@@ -21,7 +21,6 @@ import {
 } from "@/server/lib/agent-action";
 import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
 import { createSourceRegistry, type SourceMedia } from "@/server/lib/agent-sources";
-import { suggestFollowups, type Suggestion } from "@/server/lib/agent-suggest";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { rateLimit } from "@/server/lib/rate-limit";
@@ -498,29 +497,11 @@ export async function POST(request: NextRequest) {
           id: `pa-${token.slice(-12)}`,
           data: { token, summary },
         });
-      } else {
-        // No action pending — offer up to 4 follow-up chips. Generated AFTER the
-        // answer streams, fed THIS turn's tool messages (so chips reference what
-        // was actually read), time-boxed so the response can't hang (a held-open
-        // stream keeps the input disabled), and skipped for trivial answers.
-        const finalText = await result.text;
-        if (finalText.trim().length >= 40) {
-          const response = await result.response;
-          const suggestions = await Promise.race([
-            suggestFollowups([...modelMessages, ...response.messages]),
-            new Promise<Suggestion[]>((resolve) =>
-              setTimeout(() => resolve([]), 800),
-            ),
-          ]);
-          if (suggestions.length > 0) {
-            writer.write({
-              type: "data-suggestions",
-              id: `suggest-${turnSalt}`,
-              data: suggestions,
-            });
-          }
-        }
       }
+      // Follow-up chips are no longer generated here: suggestFollowups is an LLM
+      // call that lost the in-stream time-box, so chips rarely appeared AND any
+      // wait held the stream open (input disabled). The client now fetches them
+      // from /api/agent/suggest once the turn settles — non-blocking.
     },
     onError: (error) => (error instanceof Error ? error.message : String(error)),
   });
