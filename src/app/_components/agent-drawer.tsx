@@ -39,10 +39,11 @@ export function AgentDrawer({
       {open && (
         <motion.aside
           className="agent-drawer agent-drawer-push"
-          // The slide comes from the .app grid column animating open/closed; this
-          // just fades the panel in/out and — crucially — keeps it mounted for the
-          // column's collapse duration so it slides out instead of vanishing.
-          initial={{ opacity: 0 }}
+          // The slide comes entirely from the .app grid column animating open and
+          // closed. The panel itself stays fully OPAQUE on open (initial=false →
+          // no translucent fade-in over the mail behind it); on close it fades as
+          // it slides out, which also keeps it mounted for the column's collapse.
+          initial={false}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.34, ease: [0.32, 0.72, 0, 1] }}

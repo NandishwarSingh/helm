@@ -131,6 +131,13 @@ export function AppShell() {
   // that doubles its effects/invalidations. The drawer is "actually open" only
   // when NOT on the Agent tab; opening the tab closes it.
   const agentDrawerActuallyOpen = agentDrawerOpen && view !== "agent";
+  // Drives the grid column that holds the drawer. On OPEN this lags the mount by
+  // one frame: the panel mounts while the column is still 0, THEN the column
+  // animates 0→open — so the width transition has a clean baseline and glides
+  // instead of snapping (the heavy AgentPanel mount also lands on that
+  // pre-animation frame). On CLOSE it flips immediately so the column collapses
+  // in step with the panel's exit. This makes open match the (smooth) close.
+  const [agentDrawerWide, setAgentDrawerWide] = useState(false);
   function toggleAgentDrawer() {
     if (view === "agent") return;
     setAgentDrawerOpen((open) => !open);
@@ -138,6 +145,14 @@ export function AppShell() {
   useEffect(() => {
     if (view === "agent" && agentDrawerOpen) setAgentDrawerOpen(false);
   }, [view, agentDrawerOpen]);
+  useEffect(() => {
+    if (!agentDrawerActuallyOpen) {
+      setAgentDrawerWide(false);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setAgentDrawerWide(true));
+    return () => cancelAnimationFrame(raf);
+  }, [agentDrawerActuallyOpen]);
   // The first load straight out of Google consent gets the tearable veil while
   // the initial sync runs. The ?connected=1 marker is stripped immediately so a
   // refresh never replays it.
@@ -410,7 +425,7 @@ export function AppShell() {
     <MotionConfig reducedMotion="user">
       <div
         className="app"
-        data-agent-drawer={agentDrawerActuallyOpen}
+        data-agent-drawer={agentDrawerWide}
         inert={backgroundInert}
         aria-hidden={backgroundInert || undefined}
       >
