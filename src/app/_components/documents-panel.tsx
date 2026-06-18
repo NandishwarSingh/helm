@@ -457,53 +457,56 @@ export function DocumentsPanel({ account }: { account: string }) {
                     initial="initial"
                     animate="animate"
                     custom={i}
-                    onClick={() => setPreview(doc)}
                   >
-                    <span className="docs-row-icon">
-                      <DocumentsIcon size={16} />
-                    </span>
-                    <span className="docs-row-main">
-                      <span className="docs-row-name" title={doc.filename}>
-                        {doc.filename}
+                    {/* Primary action is a real button so the row is operable by
+                        keyboard; pin/download are siblings, never nested in it. */}
+                    <button
+                      type="button"
+                      className="docs-row-open"
+                      onClick={() => setPreview(doc)}
+                    >
+                      <span className="docs-row-icon">
+                        <DocumentsIcon size={16} />
                       </span>
-                      <span className="docs-row-sub">
-                        {doc.sender || "Unknown sender"}
-                        {doc.subject ? ` · ${doc.subject}` : ""}
+                      <span className="docs-row-main">
+                        <span className="docs-row-name" title={doc.filename}>
+                          {doc.filename}
+                        </span>
+                        <span className="docs-row-sub">
+                          {doc.sender || "Unknown sender"}
+                          {doc.subject ? ` · ${doc.subject}` : ""}
+                        </span>
                       </span>
-                    </span>
-                    {account === "all" && multiAccount && (
-                      <span
-                        className="row-acct"
-                        style={{ background: accountColor(doc.accountId) }}
-                        title={doc.accountEmail}
-                      />
-                    )}
-                    {doc.sizeBytes > 0 && (
-                      <span className="docs-row-size">
-                        {fmtBytes(doc.sizeBytes)}
+                      {account === "all" && multiAccount && (
+                        <span
+                          className="row-acct"
+                          style={{ background: accountColor(doc.accountId) }}
+                          title={doc.accountEmail}
+                        />
+                      )}
+                      {doc.sizeBytes > 0 && (
+                        <span className="docs-row-size">
+                          {fmtBytes(doc.sizeBytes)}
+                        </span>
+                      )}
+                      <span className="docs-row-date">
+                        {fmtDate(doc.receivedAt)}
                       </span>
-                    )}
-                    <span className="docs-row-date">
-                      {fmtDate(doc.receivedAt)}
-                    </span>
+                    </button>
                     <button
                       type="button"
                       className="icon-btn docs-row-act"
                       data-on={doc.pinned}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        togglePin(doc);
-                      }}
+                      onClick={() => togglePin(doc)}
                       aria-label={doc.pinned ? "Unpin" : "Pin to top"}
                       aria-pressed={doc.pinned}
                       title={doc.pinned ? "Unpin" : "Pin to top"}
                     >
-                      <PinIcon size={15} />
+                      <PinIcon size={15} filled={doc.pinned} />
                     </button>
                     <a
                       className="icon-btn docs-row-act"
                       href={previewUrl(doc, "attachment")}
-                      onClick={(e) => e.stopPropagation()}
                       aria-label={`Download ${doc.filename}`}
                       title="Download"
                     >

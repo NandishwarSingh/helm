@@ -40,10 +40,23 @@ export const DocumentsIcon = (p: IconProps) => (
   </Svg>
 );
 
-export const PinIcon = (p: IconProps) => (
-  <Svg {...p}>
+export const PinIcon = ({
+  size = 16,
+  filled = false,
+}: IconProps & { filled?: boolean }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill={filled ? "currentColor" : "none"}
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
     <path d="M12 17v5M9 3h6l-1 7 3 3H7l3-3z" />
-  </Svg>
+  </svg>
 );
 
 export const DownloadIcon = (p: IconProps) => (

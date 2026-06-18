@@ -153,6 +153,8 @@ export async function GET(
       "Cache-Control": "private, no-store",
       // Honour the declared type; don't let the browser sniff bytes into HTML.
       "X-Content-Type-Options": "nosniff",
+      // Private attachment bytes — keep them out of any search index.
+      "X-Robots-Tag": "noindex, nofollow",
     },
   });
 }
