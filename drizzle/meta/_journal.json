@@ -71,6 +71,13 @@
       "when": 1781604692867,
       "tag": "20260616101132_bumpy_scream",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1781621512938,
+      "tag": "20260616145152_silly_namora",
+      "breakpoints": true
     }
   ]
 }

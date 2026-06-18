@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
 
   let body: {
     event?: string;
+    created_at?: number;
     payload?: {
       subscription?: { entity?: { id?: string; current_end?: number } };
     };
@@ -50,7 +51,11 @@ export async function POST(request: NextRequest) {
     const currentEnd = sub.current_end
       ? new Date(sub.current_end * 1000)
       : undefined;
-    await setStatusByRazorpayId(sub.id, status, currentEnd);
+    // The event time gates out stale/replayed events (idempotent + order-safe).
+    const eventAt = body.created_at
+      ? new Date(body.created_at * 1000)
+      : undefined;
+    await setStatusByRazorpayId(sub.id, status, currentEnd, eventAt);
   }
   // Always ack a verified webhook so Razorpay doesn't retry a handled event.
   return NextResponse.json({ ok: true });

@@ -5,6 +5,7 @@ import { env } from "@/env";
 import {
   getProStatus,
   getSubscriberId,
+  ownedSubscriptionId,
   upsertSubscription,
 } from "@/server/lib/billing";
 import {
@@ -57,7 +58,11 @@ export const billingRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       const subscriberId = await getSubscriberId();
       if (!subscriberId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      // Bind to the subscription THIS caller created in `subscribe`: a valid
+      // signature for some other subscription must not flip this account to Pro.
+      const owned = await ownedSubscriptionId(subscriberId);
       if (
+        owned !== input.subscriptionId ||
         !verifySubscriptionPayment(
           input.paymentId,
           input.subscriptionId,

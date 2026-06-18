@@ -3,6 +3,11 @@ import "server-only";
 import ivm from "isolated-vm";
 
 import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
+import {
+  resolveAccountTarget,
+  type AccountBridge,
+  type TenantCorsair,
+} from "@/server/lib/sandbox-accounts";
 
 /**
  * Runs the agent's `run_script` code inside an isolated-vm V8 isolate.
@@ -66,11 +71,6 @@ globalThis.corsair = (function () {
 void 0;
 `;
 
-type TenantCorsair = Record<string, unknown>;
-
-/** A connected account the sandbox may target by email via corsair.account(). */
-export type AccountBridge = { email: string; client: TenantCorsair };
-
 type ScriptResult =
   | { ok: true; value: unknown }
   | { ok: false; error: string };
@@ -118,16 +118,9 @@ export async function runScriptSandboxed(
       // Resolve the target mailbox. A named account (corsair.account("email"))
       // must be one the user OWNS — `accounts` is the session's own list, so the
       // sandbox can never reach a tenant outside it. Empty => the active account.
-      let target = tenant;
-      if (accountEmail) {
-        const match = accounts.find((a) => a.email === accountEmail);
-        if (!match) {
-          return fail(
-            `unknown account: "${accountEmail}" is not one of your connected accounts`,
-          );
-        }
-        target = match.client;
-      }
+      const resolved = resolveAccountTarget(accounts, tenant, accountEmail);
+      if (!resolved.ok) return fail(resolved.error);
+      const target = resolved.client;
       if (isDestructive(pathStr)) {
         if (!gate.confirmed) {
           // Capture the first staged action for the confirmation card, then

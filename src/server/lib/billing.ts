@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 
 import { db } from "@/server/db";
 import { subscriptions } from "@/server/db/schema";
@@ -55,6 +55,22 @@ export async function getProStatus(): Promise<ProStatus> {
   };
 }
 
+/**
+ * The Razorpay subscription id we recorded for this subscriber when they hit
+ * `subscribe`. Verify binds against this so a caller can't confirm a different
+ * (or someone else's) subscription with a stray signature.
+ */
+export async function ownedSubscriptionId(
+  subscriberId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ id: subscriptions.razorpaySubscriptionId })
+    .from(subscriptions)
+    .where(eq(subscriptions.subscriberId, subscriberId))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 /** Upsert the subscription row for a subscriber (from subscribe + verify). */
 export async function upsertSubscription(opts: {
   subscriberId: string;
@@ -81,18 +97,36 @@ export async function upsertSubscription(opts: {
     });
 }
 
-/** Set status by Razorpay subscription id (webhook-driven, the source of truth). */
+/**
+ * Set status by Razorpay subscription id (webhook-driven, the source of truth).
+ * `eventAt` is the webhook event time: when given, the write is applied ONLY if
+ * it's at least as new as the last event we recorded — so a retried or
+ * out-of-order event can't clobber a newer state (e.g. a stale "charged"
+ * arriving after a "cancelled"). With no `eventAt` it applies unconditionally.
+ */
 export async function setStatusByRazorpayId(
   razorpaySubscriptionId: string,
   status: string,
   currentEnd?: Date | null,
+  eventAt?: Date | null,
 ): Promise<void> {
   await db
     .update(subscriptions)
     .set({
       status,
       ...(currentEnd !== undefined ? { currentEnd } : {}),
+      ...(eventAt ? { lastEventAt: eventAt } : {}),
       updatedAt: new Date(),
     })
-    .where(eq(subscriptions.razorpaySubscriptionId, razorpaySubscriptionId));
+    .where(
+      eventAt
+        ? and(
+            eq(subscriptions.razorpaySubscriptionId, razorpaySubscriptionId),
+            or(
+              isNull(subscriptions.lastEventAt),
+              lte(subscriptions.lastEventAt, eventAt),
+            ),
+          )
+        : eq(subscriptions.razorpaySubscriptionId, razorpaySubscriptionId),
+    );
 }

@@ -70,9 +70,10 @@ export function verifySubscriptionPayment(
   paymentId: string,
   subscriptionId: string,
   signature: string,
+  secret: string | undefined = env.RAZORPAY_KEY_SECRET,
 ): boolean {
-  if (!env.RAZORPAY_KEY_SECRET) return false;
-  const expected = createHmac("sha256", env.RAZORPAY_KEY_SECRET)
+  if (!secret) return false;
+  const expected = createHmac("sha256", secret)
     .update(`${paymentId}|${subscriptionId}`)
     .digest("hex");
   return safeEqualHex(signature, expected);
@@ -82,9 +83,10 @@ export function verifySubscriptionPayment(
 export function verifyWebhookSignature(
   rawBody: string,
   signature: string,
+  secret: string | undefined = env.RAZORPAY_WEBHOOK_SECRET,
 ): boolean {
-  if (!env.RAZORPAY_WEBHOOK_SECRET) return false;
-  const expected = createHmac("sha256", env.RAZORPAY_WEBHOOK_SECRET)
+  if (!secret) return false;
+  const expected = createHmac("sha256", secret)
     .update(rawBody)
     .digest("hex");
   return safeEqualHex(signature, expected);

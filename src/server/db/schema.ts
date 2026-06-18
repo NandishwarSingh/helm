@@ -135,6 +135,9 @@ export const subscriptions = pgTable('subscriptions', {
     razorpaySubscriptionId: text('razorpay_subscription_id'),
     status: text('status').notNull().default('inactive'),
     currentEnd: timestamp('current_end', { withTimezone: true }),
+    // Event time of the last webhook applied — older/out-of-order events are
+    // ignored so a retried stale "charged" can't revive a cancelled sub.
+    lastEventAt: timestamp('last_event_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
     // Webhooks look the row up by the Razorpay subscription id.
