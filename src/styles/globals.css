@@ -261,19 +261,19 @@
   .app {
     --agent-w: 420px;
     display: grid;
-    grid-template-columns: 232px minmax(0, 1fr) 0;
+    grid-template-columns: 232px minmax(0, 1fr);
     height: 100dvh;
     overflow: hidden;
-    /* A fixed-length open track (NOT minmax): grid-template-columns can't tween
-       a length to a minmax(), which made the panel snap open. A length→length
-       track interpolates, so the column glides; the easing matches the drawer. */
-    transition: grid-template-columns 0.34s cubic-bezier(0.32, 0.72, 0, 1);
   }
-  .app[data-agent-drawer="true"] {
-    grid-template-columns: 232px minmax(0, 1fr) var(--agent-w);
+  /* The agent panel is a fixed right-side overlay that slides via motion
+     translateX (smooth both ways, like the doc preview). The frame reserves room
+     for it with padding-right — a length that animates reliably from 0 in BOTH
+     directions (unlike a grid track, which snapped open) and shares the drawer's
+     0.34s easing, so the panel edge and content edge stay locked together. */
+  .app[data-agent-drawer="true"] .frame {
+    padding-right: var(--agent-w);
   }
-  /* Give the open message more room while the agent panel is open by trimming
-     the mail list column. */
+  /* Trim the mail list while the panel is open so the open message keeps width. */
   .app[data-agent-drawer="true"] .mail {
     grid-template-columns: minmax(240px, 300px) 1fr;
   }
@@ -576,6 +576,8 @@
     grid-template-rows: auto 1fr;
     min-width: 0;
     height: 100dvh;
+    /* Reserves room for the agent overlay; shares the drawer's duration/easing. */
+    transition: padding-right 0.34s cubic-bezier(0.32, 0.72, 0, 1);
   }
   .topbar {
     display: flex;
@@ -1881,17 +1883,9 @@
     border-left: 1px solid var(--color-line-strong);
     background: var(--color-paper);
   }
-  .agent-drawer-push {
-    position: relative;
-    right: auto;
-    top: auto;
-    z-index: 1;
-    /* Fixed width = the open track, so the panel content never reflows while the
-       grid column animates — the column's growth slides the panel in cleanly. */
+  /* The agent slide-over: the fixed geometry of .agent-drawer, just our width. */
+  .agent-drawer-side {
     width: var(--agent-w);
-    height: 100dvh;
-    overflow: hidden;
-    box-shadow: none;
   }
   .agent-drawer-head {
     flex: none;
@@ -4104,12 +4098,12 @@
 
 @media (max-width: 860px) {
   .app {
-    /* Near-full-width panel on small screens; still a length so it interpolates. */
-    --agent-w: min(420px, 88vw);
-    grid-template-columns: minmax(0, 1fr) 0;
+    --agent-w: min(420px, 92vw);
+    grid-template-columns: minmax(0, 1fr);
   }
-  .app[data-agent-drawer="true"] {
-    grid-template-columns: minmax(0, 1fr) var(--agent-w);
+  /* On phones the panel overlays the content instead of squishing it. */
+  .app[data-agent-drawer="true"] .frame {
+    padding-right: 0;
   }
   .rail {
     display: none;

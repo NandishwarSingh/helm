@@ -38,14 +38,15 @@ export function AgentDrawer({
     <AnimatePresence>
       {open && (
         <motion.aside
-          className="agent-drawer agent-drawer-push"
-          // The slide comes entirely from the .app grid column animating open and
-          // closed. The panel itself stays fully OPAQUE on open (initial=false →
-          // no translucent fade-in over the mail behind it); on close it fades as
-          // it slides out, which also keeps it mounted for the column's collapse.
-          initial={false}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          className="agent-drawer agent-drawer-side"
+          // Fixed overlay that slides via translateX — motion drives this frame by
+          // frame, so it's smooth in BOTH directions (the doc preview slides the
+          // same way). The mail content reserves room via .frame's padding-right
+          // transition, which shares this exact duration/easing, so the panel's
+          // left edge and the content's right edge stay locked together.
+          initial={{ x: "100%" }}
+          animate={{ x: "0%" }}
+          exit={{ x: "100%" }}
           transition={{ duration: 0.34, ease: [0.32, 0.72, 0, 1] }}
           role="complementary"
           aria-label="Agent"

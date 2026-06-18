@@ -98,7 +98,7 @@ const SUGGESTIONS = [
   "Summarize my unread mail",
   "What is on my calendar this week?",
   "Find the last email from Google and archive it",
-  "Schedule a 30 minute sync with dev@corsair.dev tomorrow at 9am and email him that I look forward to it",
+  "Schedule a 30 minute sync with nandishwarjasrotia@gmail.com tomorrow at 9am and email him that I look forward to it",
 ];
 
 /** Inline rendering: **bold** and `code`, as plain React nodes. */
