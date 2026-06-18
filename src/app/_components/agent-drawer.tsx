@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { AgentPanel } from "@/app/_components/agent-panel";
-import { CloseIcon } from "@/components/icons";
+import { CloseIcon, HistoryIcon, PlusIcon } from "@/components/icons";
+import { dispatchAction } from "@/lib/actions";
 
 /**
  * The Agent as a right-side slide-over, usable from any view without leaving the
@@ -53,17 +54,39 @@ export function AgentDrawer({
         >
           <div className="agent-drawer-head">
             <span className="agent-drawer-title">Agent</span>
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={onClose}
-              aria-label="Close agent"
-            >
-              <CloseIcon size={16} />
-            </button>
+            <div className="agent-drawer-actions">
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => dispatchAction("agent-history")}
+                data-tip="Chat history"
+                data-tip-pos="down"
+                aria-label="Chat history"
+              >
+                <HistoryIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => dispatchAction("agent-new-chat")}
+                data-tip="New chat"
+                data-tip-pos="down"
+                aria-label="New chat"
+              >
+                <PlusIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={onClose}
+                aria-label="Close agent"
+              >
+                <CloseIcon size={16} />
+              </button>
+            </div>
           </div>
           <div className="agent-drawer-body">
-            <AgentPanel account={account} />
+            <AgentPanel account={account} inDrawer />
           </div>
         </motion.aside>
       )}

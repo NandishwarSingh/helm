@@ -2472,6 +2472,11 @@
     font-weight: 600;
     font-size: 0.92rem;
   }
+  .agent-drawer-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+  }
   .agent-drawer-body {
     flex: 1;
     min-height: 0; /* bound .agent's height:100% so .agent-scroll can scroll */

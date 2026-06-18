@@ -26,6 +26,7 @@ import {
   DocumentsIcon,
   FlagIcon,
   HelpIcon,
+  HistoryIcon,
   InboxIcon,
   MailIcon,
   PlusIcon,
@@ -179,6 +180,13 @@ export function AppShell() {
   const accounts = api.accounts.list.useQuery(undefined, { staleTime: 30_000 });
   const accountList = accounts.data?.accounts ?? [];
   const multiAccount = accounts.data?.multi ?? false;
+  // Chat count for the top-bar History button (deduped with the agent panel's
+  // own query). Only fetched while the agent surface is visible.
+  const agentConvos = api.conversations.list.useQuery(undefined, {
+    enabled: view === "agent" || agentDrawerActuallyOpen,
+    staleTime: 10_000,
+  });
+  const agentHistoryCount = agentConvos.data?.items.length ?? 0;
   const [activeAccount, setActiveAccount] = useState<string>("all");
   const [acctMenuOpen, setAcctMenuOpen] = useState(false);
   // The menu element gets a stable id so the trigger can point aria-controls at
@@ -737,6 +745,31 @@ export function AppShell() {
               Commands
               <Kbd>⌘K</Kbd>
             </button>
+            {view === "agent" && (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => dispatchAction("agent-history")}
+                  data-tip="Chat history"
+                  data-tip-pos="down"
+                >
+                  <HistoryIcon size={15} />
+                  History
+                  {agentHistoryCount > 0 && (
+                    <span className="agent-bar-count tnum">{agentHistoryCount}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => dispatchAction("agent-new-chat")}
+                >
+                  <PlusIcon size={15} />
+                  New chat
+                </button>
+              </>
+            )}
             {view === "mail" && (
               <button
                 type="button"

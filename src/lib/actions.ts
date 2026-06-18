@@ -6,7 +6,12 @@ import { useEffect, useRef } from "react";
  * Lightweight app-wide actions so the command palette and global shortcuts
  * can drive whichever panel is mounted, without prop-drilling.
  */
-export type AppAction = "focus-search" | "refresh" | "toggle-theme";
+export type AppAction =
+  | "focus-search"
+  | "refresh"
+  | "toggle-theme"
+  | "agent-new-chat"
+  | "agent-history";
 
 const ACTION_EVENT = "helm:action";
 

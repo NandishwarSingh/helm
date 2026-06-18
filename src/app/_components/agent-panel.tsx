@@ -11,7 +11,6 @@ import {
   AgentIcon,
   CloseIcon,
   DocumentsIcon,
-  HistoryIcon,
   PaperclipIcon,
   PlusIcon,
   SendIcon,
@@ -366,7 +365,13 @@ function relTime(value: Date | string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function AgentPanel({ account }: { account: string }) {
+export function AgentPanel({
+  account,
+  inDrawer = false,
+}: {
+  account: string;
+  inDrawer?: boolean;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -676,9 +681,16 @@ export function AgentPanel({ account }: { account: string }) {
   }, []);
 
   useAction("focus-search", () => inputRef.current?.focus());
+  // History + New chat now live in the top bar / drawer header and drive the
+  // panel through the action bus (the in-panel bar was removed).
+  useAction("agent-new-chat", () => newChat());
+  useAction("agent-history", () => setHistoryOpen((open) => !open));
 
   const empty = messages.length === 0;
   const greeting = greetingText();
+  // Centre the composer only in the narrow right-side drawer; the dedicated
+  // Agent tab keeps it anchored at the bottom (centred looks sparse when wide).
+  const centeredCompose = empty && inDrawer;
   // The compose box is rendered in two places (centred in the empty hero, and
   // pinned at the bottom once a chat starts); a shared layoutId animates it
   // between them. Defined once here so both spots stay identical.
@@ -848,31 +860,6 @@ export function AgentPanel({ account }: { account: string }) {
 
   return (
     <div className="agent" data-empty={empty}>
-      <div className="agent-bar">
-        <button
-          type="button"
-          className="agent-bar-btn"
-          data-on={historyOpen}
-          aria-expanded={historyOpen}
-          onClick={() => setHistoryOpen((open) => !open)}
-        >
-          <HistoryIcon size={15} />
-          History
-          {history.length > 0 && (
-            <span className="agent-bar-count tnum">{history.length}</span>
-          )}
-        </button>
-        <button
-          type="button"
-          className="agent-bar-btn agent-bar-btn-accent"
-          onClick={newChat}
-          disabled={busy || messages.length === 0}
-        >
-          <PlusIcon size={15} />
-          New chat
-        </button>
-      </div>
-
       {historyOpen && (
         <div className="agent-history">
           <div className="agent-history-head">
@@ -946,14 +933,16 @@ export function AgentPanel({ account }: { account: string }) {
               I work on your real mail and calendar — search, summarise, draft,
               send and schedule. What can I help you with?
             </p>
-            <motion.div
-              className="agent-compose"
-              data-hero="true"
-              layout="position"
-              layoutId="helm-agent-compose"
-            >
-              {composeBox}
-            </motion.div>
+            {centeredCompose && (
+              <motion.div
+                className="agent-compose"
+                data-hero="true"
+                layout="position"
+                layoutId="helm-agent-compose"
+              >
+                {composeBox}
+              </motion.div>
+            )}
             <div className="agent-suggest">
               {SUGGESTIONS.map((text) => (
                 <button key={text} type="button" onClick={() => submit(text)}>
@@ -964,7 +953,6 @@ export function AgentPanel({ account }: { account: string }) {
           </div>
         </div>
       ) : (
-        <>
           <div className="agent-scroll" ref={scrollRef}>
             <div className="agent-thread">
           {messages.map((message) => (
@@ -1087,14 +1075,16 @@ export function AgentPanel({ account }: { account: string }) {
           )}
             </div>
           </div>
-          <motion.div
-            className="agent-compose"
-            layout="position"
-            layoutId="helm-agent-compose"
-          >
-            {composeBox}
-          </motion.div>
-        </>
+      )}
+
+      {!centeredCompose && (
+        <motion.div
+          className="agent-compose"
+          layout="position"
+          layoutId="helm-agent-compose"
+        >
+          {composeBox}
+        </motion.div>
       )}
     </div>
   );
