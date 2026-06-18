@@ -58,8 +58,9 @@ export function UpgradePro() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Until we know the state, render nothing (avoids a flash of the wrong CTA).
-  if (status.isLoading) return null;
+  // Reserve the bottom slot while loading so the account switcher stays pinned
+  // (the wrap carries the margin-top:auto that pushes the rail foot down).
+  if (status.isLoading) return <div className="upgrade-pro-wrap" aria-hidden />;
   if (status.data?.pro) {
     return (
       <div className="pro-badge" title="Helm Pro is active">
@@ -114,7 +115,6 @@ export function UpgradePro() {
         onClick={() => void upgrade()}
         disabled={busy}
       >
-        <Spark />
         {busy ? "Opening…" : "Upgrade to Pro"}
       </button>
       {error && <span className="upgrade-pro-err">{error}</span>}
