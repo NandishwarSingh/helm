@@ -605,27 +605,25 @@ export function GmailPanel({
         : undefined
       : account;
 
-  // Triage runs classify untriaged inbox mail in capped slices; the loop
-  // continues until the backlog is clear (bounded per visit).
-  const triageRuns = useRef(0);
-  // Accounts already classified this Priority session — so a switch never re-runs
-  // a settled mailbox. Cleared when re-entering Priority or after a manual sync.
-  const triagedAccounts = useRef<Set<string>>(new Set());
+  // Triage classifies untriaged inbox mail in capped slices. Each run just
+  // refreshes the overview; the Priority effect below re-fires as the untriaged
+  // count moves, so a backlog drains slice-by-slice and NEW mail (push/poll) is
+  // classified in near real time. The server dedupes by message id, so a run
+  // only ever touches genuinely-new mail.
   const triageRun = api.triage.run.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       await utils.triage.overview.invalidate();
-      if (result.remaining > 0 && triageRuns.current < 5) {
-        triageRuns.current += 1;
-        triageRun.mutate({ account });
-      }
     },
   });
+  // The untriaged count we last kicked a run off for, per account. We re-run only
+  // when the count CHANGES — so new mail and per-slice progress re-trigger, but a
+  // settled account (count 0) or mail that simply won't classify (count stuck)
+  // never loops.
+  const triagedAt = useRef<Map<string, number>>(new Map());
 
   const refreshInbox = api.gmail.refreshInbox.useMutation({
     onSuccess: async () => {
       setCanSyncMore(true);
-      triageRuns.current = 0;
-      triagedAccounts.current.clear();
       await utils.gmail.searchEmails.invalidate();
       await utils.gmail.listDrafts.invalidate();
       await utils.triage.overview.invalidate();
@@ -1354,10 +1352,6 @@ export function GmailPanel({
     setBulkIds(new Set());
     setConfirmDeleteId(null);
     setSelectedDraftId(null);
-    if (view === "priority") {
-      triageRuns.current = 0;
-      triagedAccounts.current.clear();
-    }
   }, [view]);
 
   // Account switches (the unified-view selector) reset the same transient state,
@@ -1376,18 +1370,14 @@ export function GmailPanel({
     setLimit(MAIL_PAGE);
   }, [account]);
 
-  // Opening Priority (or switching to an account) classifies that account's
-  // untriaged mail once. The server skips already-classified mail, so this only
-  // ever touches NEW mail — a switch never re-classifies settled verdicts.
+  // Classify the active account's untriaged mail, re-running as the count moves:
+  // a fresh batch from the push/poll, or progress from the last slice. It stays
+  // put when the count is 0 (settled) or hasn't changed since the last run
+  // (unclassifiable mail), so it never re-classifies settled verdicts or loops.
   useEffect(() => {
-    if (!isPriority || overview.isLoading) return;
-    if (
-      pendingTriage > 0 &&
-      !triageRun.isPending &&
-      !triagedAccounts.current.has(account)
-    ) {
-      triagedAccounts.current.add(account);
-      triageRuns.current = 0;
+    if (!isPriority || overview.isLoading || triageRun.isPending) return;
+    if (pendingTriage > 0 && pendingTriage !== triagedAt.current.get(account)) {
+      triagedAt.current.set(account, pendingTriage);
       triageRun.mutate({ account });
     }
   }, [isPriority, overview.isLoading, pendingTriage, triageRun, account]);
