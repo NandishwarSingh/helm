@@ -692,25 +692,35 @@ export function GmailPanel({
     onSettled: () => void settleTracked(),
   };
 
+  // Revert ONLY the failed call's optimistic edits — never the whole map. In the
+  // unified view an action fans out to one mutation per owning account; nuking
+  // every edit on a single account's failure (e.g. a revoked grant on a second
+  // mailbox) would snap back rows whose writes SUCCEEDED on the other accounts.
+  function revertEdits(account: string | undefined, ids: string[], err: unknown) {
+    console.error(
+      "[mail] action failed:",
+      account,
+      ids,
+      err instanceof Error ? err.message : err,
+    );
+    setLocalEdits((prev) => {
+      const next = new Map(prev);
+      for (const id of ids) next.delete(`${account ?? ""}:${id}`);
+      return next;
+    });
+    void refreshMailViews();
+  }
+
   const modifyMessage = api.gmail.modifyMessage.useMutation({
-    onError: async () => {
-      setLocalEdits(new Map());
-      await refreshMailViews();
-    },
+    onError: (err, vars) => revertEdits(vars.account, [vars.id], err),
   });
 
   const bulkModify = api.gmail.bulkModify.useMutation({
-    onError: async () => {
-      setLocalEdits(new Map());
-      await refreshMailViews();
-    },
+    onError: (err, vars) => revertEdits(vars.account, vars.ids, err),
   });
 
   const bulkDelete = api.gmail.bulkDelete.useMutation({
-    onError: async () => {
-      setLocalEdits(new Map());
-      await refreshMailViews();
-    },
+    onError: (err, vars) => revertEdits(vars.account, vars.ids, err),
   });
 
   // Top-up poll: pull newly arrived Gmail ids so new mail lands on its own.
@@ -873,9 +883,26 @@ export function GmailPanel({
       id: parseRowKey(key).id,
       account: accountOf(key),
     }));
-    // In the unified view, never act on a row whose account we can't resolve —
-    // a write with account:undefined would fall back to the active mailbox.
-    if (account === "all") items = items.filter((p) => p.account !== undefined);
+    // In the unified view a row whose account we can't resolve can't be acted on
+    // safely (account:undefined would fall back to the active mailbox — possibly
+    // the wrong one). Fall back only when there's a single connected account
+    // (one safe target); with several, surface it loudly instead of a silent
+    // no-op so an untagged row becomes visible the instant it occurs.
+    if (account === "all") {
+      const unresolved = items.filter((p) => p.account === undefined);
+      if (unresolved.length > 0) {
+        const only = accountList.length === 1 ? accountList[0]?.id : undefined;
+        if (only) {
+          items = items.map((p) => (p.account ? p : { ...p, account: only }));
+        } else {
+          console.error(
+            "[mail] all-mode action dropped rows with no resolvable account:",
+            unresolved.map((p) => p.id),
+          );
+          items = items.filter((p) => p.account !== undefined);
+        }
+      }
+    }
     if (items.length === 0) return;
 
     if (view !== "drafts" && LEAVES_FOLDER[folder].includes(action)) {
@@ -1035,6 +1062,8 @@ export function GmailPanel({
     if (meta?.unread) {
       const id = parseRowKey(readId).id;
       const acct = accountOf(readId);
+      // With several mailboxes, an unresolved account can't be mark-read safely.
+      if (!acct && accountList.length > 1) return;
       applyLocal([{ id, account: acct }], "read");
       modifyMessage.mutate({ id, account: acct, action: "read" });
     }

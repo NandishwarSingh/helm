@@ -37,6 +37,7 @@ import {
   mapMessage,
   sortMessagesNewestFirst,
 } from "@/server/lib/mail-view";
+import { notifyTenant } from "@/server/lib/realtime";
 import { withRetry } from "@/server/lib/retry";
 import {
   deleteMessageEmbeddings,
@@ -515,12 +516,18 @@ export const gmailRouter = createTRPCRouter({
       });
       if (input.action === "trash") {
         await withRetry(() => tenant.gmail.api.messages.trash({ id: input.id }));
+        // Re-hydrate so a reconcile refetch reads the new labels (TRASH added,
+        // INBOX gone) — mirrors bulkModify; without it the row can flicker back.
+        await hydrateMessages(tenant, [input.id]);
+        notifyTenant(tenantId, "mail");
         return { ok: true };
       }
       if (input.action === "untrash") {
         await withRetry(() =>
           tenant.gmail.api.messages.untrash({ id: input.id }),
         );
+        await hydrateMessages(tenant, [input.id]);
+        notifyTenant(tenantId, "mail");
         return { ok: true };
       }
       if (input.action === "deleteForever") {
@@ -529,6 +536,7 @@ export const gmailRouter = createTRPCRouter({
         // Best-effort: drop the orphaned embedding, but never let a failed
         // index cleanup surface as a failed delete.
         await deleteMessageEmbeddings(tenantId, [input.id]).catch(() => undefined);
+        notifyTenant(tenantId, "mail");
         return { ok: true };
       }
       const change: Record<
@@ -551,6 +559,8 @@ export const gmailRouter = createTRPCRouter({
           removeLabelIds: remove,
         }),
       );
+      await hydrateMessages(tenant, [input.id]);
+      notifyTenant(tenantId, "mail");
       return { ok: true };
     }),
 
@@ -574,7 +584,7 @@ export const gmailRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const { tenant } = await opAccount(input.account, {
+      const { tenant, tenantId } = await opAccount(input.account, {
         requireAccount: true,
       });
       const change: Record<
@@ -602,6 +612,7 @@ export const gmailRouter = createTRPCRouter({
       // batchModify returns void, so re-hydrate the affected messages to
       // keep cached labels truthful.
       await hydrateMessages(tenant, input.ids);
+      notifyTenant(tenantId, "mail");
       return { ok: true, count: input.ids.length };
     }),
 
@@ -624,6 +635,7 @@ export const gmailRouter = createTRPCRouter({
       // Best-effort: clear the deleted messages' embeddings so search can't
       // return rows that no longer exist; a failure here never breaks the delete.
       await deleteMessageEmbeddings(tenantId, input.ids).catch(() => undefined);
+      notifyTenant(tenantId, "mail");
       return { ok: true, count: input.ids.length };
     }),
 
