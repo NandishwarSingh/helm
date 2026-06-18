@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Chat, useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { motion } from "motion/react";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { AgentIcon, SendIcon } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
@@ -101,128 +103,31 @@ const SUGGESTIONS = [
   "Schedule a 30 minute sync with nandishwarjasrotia@gmail.com tomorrow at 9am and email him that I look forward to it",
 ];
 
-/** Inline rendering: **bold** and `code`, as plain React nodes. */
-function inlineCode(text: string, keyBase: string): React.ReactNode[] {
-  return text
-    .split(/`([^`]+)`/g)
-    .map((chunk, i) =>
-      i % 2 === 1 ? <code key={`${keyBase}c${i}`}>{chunk}</code> : chunk,
-    );
-}
-
-function renderInline(text: string): React.ReactNode[] {
-  return text
-    .split(/\*\*([^*]+)\*\*/g)
-    .flatMap((chunk, i): React.ReactNode[] =>
-      i % 2 === 1
-        ? [<strong key={`b${i}`}>{inlineCode(chunk, `b${i}`)}</strong>]
-        : inlineCode(chunk, `t${i}`),
-    );
-}
-
 /**
- * Markdown-lite for agent replies. The prompt constrains the model, but the
- * renderer still defends: paragraphs, hyphen and numbered lists (real
- * numbering), quotes, dividers, headings-as-bold, bold and inline code.
+ * Rich, readable rendering for assistant replies: GitHub-flavoured markdown
+ * (headings, ordered/unordered lists, tables, links, emphasis, blockquotes,
+ * rules) rendered to REACT NODES — never via innerHTML, and raw HTML stays
+ * disabled — so the panel keeps its no-injection guarantee. Fenced code blocks
+ * are still swallowed so the agent's run_script source can never surface.
  */
+const AGENT_MD_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <a href={href ?? undefined} target="_blank" rel="noreferrer noopener">
+      {children}
+    </a>
+  ),
+  // Swallow fenced code blocks; inline `code` (ids, header names) still renders.
+  pre: () => null,
+};
+
 function AgentText({ text }: { text: string }) {
-  const blocks: React.ReactNode[] = [];
-  let ul: string[] = [];
-  let ol: string[] = [];
-  let quote: string[] = [];
-  // Defense: the model is told never to emit code, but if it slips, swallow the
-  // whole fenced block (``` or ~~~) so run_script source can never reach the DOM.
-  // Track the opening marker so a ``` block isn't closed by a stray ~~~.
-  let fence: string | null = null;
-
-  const flush = (key: number) => {
-    if (ul.length > 0) {
-      blocks.push(
-        <ul key={`u${key}`}>
-          {ul.map((item, i) => (
-            <li key={i}>{renderInline(item)}</li>
-          ))}
-        </ul>,
-      );
-      ul = [];
-    }
-    if (ol.length > 0) {
-      blocks.push(
-        <ol key={`o${key}`}>
-          {ol.map((item, i) => (
-            <li key={i}>{renderInline(item)}</li>
-          ))}
-        </ol>,
-      );
-      ol = [];
-    }
-    if (quote.length > 0) {
-      blocks.push(
-        <blockquote key={`q${key}`}>
-          {quote.map((line, i) => (
-            <p key={i}>{renderInline(line)}</p>
-          ))}
-        </blockquote>,
-      );
-      quote = [];
-    }
-  };
-
-  const lines = text.split("\n");
-  lines.forEach((line, i) => {
-    const fenceMatch = /^\s*(```|~~~)/.exec(line);
-    if (fenceMatch) {
-      const marker = fenceMatch[1];
-      if (fence === null) {
-        flush(i); // close any open list/quote before swallowing
-        fence = marker ?? "```";
-      } else if (fence === marker) {
-        fence = null; // matching close
-      }
-      return; // never render a fence marker (or a mismatched one inside a fence)
-    }
-    if (fence !== null) return; // swallow every line inside a code fence
-    const hyphen = /^\s*[-*]\s+(.*)$/.exec(line);
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    const quoted = /^\s*>\s?(.*)$/.exec(line);
-    const heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
-    const rule = /^\s*([-*_]\s*){3,}$/.test(line);
-
-    if (hyphen && !rule) {
-      if (ol.length > 0 || quote.length > 0) flush(i);
-      ul.push(hyphen[1] ?? "");
-      return;
-    }
-    if (numbered) {
-      if (ul.length > 0 || quote.length > 0) flush(i);
-      ol.push(numbered[1] ?? "");
-      return;
-    }
-    if (quoted && line.trim() !== ">") {
-      if (ul.length > 0 || ol.length > 0) flush(i);
-      if (quoted[1]) quote.push(quoted[1]);
-      return;
-    }
-    flush(i);
-    if (rule) {
-      blocks.push(<span className="agent-hr" key={`r${i}`} />);
-      return;
-    }
-    if (heading) {
-      blocks.push(
-        <p className="agent-h" key={`h${i}`}>
-          {renderInline(heading[1] ?? "")}
-        </p>,
-      );
-      return;
-    }
-    if (line.trim()) {
-      blocks.push(<p key={`p${i}`}>{renderInline(line)}</p>);
-    }
-  });
-  flush(lines.length);
-
-  return <div className="agent-text">{blocks}</div>;
+  return (
+    <div className="agent-text agent-md">
+      <Markdown remarkPlugins={[remarkGfm]} components={AGENT_MD_COMPONENTS}>
+        {text}
+      </Markdown>
+    </div>
+  );
 }
 
 /**
