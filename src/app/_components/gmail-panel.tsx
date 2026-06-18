@@ -1491,18 +1491,35 @@ export function GmailPanel({
   const FOLDER_SYNC_THROTTLE_MS = 20_000;
   const folderSyncAt = useRef<Map<string, number>>(new Map());
   useEffect(() => {
-    if (folder !== "spam" && folder !== "trash" && folder !== "sent") return;
-    if (inbox.isLoading || syncFolder.isPending) return;
+    // The inbox is kept fresh by the poll; everything else is pulled on open
+    // (throttled per folder so re-entering can't spam Gmail).
+    if (folder === "inbox" || inbox.isLoading) return;
     const last = folderSyncAt.current.get(folder) ?? 0;
     if (Date.now() - last < FOLDER_SYNC_THROTTLE_MS) return;
     const target = folder;
-    folderSyncAt.current.set(target, Date.now());
-    // Drop the stamp on failure so the folder re-syncs on its next open.
-    syncFolder.mutate(
-      { folder: target },
-      { onError: () => folderSyncAt.current.delete(target) },
-    );
-  }, [folder, inbox.isLoading, syncFolder]);
+    if (
+      target === "spam" ||
+      target === "trash" ||
+      target === "sent" ||
+      target === "starred"
+    ) {
+      // Label-backed folders pull directly. (Drop the stamp on failure so the
+      // folder re-syncs on its next open.)
+      if (syncFolder.isPending) return;
+      folderSyncAt.current.set(target, Date.now());
+      syncFolder.mutate(
+        { folder: target },
+        { onError: () => folderSyncAt.current.delete(target) },
+      );
+    } else if (target === "archived") {
+      // Archive has no Gmail label and messages.list has no `q`, so deep-page
+      // All Mail — syncMore backfills archived — to fill the view on OPEN, not
+      // only on scroll.
+      if (!canSyncMore || syncMore.isPending) return;
+      folderSyncAt.current.set(target, Date.now());
+      syncMore.mutate();
+    }
+  }, [folder, inbox.isLoading, syncFolder, syncMore, canSyncMore]);
 
   // Infinite scroll: reveal more of the stable list as the sentinel nears,
   // then deep-sync the cache (inbox only) once the window is exhausted.
@@ -1763,13 +1780,31 @@ export function GmailPanel({
               data-tip="Refresh from Gmail"
               data-tip-pos="down"
               aria-label="Refresh from Gmail"
-              data-spinning={refreshInbox.isPending || syncFolder.isPending}
-              onClick={() =>
-                folder === "spam" || folder === "trash" || folder === "sent"
-                  ? syncFolder.mutate({ folder })
-                  : refreshInbox.mutate()
+              data-spinning={
+                refreshInbox.isPending ||
+                syncFolder.isPending ||
+                syncMore.isPending
               }
-              disabled={refreshInbox.isPending || syncFolder.isPending}
+              onClick={() => {
+                if (
+                  folder === "spam" ||
+                  folder === "trash" ||
+                  folder === "sent" ||
+                  folder === "starred"
+                ) {
+                  syncFolder.mutate({ folder });
+                } else if (folder === "archived") {
+                  // Pull another page of older mail (backfills archived).
+                  syncMore.mutate();
+                } else {
+                  refreshInbox.mutate();
+                }
+              }}
+              disabled={
+                refreshInbox.isPending ||
+                syncFolder.isPending ||
+                syncMore.isPending
+              }
             >
               <RefreshIcon size={15} />
             </button>

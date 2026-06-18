@@ -642,21 +642,24 @@ export const gmailRouter = createTRPCRouter({
   // Spam, trash and sent aren't part of the normal inbox sync; pull them on
   // demand across every account when those folders are opened.
   syncFolder: authedProcedure
-    .input(z.object({ folder: z.enum(["spam", "trash", "sent"]) }))
+    .input(z.object({ folder: z.enum(["spam", "trash", "sent", "starred"]) }))
     .mutation(async ({ input }) => {
       const label =
         input.folder === "spam"
           ? "SPAM"
           : input.folder === "trash"
             ? "TRASH"
-            : "SENT";
+            : input.folder === "sent"
+              ? "SENT"
+              : "STARRED";
       const clients = await getAccountClients();
       let synced = 0;
       await forEachAccount(clients, async (c) => {
         const result = await c.client.gmail.api.messages.list({
-          maxResults: 30,
+          maxResults: input.folder === "starred" ? 50 : 30,
           labelIds: [label],
-          includeSpamTrash: input.folder !== "sent",
+          includeSpamTrash:
+            input.folder === "spam" || input.folder === "trash",
         });
         const ids = messageIds(result);
         await hydrateMessages(c.client, ids);
