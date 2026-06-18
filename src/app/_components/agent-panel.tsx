@@ -130,8 +130,9 @@ function AgentText({ text }: { text: string }) {
   let ol: string[] = [];
   let quote: string[] = [];
   // Defense: the model is told never to emit code, but if it slips, swallow the
-  // whole fenced block so run_script source can never reach the DOM.
-  let inFence = false;
+  // whole fenced block (``` or ~~~) so run_script source can never reach the DOM.
+  // Track the opening marker so a ``` block isn't closed by a stray ~~~.
+  let fence: string | null = null;
 
   const flush = (key: number) => {
     if (ul.length > 0) {
@@ -168,12 +169,18 @@ function AgentText({ text }: { text: string }) {
 
   const lines = text.split("\n");
   lines.forEach((line, i) => {
-    if (/^\s*```/.test(line)) {
-      if (!inFence) flush(i); // close any open list/quote before swallowing
-      inFence = !inFence;
-      return; // never render the fence marker itself
+    const fenceMatch = /^\s*(```|~~~)/.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (fence === null) {
+        flush(i); // close any open list/quote before swallowing
+        fence = marker ?? "```";
+      } else if (fence === marker) {
+        fence = null; // matching close
+      }
+      return; // never render a fence marker (or a mismatched one inside a fence)
     }
-    if (inFence) return; // swallow every line inside a code fence
+    if (fence !== null) return; // swallow every line inside a code fence
     const hyphen = /^\s*[-*]\s+(.*)$/.exec(line);
     const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
     const quoted = /^\s*>\s?(.*)$/.exec(line);
@@ -365,12 +372,16 @@ export function AgentPanel({ account }: { account: string }) {
   // Show a thinking skeleton whenever the agent is busy but no text is
   // visibly streaming: before the first token, and between tool steps.
   const last = messages[messages.length - 1];
-  const lastPart = last?.parts[last.parts.length - 1];
+  // Ignore trailing data parts (sources/suggestions/card) so the answer being
+  // followed by a citations block doesn't re-trip the "working" skeleton.
+  const lastContentPart = last?.parts
+    .filter((p) => p.type === "text" || p.type.startsWith("tool-"))
+    .at(-1);
   const thinking =
     busy &&
     (!last ||
       last.role === "user" ||
-      (last.role === "assistant" && lastPart?.type !== "text"));
+      (last.role === "assistant" && lastContentPart?.type !== "text"));
 
   function submit(text: string) {
     const trimmed = text.trim();

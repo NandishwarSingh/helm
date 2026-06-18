@@ -7,14 +7,10 @@ import { openrouter, TRIAGE_MODEL } from "@/server/lib/openrouter";
 /** A tappable follow-up chip: short `label`, fuller `prompt` sent on tap. */
 export type Suggestion = { label: string; prompt: string };
 
-const SCHEMA = z
-  .array(
-    z.object({
-      label: z.string().min(1).max(48),
-      prompt: z.string().min(1).max(160),
-    }),
-  )
-  .max(4);
+const ITEM = z.object({
+  label: z.string().min(1).max(48),
+  prompt: z.string().min(1).max(160),
+});
 
 const SYSTEM = `You propose up to 3 SHORT follow-up actions the user might want next in a Gmail + Google Calendar assistant, based on the conversation so far.
 
@@ -25,18 +21,29 @@ Output ONLY a JSON array of {"label","prompt"} objects — no prose, no code fen
 - Never repeat the user's last request. Never generic filler ("Tell me more", "Anything else?").
 - If nothing genuinely useful comes to mind, output exactly [].`;
 
-/** Tolerant parse: slice the first JSON array out of the text, validate, else []. */
-function parse(text: string): Suggestion[] {
+/**
+ * Tolerant parse: slice the first JSON array out of the text, then keep the
+ * items that validate (skipping bad ones rather than failing the whole array),
+ * capped at 4. Returns [] on non-JSON / no array. Exported for unit tests.
+ */
+export function parseSuggestions(text: string): Suggestion[] {
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
   if (start < 0 || end <= start) return [];
+  let raw: unknown;
   try {
-    const raw: unknown = JSON.parse(text.slice(start, end + 1));
-    const result = SCHEMA.safeParse(raw);
-    return result.success ? result.data : [];
+    raw = JSON.parse(text.slice(start, end + 1));
   } catch {
     return [];
   }
+  if (!Array.isArray(raw)) return [];
+  const out: Suggestion[] = [];
+  for (const item of raw) {
+    const parsed = ITEM.safeParse(item);
+    if (parsed.success) out.push(parsed.data);
+    if (out.length >= 4) break;
+  }
+  return out;
 }
 
 /**
@@ -55,7 +62,7 @@ export async function suggestFollowups(
       system: SYSTEM,
       messages: messages.slice(-6),
     });
-    return parse(text);
+    return parseSuggestions(text);
   } catch {
     return [];
   }

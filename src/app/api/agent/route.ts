@@ -18,7 +18,7 @@ import {
 } from "@/server/lib/agent-action";
 import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
 import { createSourceRegistry } from "@/server/lib/agent-sources";
-import { suggestFollowups } from "@/server/lib/agent-suggest";
+import { suggestFollowups, type Suggestion } from "@/server/lib/agent-suggest";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { rateLimit } from "@/server/lib/rate-limit";
@@ -373,6 +373,10 @@ export async function POST(request: NextRequest) {
   // signed confirmation card the user can Confirm or Deny. The action is captured
   // in `mcp.gate.proposed` by the sandbox and is NEVER executed in this loop;
   // only a Confirm turn replays it (above).
+  // Salt the data-part ids per turn so each assistant message gets its OWN
+  // sources/suggestions slot — parts reconcile by (type,id), so a fixed id would
+  // bind a later turn's chips onto an earlier reply.
+  const turnSalt = recent.at(-1)?.id ?? Date.now().toString(36);
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
       writer.merge(result.toUIMessageStream());
@@ -382,7 +386,7 @@ export async function POST(request: NextRequest) {
       if (cited.length > 0) {
         writer.write({
           type: "data-sources",
-          id: "sources",
+          id: `sources-${turnSalt}`,
           data: { sources: cited },
         });
       }
@@ -420,18 +424,25 @@ export async function POST(request: NextRequest) {
         });
       } else {
         // No action pending — offer up to 4 follow-up chips. Generated AFTER the
-        // answer has streamed, so the latency is invisible; fully best-effort.
+        // answer streams, fed THIS turn's tool messages (so chips reference what
+        // was actually read), time-boxed so the response can't hang (a held-open
+        // stream keeps the input disabled), and skipped for trivial answers.
         const finalText = await result.text;
-        const suggestions = await suggestFollowups([
-          ...modelMessages,
-          { role: "assistant", content: finalText },
-        ]);
-        if (suggestions.length > 0) {
-          writer.write({
-            type: "data-suggestions",
-            id: "suggest",
-            data: suggestions,
-          });
+        if (finalText.trim().length >= 40) {
+          const response = await result.response;
+          const suggestions = await Promise.race([
+            suggestFollowups([...modelMessages, ...response.messages]),
+            new Promise<Suggestion[]>((resolve) =>
+              setTimeout(() => resolve([]), 800),
+            ),
+          ]);
+          if (suggestions.length > 0) {
+            writer.write({
+              type: "data-suggestions",
+              id: `suggest-${turnSalt}`,
+              data: suggestions,
+            });
+          }
         }
       }
     },
