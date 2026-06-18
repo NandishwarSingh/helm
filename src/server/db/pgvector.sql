@@ -17,3 +17,19 @@ CREATE TABLE IF NOT EXISTS "mail_embeddings" (
 -- Cosine KNN index (HNSW). 1536 dims stays under pgvector's 2000-dim cap.
 CREATE INDEX IF NOT EXISTS "mail_embeddings_hnsw_idx"
   ON "mail_embeddings" USING hnsw ("embedding" vector_cosine_ops);
+
+-- Document (attachment) embeddings: filename + sender + subject + extracted
+-- text. Same shape + justification as mail_embeddings — raw SQL, outside
+-- drizzle's tablesFilter, applied by `db:vector`. attachment_key = `${messageId}:${attachmentId}`.
+CREATE TABLE IF NOT EXISTS "doc_embeddings" (
+  "tenant_id" text NOT NULL,
+  "account_id" text NOT NULL,
+  "attachment_key" text NOT NULL,
+  "content_hash" text NOT NULL,
+  "embedding" vector(1536) NOT NULL,
+  "updated_at" timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY ("tenant_id", "attachment_key")
+);
+
+CREATE INDEX IF NOT EXISTS "doc_embeddings_hnsw_idx"
+  ON "doc_embeddings" USING hnsw ("embedding" vector_cosine_ops);

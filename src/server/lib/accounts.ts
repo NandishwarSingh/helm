@@ -16,6 +16,7 @@ import {
 } from "@/server/db/schema";
 import { stopCalendarWatch } from "@/server/lib/calendar-watch";
 import { MAX_ACCOUNTS } from "@/server/lib/concurrency";
+import { deleteTenantDocuments } from "@/server/lib/documents";
 import { getGmailEmail } from "@/server/lib/gmail-watch";
 import { issueUserCookie, setActiveAccountCookie } from "@/server/lib/session";
 
@@ -96,6 +97,8 @@ export async function teardownTenant(
   await stopCalendarWatch(tenantId);
   // mail_embeddings is a raw (non-Drizzle) table.
   await conn`delete from mail_embeddings where tenant_id = ${tenantId}`;
+  // Documents (attachments) + their embeddings, else downloads route to a dead tenant.
+  await deleteTenantDocuments(tenantId);
 }
 
 /**

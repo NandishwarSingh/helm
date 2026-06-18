@@ -1,4 +1,4 @@
-import { pgTable, primaryKey, index, text, jsonb, timestamp, uniqueIndex, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, primaryKey, index, text, jsonb, timestamp, uniqueIndex, boolean, integer } from 'drizzle-orm/pg-core';
 
 export const corsairIntegrations = pgTable('corsair_integrations', {
     id: text('id').primaryKey(),
@@ -142,4 +142,37 @@ export const subscriptions = pgTable('subscriptions', {
 }, (table) => [
     // Webhooks look the row up by the Razorpay subscription id.
     index('subscriptions_rzp_idx').on(table.razorpaySubscriptionId),
+]);
+
+// ── Documents (email attachments) ────────────────────────────────────────────
+// One row per attachment, keyed (tenantId, messageId, attachmentId) — tenantId
+// is a single Corsair account here, so that's the per-account natural key;
+// accountId is carried for the all-accounts aggregate + badge. category is a
+// coarse bucket derived at scan time. Bytes are NEVER stored (fetched live on
+// download/preview). pinned floats a doc to the top and SURVIVES re-scan (keyed
+// on attachment identity; the scan upsert omits pinned). contentHash drives the
+// embedding refresh, exactly like mail_embeddings.content_hash.
+export const documents = pgTable('documents', {
+    tenantId: text('tenant_id').notNull(),
+    accountId: text('account_id').notNull(),
+    messageId: text('message_id').notNull(),
+    attachmentId: text('attachment_id').notNull(),
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    category: text('category').notNull(),
+    sizeBytes: integer('size_bytes').notNull().default(0),
+    sender: text('sender').notNull().default(''),
+    subject: text('subject').notNull().default(''),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+    contentHash: text('content_hash').notNull(),
+    textExtracted: boolean('text_extracted').notNull().default(false),
+    pinned: boolean('pinned').notNull().default(false),
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }),
+    indexedAt: timestamp('indexed_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+    primaryKey({ columns: [table.tenantId, table.messageId, table.attachmentId] }),
+    index('documents_account_idx').on(table.accountId),
+    index('documents_account_category_idx').on(table.accountId, table.category),
+    index('documents_account_received_idx').on(table.accountId, table.receivedAt),
+    index('documents_tenant_idx').on(table.tenantId),
 ]);

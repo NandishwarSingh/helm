@@ -71,6 +71,60 @@ export function extractBodyFromPayload(payload?: GmailPart): string {
   return "";
 }
 
+type AttachmentPart = {
+  partId?: string;
+  filename?: string;
+  mimeType?: string;
+  headers?: { name?: string; value?: string }[];
+  body?: { attachmentId?: string; size?: number };
+  parts?: AttachmentPart[];
+};
+
+/** A real (non-inline) attachment located in a message payload. */
+export type RawAttachment = {
+  partId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  attachmentId: string;
+  inline: boolean;
+};
+
+/**
+ * Recurse the payload collecting real attachment parts (a filename + a
+ * body.attachmentId). Inline body parts have no attachmentId → skipped. A part
+ * marked Content-Disposition: inline, or an image/* with a Content-ID (cid:
+ * signature graphics), is flagged `inline` so the Documents grid can hide it.
+ */
+export function extractAttachments(
+  payload?: AttachmentPart,
+  out: RawAttachment[] = [],
+): RawAttachment[] {
+  if (!payload) return out;
+  if (payload.filename && payload.body?.attachmentId) {
+    const disp =
+      payload.headers
+        ?.find((h) => h.name?.toLowerCase() === "content-disposition")
+        ?.value?.toLowerCase() ?? "";
+    const hasCid = payload.headers?.some(
+      (h) => h.name?.toLowerCase() === "content-id",
+    );
+    const inline =
+      disp.startsWith("inline") ||
+      (Boolean(hasCid) && (payload.mimeType ?? "").startsWith("image/"));
+    out.push({
+      partId: payload.partId ?? "",
+      filename: payload.filename,
+      mimeType: payload.mimeType ?? "application/octet-stream",
+      sizeBytes: payload.body.size ?? 0,
+      attachmentId: payload.body.attachmentId,
+      inline,
+    });
+  }
+  for (const part of payload.parts ?? []) extractAttachments(part, out);
+  return out;
+}
+
 /** Returns the rich text/html part of a message, if present. */
 export function extractHtmlFromPayload(payload?: GmailPart): string {
   if (!payload) return "";

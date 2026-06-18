@@ -25,5 +25,6 @@ export default {
     "users",
     "user_accounts",
     "subscriptions",
+    "documents",
   ],
 } satisfies Config;

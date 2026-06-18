@@ -2,6 +2,7 @@ import { accountsRouter } from "@/server/api/routers/accounts";
 import { billingRouter } from "@/server/api/routers/billing";
 import { calendarRouter } from "@/server/api/routers/calendar";
 import { connectionRouter } from "@/server/api/routers/connection";
+import { documentsRouter } from "@/server/api/routers/documents";
 import { gmailRouter } from "@/server/api/routers/gmail";
 import { triageRouter } from "@/server/api/routers/triage";
 import { createCallerFactory, createTRPCRouter } from "@/server/api/trpc";
@@ -17,6 +18,7 @@ export const appRouter = createTRPCRouter({
   triage: triageRouter,
   accounts: accountsRouter,
   billing: billingRouter,
+  documents: documentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

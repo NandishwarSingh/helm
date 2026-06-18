@@ -14,6 +14,7 @@ import { corsair } from "@/server/corsair";
 import { db } from "@/server/db";
 import { mailSync } from "@/server/db/schema";
 import { purgeCachedEntity } from "@/server/lib/cache";
+import { deleteMessageDocuments } from "@/server/lib/documents";
 import {
   forEachAccount,
   mapLimit,
@@ -145,7 +146,7 @@ async function setSyncCursor(tenantId: string, token: string | null) {
  * session's accounts when "all"/omitted (the unified inbox). A non-owned id
  * resolves to no clients → an empty result, never another user's mail.
  */
-async function readClients(account?: string): Promise<AccountClient[]> {
+export async function readClients(account?: string): Promise<AccountClient[]> {
   const all = await getAccountClients();
   if (!account || account === "all") return all;
   return all.filter((c) => c.accountId === account);
@@ -156,7 +157,7 @@ async function readClients(account?: string): Promise<AccountClient[]> {
  * account it's ownership-checked via resolveAccountTenant; without one it
  * targets the session's active account (back-compat for the single-account UI).
  */
-async function opAccount(
+export async function opAccount(
   account?: string,
   opts: { requireAccount?: boolean } = {},
 ): Promise<{ tenant: Tenant; tenantId: string }> {
@@ -536,6 +537,7 @@ export const gmailRouter = createTRPCRouter({
         // Best-effort: drop the orphaned embedding, but never let a failed
         // index cleanup surface as a failed delete.
         await deleteMessageEmbeddings(tenantId, [input.id]).catch(() => undefined);
+        await deleteMessageDocuments(tenantId, [input.id]).catch(() => undefined);
         notifyTenant(tenantId, "mail");
         return { ok: true };
       }
@@ -635,6 +637,7 @@ export const gmailRouter = createTRPCRouter({
       // Best-effort: clear the deleted messages' embeddings so search can't
       // return rows that no longer exist; a failure here never breaks the delete.
       await deleteMessageEmbeddings(tenantId, input.ids).catch(() => undefined);
+      await deleteMessageDocuments(tenantId, input.ids).catch(() => undefined);
       notifyTenant(tenantId, "mail");
       return { ok: true, count: input.ids.length };
     }),

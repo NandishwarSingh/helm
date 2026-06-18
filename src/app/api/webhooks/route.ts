@@ -7,6 +7,7 @@ import { after, NextResponse } from "next/server";
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
 import { calendarTenantForChannel } from "@/server/lib/calendar-watch";
+import { scanTenantDocuments } from "@/server/lib/documents";
 import { gmailPushEmail, tenantsForEmail } from "@/server/lib/gmail-watch";
 import { syncNewMailForTenant } from "@/server/lib/mail-sync";
 import { clientIp, rateLimit } from "@/server/lib/rate-limit";
@@ -61,6 +62,11 @@ function syncAndNotify(tenantId: string): void {
       console.log("[webhook] synced", synced, "msgs -> notify", tenantId);
     }
     notifyTenant(tenantId);
+    // Index any new attachments off the SAME coalesced sync, then notify the
+    // Documents view. Hash-deduped + cap-bounded, so a redundant scan is near-free.
+    void scanTenantDocuments(tenantId).finally(() =>
+      notifyTenant(tenantId, "documents"),
+    );
   });
 }
 

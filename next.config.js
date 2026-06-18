@@ -65,7 +65,9 @@ const config = {
   // isolated-vm is a native addon (.node) that powers the run_script sandbox.
   // It must never be bundled by webpack — require it at runtime so Next's file
   // tracing copies the compiled binary into the standalone output instead.
-  serverExternalPackages: ["isolated-vm"],
+  // unpdf/mammoth/xlsx parse attachment bytes server-side for Documents text
+  // extraction — keep them out of the client/edge bundle.
+  serverExternalPackages: ["isolated-vm", "unpdf", "mammoth", "xlsx"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
