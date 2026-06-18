@@ -274,7 +274,7 @@ function agentChat(): Chat<UIMessage> {
 const resolvedStore: Record<string, CardState> = {};
 let inputStore = "";
 
-export function AgentPanel() {
+export function AgentPanel({ account }: { account: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -338,7 +338,10 @@ export function AgentPanel() {
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
-    void sendMessage({ text: trimmed });
+    // Tell the server which mailbox(es) the user is looking at: a specific
+    // account id, or "all" so the agent fans out across every connected inbox
+    // instead of silently defaulting to one.
+    void sendMessage({ text: trimmed }, { body: { account } });
     setInput("");
   }
 

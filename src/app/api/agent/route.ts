@@ -91,16 +91,25 @@ function consumeConfirmOnce(token: string, nowMs: number): boolean {
   return true;
 }
 
-function systemPrompt(accounts: string[]) {
+function systemPrompt(
+  accounts: string[],
+  opts: { allMode: boolean; scopeEmail?: string },
+) {
   const now = new Date();
-  const multiAccount =
-    accounts.length > 1
-      ? `
+  const focus = opts.scopeEmail ?? accounts[0];
+  const other = accounts.find((e) => e !== focus) ?? accounts[0];
+  let multiAccount = "";
+  if (accounts.length > 1 && opts.allMode) {
+    multiAccount = `
+# Your connected accounts — ALL-ACCOUNTS MODE
+The user has ${accounts.length} mailboxes connected (${accounts.join(", ")}) and is RIGHT NOW viewing ALL of them together. Unless they explicitly name one mailbox, you MUST operate across EVERY account, not just one. A bare \`corsair.gmail.*\` / \`corsair.googlecalendar.*\` call hits only the default mailbox — in this mode that is almost never what they want. Instead, in run_script, loop \`corsair.accounts\` and run the SAME operations via \`corsair.account(email)\` for each, then MERGE the results and TAG each item with its account email (e.g. account: email). \`corsair.accounts\` returns every connected email. A staged write runs on whichever account you called it on — pick the right one.
+`;
+  } else if (accounts.length > 1) {
+    multiAccount = `
 # Your connected accounts
-This user has ${accounts.length} mailboxes connected: ${accounts.join(", ")}.
-By default \`corsair.gmail.*\` and \`corsair.googlecalendar.*\` act on the ACTIVE account (${accounts[0]}). To read or act on a SPECIFIC mailbox, scope the SAME operations onto it: \`corsair.account("${accounts[1] ?? accounts[0]}").gmail.db.messages.list({ limit: 20, offset: 0 })\`. \`corsair.accounts\` returns the list of connected emails. When the user says "all my accounts" / "every inbox", loop \`corsair.accounts\` and use \`corsair.account(email)\` for each (tag each result with its email); when they name or imply one mailbox, target just that one. A staged write runs on whichever account you called it on — so call it on the right one.
-`
-      : "";
+The user has ${accounts.length} mailboxes connected (${accounts.join(", ")}) and is currently FOCUSED on ${focus}. \`corsair.gmail.*\` and \`corsair.googlecalendar.*\` already act on ${focus} — use them directly. Only touch a different mailbox if the user explicitly names it, via \`corsair.account("${other}")\`. \`corsair.accounts\` lists every connected email. A staged write runs on whichever account you called it on.
+`;
+  }
   return `You are the Helm agent: a fast, precise assistant inside the user's Gmail and Google Calendar command center. You act on their real account(s) through the Corsair MCP server.
 
 Current date and time: ${now.toISOString()} (UTC). The user's local timezone is Asia/Kolkata (+05:30) — when they say "tomorrow 9am" they mean their local time; produce ISO datetimes with an explicit +05:30 offset unless they specify otherwise.
@@ -123,6 +132,14 @@ Latest inbox mail (cached):
   return rows.filter(m => (m.data.labelIds||[]).includes("INBOX"))
     .sort((a,b)=>Number(b.data.internalDate||0)-Number(a.data.internalDate||0)).slice(0,10)
     .map(m=>({ id:m.entity_id, from:m.data.from, subject:m.data.subject, unread:(m.data.labelIds||[]).includes("UNREAD") }));
+
+All inboxes at once (ALL-ACCOUNTS MODE — fan out across EVERY connected mailbox, tag each by account):
+  const out = [];
+  for (const email of corsair.accounts) {
+    const rows = await corsair.account(email).gmail.db.messages.list({ limit: 100, offset: 0 });
+    for (const m of rows) if ((m.data.labelIds||[]).includes("INBOX")) out.push({ account: email, id: m.entity_id, from: m.data.from, subject: m.data.subject, ts: Number(m.data.internalDate||0), unread: (m.data.labelIds||[]).includes("UNREAD") });
+  }
+  return out.sort((a,b)=>b.ts-a.ts).slice(0,10);
 
 Mail in a date range — "this week", "today", "since Monday" (internalDate is epoch MILLISECONDS as a string, NOT ISO; gmail.db has NO date operators, so list then filter in JS on Number(internalDate)):
   const sinceMs = Date.now() - 7*24*60*60*1000;  // last 7 days — adjust the window to the request
@@ -162,7 +179,7 @@ Create an event and invite people — CALL this to STAGE it for confirmation (re
 
 # Rules
 - Plan the whole task first, then act. Prefer ONE run_script that does everything over many small calls — batch reads/writes and use Promise.all to fan out across accounts or messages in a single script. Tool budget: about 6 calls per request; never repeat an identical call.
-- Do NOT narrate between tool calls. Call tools silently; all prose belongs in ONE final answer after the work is done.
+- Open with ONE very short line saying what you're about to do (e.g. "Checking both inboxes…" or "Searching your mail…") so the user sees instant progress — then call tools silently. Don't narrate each step; put the substantive result in ONE final answer after the work is done.
 - In run_script, ALWAYS filter and map to the few fields you need and cap lists at about 10 items — never return whole API responses.
 - To locate mail prefer the cached \`gmail.db\` search; use \`gmail.api\` for reading one message in full and for every write.
 - Confirmation: sending mail, sending invites, trashing or deleting mail, and creating, updating or deleting calendar events are STAGED for the user's approval, not run immediately. To do one, CALL the operation in run_script with the exact final details (recipient, subject and the full body; or the event title, time and attendees). The sandbox stages it and returns CONFIRM_REQUIRED, and the user gets a confirmation card with Confirm and Deny — that return is EXPECTED and means it staged successfully, so NEVER retry it or call it again. After staging, write ONE short sentence naming exactly what you staged (e.g. "Staged a reply to Priya about the Q3 review — confirm to send."). Saving a draft and all reads are never staged, so prefer a draft when the user only wants to prepare something. Stage at most ONE action per reply; if more are needed, stage one and say what remains. Default meeting length is 30 minutes when only a start time is given.
@@ -192,6 +209,8 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
     messages?: UIMessage[];
     confirm?: string;
+    // The mailbox the UI is showing: a specific account id, or "all".
+    account?: string;
   } | null;
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
     return NextResponse.json({ error: "No messages." }, { status: 400 });
@@ -262,11 +281,22 @@ export async function POST(request: NextRequest) {
   // via corsair.account("email"), and they're listed in the prompt.
   const accounts = await getAccountClients();
 
+  // Match the agent's scope to what the UI is showing. "all" (or unset) => fan
+  // out across every connected mailbox; a specific account id => resolve it to
+  // its tenant so the agent acts on THAT mailbox (not just the session cookie,
+  // which can lag a just-switched account). Unknown ids fall back to the session.
+  const allMode = !body.account || body.account === "all";
+  const selected = allMode
+    ? undefined
+    : accounts.find((a) => a.accountId === body.account);
+  const scopeTenant = selected?.tenantId ?? tenantId;
+  const scopeEmail = accounts.find((a) => a.tenantId === scopeTenant)?.email;
+
   // Spin up a tenant-scoped Corsair MCP server and bridge it to the AI SDK.
   // Every tool call the model makes now travels the real MCP protocol.
   let mcp: Awaited<ReturnType<typeof createCorsairMcp>>;
   try {
-    mcp = await createCorsairMcp(tenantId, accounts);
+    mcp = await createCorsairMcp(scopeTenant, accounts);
   } catch (error) {
     console.error(
       "corsair mcp init failed:",
@@ -284,7 +314,10 @@ export async function POST(request: NextRequest) {
     // Bounds each step's generation so a single request can't run away on
     // tokens; a run_script snippet plus a recap fits comfortably under this.
     maxOutputTokens: 1500,
-    system: systemPrompt(accounts.map((a) => a.email)),
+    system: systemPrompt(accounts.map((a) => a.email), {
+      allMode,
+      scopeEmail,
+    }),
     messages: await convertToModelMessages(recent),
     tools: mcp.tools,
     // If the client disconnects mid-stream, stop generating and let onAbort tear
@@ -334,9 +367,7 @@ export async function POST(request: NextRequest) {
         // change, and it keeps the card uncluttered).
         const boundAccount =
           proposed.targetAccount ??
-          (accounts.length > 1
-            ? accounts.find((a) => a.tenantId === tenantId)?.email
-            : undefined);
+          (accounts.length > 1 ? scopeEmail : undefined);
         const token = signAction(
           env.AUTH_SECRET,
           {

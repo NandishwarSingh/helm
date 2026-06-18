@@ -621,7 +621,7 @@ export function AppShell() {
                 style={{ height: "100%" }}
               >
                 {view === "agent" ? (
-                  <AgentPanel />
+                  <AgentPanel account={activeAccount} />
                 ) : view === "mail" ? (
                   <GmailPanel
                     view={mailView}
