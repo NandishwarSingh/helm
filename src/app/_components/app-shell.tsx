@@ -40,6 +40,7 @@ import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
 import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
+import { formatAccountEmail } from "@/lib/display";
 import { useFocusTrap } from "@/lib/use-focus-trap";
 import { chordBar, iconMorph, viewSwap } from "@/lib/motion";
 import { api } from "@/trpc/react";
@@ -160,7 +161,6 @@ export function AppShell() {
   useOverlay(createOpen);
   useOverlay(paletteOpen);
   useOverlay(helpOpen);
-  useOverlay(agentDrawerActuallyOpen);
 
   const status = api.connection.status.useQuery();
   const showApp = Boolean(status.data?.gmail ?? status.data?.calendar);
@@ -188,7 +188,7 @@ export function AppShell() {
   // render INSIDE .app, so inerting .app would swallow them too — those rely on
   // their own focus trap + scrim instead. The overlay registry (useOverlay) is
   // a non-reactive counter for key handlers, so we derive this from state.
-  const backgroundInert = paletteOpen || helpOpen || agentDrawerActuallyOpen;
+  const backgroundInert = paletteOpen || helpOpen;
   const setActiveAccountM = api.accounts.setActive.useMutation();
   function pickAccount(id: string) {
     setActiveAccount(id);
@@ -203,8 +203,13 @@ export function AppShell() {
     activeAccount === "all"
       ? multiAccount
         ? "All accounts"
-        : (accountList[0]?.email ?? "Google connected")
-      : (accountList.find((a) => a.id === activeAccount)?.email ?? "Account");
+        : accountList[0]
+          ? formatAccountEmail(accountList[0].email)
+          : "Google connected"
+      : (() => {
+          const active = accountList.find((a) => a.id === activeAccount);
+          return active ? formatAccountEmail(active.email) : "Account";
+        })();
   const activeDot =
     activeAccount === "all"
       ? "var(--color-accent)"
@@ -402,6 +407,7 @@ export function AppShell() {
     <MotionConfig reducedMotion="user">
       <div
         className="app"
+        data-agent-drawer={agentDrawerActuallyOpen}
         inert={backgroundInert}
         aria-hidden={backgroundInert || undefined}
       >
@@ -522,69 +528,72 @@ export function AppShell() {
                         <span className="acct-opt-email">All accounts</span>
                       </button>
                     )}
-                    {accountList.map((a) => (
-                      <div
-                        key={a.id}
-                        className="acct-row"
-                        data-on={activeAccount === a.id}
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="acct-opt acct-pick"
-                          onClick={() => pickAccount(a.id)}
-                          title={a.email}
+                    {accountList.map((a) => {
+                      const displayEmail = formatAccountEmail(a.email);
+                      return (
+                        <div
+                          key={a.id}
+                          className="acct-row"
+                          data-on={activeAccount === a.id}
                         >
-                          <span
-                            className="acct-dot"
-                            style={{
-                              background: a.color ?? "var(--color-accent)",
-                            }}
-                          />
-                          <span className="acct-opt-email">{a.email}</span>
-                        </button>
-                        {a.isPrimary ? (
-                          <span className="acct-tag">primary</span>
-                        ) : (
-                          multiAccount && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="acct-mini"
-                              title="Make primary"
-                              aria-label={`Make ${a.email} primary`}
-                              onClick={() =>
-                                setPrimaryM.mutate({ accountId: a.id })
-                              }
-                            >
-                              <StarIcon size={12} />
-                            </button>
-                          )
-                        )}
-                        {multiAccount && (
                           <button
                             type="button"
                             role="menuitem"
-                            className="acct-mini acct-remove"
-                            title="Remove account"
-                            aria-label={`Remove ${a.email}`}
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `Remove ${a.email}? It will be disconnected and its cached data deleted.`,
-                                )
-                              ) {
-                                if (activeAccount === a.id) setActiveAccount("all");
-                                removeM.mutate({ accountId: a.id });
-                                setAcctMenuOpen(false);
-                              }
-                            }}
+                            className="acct-opt acct-pick"
+                            onClick={() => pickAccount(a.id)}
+                            title={displayEmail}
                           >
-                            <TrashIcon size={12} />
+                            <span
+                              className="acct-dot"
+                              style={{
+                                background: a.color ?? "var(--color-accent)",
+                              }}
+                            />
+                            <span className="acct-opt-email">{displayEmail}</span>
                           </button>
-                        )}
-                      </div>
-                    ))}
+                          {a.isPrimary ? (
+                            <span className="acct-tag">primary</span>
+                          ) : (
+                            multiAccount && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="acct-mini"
+                                title="Make primary"
+                                aria-label={`Make ${displayEmail} primary`}
+                                onClick={() =>
+                                  setPrimaryM.mutate({ accountId: a.id })
+                                }
+                              >
+                                <StarIcon size={12} />
+                              </button>
+                            )
+                          )}
+                          {multiAccount && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="acct-mini acct-remove"
+                              title="Remove account"
+                              aria-label={`Remove ${displayEmail}`}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Remove ${displayEmail}? It will be disconnected and its cached data deleted.`,
+                                  )
+                                ) {
+                                  if (activeAccount === a.id) setActiveAccount("all");
+                                  removeM.mutate({ accountId: a.id });
+                                  setAcctMenuOpen(false);
+                                }
+                              }}
+                            >
+                              <TrashIcon size={12} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                     <form
                       action="/api/oauth/start"
                       method="post"
@@ -742,6 +751,11 @@ export function AppShell() {
             </AnimatePresence>
           </main>
         </div>
+        <AgentDrawer
+          open={agentDrawerActuallyOpen}
+          account={activeAccount}
+          onClose={() => setAgentDrawerOpen(false)}
+        />
       </div>
 
       <CommandPalette
@@ -758,15 +772,13 @@ export function AppShell() {
         }}
         onHelp={() => setHelpOpen(true)}
         onAddAccount={addAccount}
-        accounts={accountList.map((a) => ({ id: a.id, email: a.email }))}
+        accounts={accountList.map((a) => ({
+          id: a.id,
+          email: formatAccountEmail(a.email),
+        }))}
         onSwitchAccount={pickAccount}
       />
       <ShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
-      <AgentDrawer
-        open={agentDrawerActuallyOpen}
-        account={activeAccount}
-        onClose={() => setAgentDrawerOpen(false)}
-      />
       {firstRun && <FirstSyncVeil onEnter={() => setFirstRun(false)} />}
       <AnimatePresence>
         {chordPending && (

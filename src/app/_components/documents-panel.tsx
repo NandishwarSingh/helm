@@ -14,6 +14,7 @@ import {
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
 import { useAction, useOverlay } from "@/lib/actions";
+import { formatAccountEmail } from "@/lib/display";
 import { drawerRight, listRow, scrim, viewSwap } from "@/lib/motion";
 import { useFocusTrap } from "@/lib/use-focus-trap";
 import { api, type RouterOutputs } from "@/trpc/react";
@@ -55,6 +56,7 @@ const CATEGORY_ORDER = [
   "video",
   "other",
 ] as const;
+const SYNC_TIMEOUT_MS = 120_000;
 
 type GroupBy = "type" | "sender" | "date";
 
@@ -174,7 +176,9 @@ export function DocumentsPanel({ account }: { account: string }) {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [preview, setPreview] = useState<DocItem | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const syncTimeoutRef = useRef<number | null>(null);
 
   // Suppress the app's global key layer (1/2/3/4, g-chord, ⌘J, c, n, /) while a
   // preview is open, so a stray key can't switch views and unmount the preview.
@@ -270,6 +274,44 @@ export function DocumentsPanel({ account }: { account: string }) {
     },
   });
 
+  function clearSyncTimeout() {
+    if (syncTimeoutRef.current === null) return;
+    window.clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = null;
+  }
+
+  const finishSyncRef = useRef(() => undefined as void);
+  finishSyncRef.current = () => {
+    clearSyncTimeout();
+    setSyncing(false);
+    refreshRef.current();
+  };
+
+  function startScan() {
+    if (scan.isPending || syncing) return;
+    setSyncing(true);
+    clearSyncTimeout();
+    scan.mutate(undefined, {
+      onSuccess: () => {
+        syncTimeoutRef.current = window.setTimeout(
+          () => finishSyncRef.current(),
+          SYNC_TIMEOUT_MS,
+        );
+      },
+      onError: () => {
+        clearSyncTimeout();
+        setSyncing(false);
+      },
+    });
+  }
+
+  useEffect(
+    () => () => {
+      clearSyncTimeout();
+    },
+    [],
+  );
+
   // Keep the live-refresh handlers current without re-subscribing the SSE.
   const refreshRef = useRef(() => undefined as void);
   refreshRef.current = () => {
@@ -284,7 +326,8 @@ export function DocumentsPanel({ account }: { account: string }) {
     const source = new EventSource("/api/stream");
     source.addEventListener("changed", (event) => {
       const kind = (event as MessageEvent<string>).data;
-      if (kind === "documents" || kind === "mail") refreshRef.current();
+      if (kind === "documents") finishSyncRef.current();
+      else if (kind === "mail") refreshRef.current();
     });
     return () => source.close();
   }, []);
@@ -292,7 +335,7 @@ export function DocumentsPanel({ account }: { account: string }) {
   // Palette / global shortcuts: "/" focuses search, Refresh triggers a scan.
   useAction("focus-search", () => searchRef.current?.focus());
   useAction("refresh", () => {
-    if (!scan.isPending) scan.mutate();
+    startScan();
   });
 
   function togglePin(doc: DocItem) {
@@ -375,15 +418,21 @@ export function DocumentsPanel({ account }: { account: string }) {
         <button
           type="button"
           className="icon-btn"
-          onClick={() => scan.mutate()}
-          data-spinning={scan.isPending}
-          disabled={scan.isPending}
+          onClick={startScan}
+          data-spinning={scan.isPending || syncing}
+          disabled={scan.isPending || syncing}
           aria-label="Scan for new documents"
           title="Scan mail for new attachments"
         >
           <RefreshIcon size={16} />
         </button>
       </div>
+
+      {syncing && (
+        <div className="docs-syncbar" role="status" aria-live="polite">
+          <span>Syncing mail attachments</span>
+        </div>
+      )}
 
       <div className="docs-chips" role="group" aria-label="Filter by type">
         <button
@@ -430,10 +479,10 @@ export function DocumentsPanel({ account }: { account: string }) {
               <button
                 type="button"
                 className="btn"
-                onClick={() => scan.mutate()}
-                disabled={scan.isPending}
+                onClick={startScan}
+                disabled={scan.isPending || syncing}
               >
-                {scan.isPending ? "Scanning…" : "Scan now"}
+                {scan.isPending || syncing ? "Scanning…" : "Scan now"}
               </button>
             )}
           </div>
@@ -481,7 +530,7 @@ export function DocumentsPanel({ account }: { account: string }) {
                         <span
                           className="row-acct"
                           style={{ background: accountColor(doc.accountId) }}
-                          title={doc.accountEmail}
+                          title={formatAccountEmail(doc.accountEmail)}
                         />
                       )}
                       {doc.sizeBytes > 0 && (

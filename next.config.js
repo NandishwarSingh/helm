@@ -54,6 +54,26 @@ const securityHeaders = [
   },
 ];
 
+const documentPreviewCsp = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'self'",
+  "object-src 'none'",
+  "script-src 'none'",
+  "style-src 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "media-src 'self' data:",
+].join("; ");
+
+const documentPreviewHeaders = [
+  { key: "Content-Security-Policy", value: documentPreviewCsp },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  { key: "Referrer-Policy", value: "no-referrer" },
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+];
+
 /** @type {import("next").NextConfig} */
 const config = {
   // Minimal self-contained server (server.js + traced deps) for a small Docker
@@ -69,7 +89,10 @@ const config = {
   // extraction — keep them out of the client/edge bundle.
   serverExternalPackages: ["isolated-vm", "unpdf", "mammoth", "xlsx"],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      { source: "/api/documents/:path*", headers: documentPreviewHeaders },
+    ];
   },
 };
 

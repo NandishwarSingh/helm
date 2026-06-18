@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { AgentPanel } from "@/app/_components/agent-panel";
 import { CloseIcon } from "@/components/icons";
-import { useFocusTrap } from "@/lib/use-focus-trap";
-import { drawerRight, scrim } from "@/lib/motion";
+import { drawerRight } from "@/lib/motion";
 
 /**
  * The Agent as a right-side slide-over, usable from any view without leaving the
@@ -24,9 +23,6 @@ export function AgentDrawer({
   account: string;
   onClose: () => void;
 }) {
-  const ref = useRef<HTMLElement>(null);
-  useFocusTrap(ref, open);
-
   useEffect(() => {
     if (!open) return;
     function onKey(event: KeyboardEvent) {
@@ -42,42 +38,30 @@ export function AgentDrawer({
   return (
     <AnimatePresence>
       {open && (
-        <>
-          <motion.div
-            className="scrim"
-            variants={scrim}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            onClick={onClose}
-          />
-          <motion.aside
-            ref={ref}
-            className="agent-drawer"
-            variants={drawerRight}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Agent"
-          >
-            <div className="agent-drawer-head">
-              <span className="agent-drawer-title">Agent</span>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={onClose}
-                aria-label="Close agent"
-              >
-                <CloseIcon size={16} />
-              </button>
-            </div>
-            <div className="agent-drawer-body">
-              <AgentPanel account={account} />
-            </div>
-          </motion.aside>
-        </>
+        <motion.aside
+          className="agent-drawer agent-drawer-push"
+          variants={drawerRight}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          role="complementary"
+          aria-label="Agent"
+        >
+          <div className="agent-drawer-head">
+            <span className="agent-drawer-title">Agent</span>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={onClose}
+              aria-label="Close agent"
+            >
+              <CloseIcon size={16} />
+            </button>
+          </div>
+          <div className="agent-drawer-body">
+            <AgentPanel account={account} />
+          </div>
+        </motion.aside>
       )}
     </AnimatePresence>
   );

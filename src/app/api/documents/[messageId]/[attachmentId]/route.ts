@@ -153,6 +153,9 @@ export async function GET(
       "Cache-Control": "private, no-store",
       // Honour the declared type; don't let the browser sniff bytes into HTML.
       "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy":
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'self'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data:",
+      "X-Frame-Options": "SAMEORIGIN",
       // Private attachment bytes — keep them out of any search index.
       "X-Robots-Tag": "noindex, nofollow",
     },

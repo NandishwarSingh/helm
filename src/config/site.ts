@@ -27,7 +27,7 @@ export const siteConfig = {
   // contact or placeholder address will fail Razorpay activation.
   legal: {
     entity: "Nandishwar Singh", // registered owner / legal name
-    email: "nandubhai222@gmail.com", // working support inbox
+    email: "nandubhai222@Gmail.com", // working support inbox
     phone: "+91 6005886885", // reachable phone number
     address: "Kathua, Jammu and Kashmir 184142, India", // registered address
     jurisdiction: "India", // governing law / courts

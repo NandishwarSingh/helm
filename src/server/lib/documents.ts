@@ -19,11 +19,13 @@ import { messageTimestamp } from "@/server/lib/mail-view";
 import { withRetry } from "@/server/lib/retry";
 import { type AccountClient } from "@/server/lib/tenant";
 
-// Recent cached messages scanned per account; only NEW messages cost a
-// format:"full" get + a bytes fetch (already-cataloged messages are skipped),
-// capped so a backlog drains over scans — steady state is ~0 Gmail calls.
+// Recent cached messages scanned per account by realtime/background updates.
+// Manual scans run deeper via Gmail's message list so the Documents tab can
+// discover older attachments too, while webhook scans stay cheap.
 const SCAN_WINDOW = 400;
 const SCAN_FULL_CAP = 40;
+const DEEP_SCAN_PAGE_SIZE = 100;
+const DEEP_SCAN_PAGE_CAP = 50; // up to 5k attachment-bearing messages per manual scan
 const READ_CONCURRENCY = 6;
 // Don't buffer + parse attachments past this — catalog them, skip text extraction.
 const MAX_EXTRACT_BYTES = 10 * 1024 * 1024;
@@ -74,20 +76,23 @@ type FullMessage = {
 // "Scan now" (scanAllDocuments), and a second tab all funnel through here, so
 // concurrent triggers share one run instead of double-fetching Gmail + embeds.
 const scanInFlight = new Map<string, Promise<{ found: number; embedded: number }>>();
+type ScanOptions = { deep?: boolean };
 
 /** Scan ONE account: catalog its attachments, extract + embed new ones. Coalesced per tenant. */
 export function scanAccountDocuments(
   c: AccountClient,
+  opts: ScanOptions = {},
 ): Promise<{ found: number; embedded: number }> {
   const existing = scanInFlight.get(c.tenantId);
   if (existing) return existing;
-  const work = runAccountScan(c).finally(() => scanInFlight.delete(c.tenantId));
+  const work = runAccountScan(c, opts).finally(() => scanInFlight.delete(c.tenantId));
   scanInFlight.set(c.tenantId, work);
   return work;
 }
 
 async function runAccountScan(
   c: AccountClient,
+  opts: ScanOptions = {},
 ): Promise<{ found: number; embedded: number }> {
   const known = await db
     .select({
@@ -105,12 +110,80 @@ async function runAccountScan(
   // rows are never re-written, preserving textExtracted/pins).
   const scannedMsgs = new Set(known.map((r) => r.messageId));
 
+  const ids = opts.deep ? await deepMessageIds(c) : await cachedMessageIds(c);
+
+  let fulls = 0;
+  const fullCap = opts.deep ? ids.length : SCAN_FULL_CAP;
+  const rows = await mapLimit(
+    ids,
+    READ_CONCURRENCY,
+    async (id): Promise<DocRow[]> => {
+      if (scannedMsgs.has(id)) return []; // already cataloged → no Gmail call, no re-write
+      if (fulls >= fullCap) return [];
+      fulls++;
+      const full = (await withRetry(() =>
+        c.client.gmail.api.messages.get({ id, format: "full" }),
+      ).catch(() => null)) as FullMessage | null;
+      if (!full?.payload) return [];
+      const sender = getHeader(full.payload.headers, "From");
+      const subject = getHeader(full.payload.headers, "Subject");
+      const receivedAt = full.internalDate
+        ? new Date(Number(full.internalDate))
+        : null;
+      const atts = extractAttachments(
+        full.payload as Parameters<typeof extractAttachments>[0],
+      ).filter((a) => !a.inline);
+      return Promise.all(
+        atts.map(async (a): Promise<DocRow> => {
+          const key = `${id}:${a.attachmentId}`;
+          const hash = docHash(a);
+          let text = "";
+          if (
+            have.get(key) !== hash &&
+            a.sizeBytes <= MAX_EXTRACT_BYTES &&
+            isExtractable(a.mimeType, a.filename)
+          ) {
+            const bytes = await fetchAttachmentBytes(c.tenantId, id, a.attachmentId);
+            if (bytes)
+              text = await extractDocText(a.mimeType, a.filename, bytes);
+          }
+          return {
+            tenantId: c.tenantId,
+            accountId: c.accountId,
+            messageId: id,
+            attachmentId: a.attachmentId,
+            filename: a.filename,
+            mimeType: a.mimeType,
+            category: categorize(a.mimeType, a.filename),
+            sizeBytes: a.sizeBytes,
+            sender,
+            subject,
+            receivedAt,
+            contentHash: hash,
+            textExtracted: text.length > 0,
+            embedText: docEmbedText({
+              filename: a.filename,
+              sender,
+              subject,
+              text,
+            }),
+          };
+        }),
+      );
+    },
+  );
+  const flat = rows.flat();
+  await upsertDocuments(flat);
+  const embedded = await upsertDocEmbeddings(c.tenantId, c.accountId, flat);
+  return { found: flat.length, embedded };
+}
+
+async function cachedMessageIds(c: AccountClient): Promise<string[]> {
   const cached = (await Promise.resolve(
     c.client.gmail.db.messages.list({ limit: SCAN_WINDOW, offset: 0 }),
   ).catch(() => [])) as CachedRow[];
   // Corsair's db.messages.list has no ORDER BY, so sort newest-first here; the
-  // cap then targets the most recent unseen messages and older ones drain on
-  // subsequent scans.
+  // cap then targets the most recent unseen messages.
   const seen = new Set<string>();
   const ids: string[] = [];
   for (const r of [...cached].sort(
@@ -123,60 +196,28 @@ async function runAccountScan(
     seen.add(id);
     ids.push(id);
   }
+  return ids;
+}
 
-  let fulls = 0;
-  const rows = await mapLimit(ids, READ_CONCURRENCY, async (id): Promise<DocRow[]> => {
-    if (scannedMsgs.has(id)) return []; // already cataloged → no Gmail call, no re-write
-    if (fulls >= SCAN_FULL_CAP) return [];
-    fulls++;
-    const full = (await withRetry(() =>
-      c.client.gmail.api.messages.get({ id, format: "full" }),
-    ).catch(() => null)) as FullMessage | null;
-    if (!full?.payload) return [];
-    const sender = getHeader(full.payload.headers, "From");
-    const subject = getHeader(full.payload.headers, "Subject");
-    const receivedAt = full.internalDate
-      ? new Date(Number(full.internalDate))
-      : null;
-    const atts = extractAttachments(
-      full.payload as Parameters<typeof extractAttachments>[0],
-    ).filter((a) => !a.inline);
-    return Promise.all(
-      atts.map(async (a): Promise<DocRow> => {
-        const key = `${id}:${a.attachmentId}`;
-        const hash = docHash(a);
-        let text = "";
-        if (
-          have.get(key) !== hash &&
-          a.sizeBytes <= MAX_EXTRACT_BYTES &&
-          isExtractable(a.mimeType, a.filename)
-        ) {
-          const bytes = await fetchAttachmentBytes(c.tenantId, id, a.attachmentId);
-          if (bytes) text = await extractDocText(a.mimeType, a.filename, bytes);
-        }
-        return {
-          tenantId: c.tenantId,
-          accountId: c.accountId,
-          messageId: id,
-          attachmentId: a.attachmentId,
-          filename: a.filename,
-          mimeType: a.mimeType,
-          category: categorize(a.mimeType, a.filename),
-          sizeBytes: a.sizeBytes,
-          sender,
-          subject,
-          receivedAt,
-          contentHash: hash,
-          textExtracted: text.length > 0,
-          embedText: docEmbedText({ filename: a.filename, sender, subject, text }),
-        };
-      }),
-    );
-  });
-  const flat = rows.flat();
-  await upsertDocuments(flat);
-  const embedded = await upsertDocEmbeddings(c.tenantId, c.accountId, flat);
-  return { found: flat.length, embedded };
+async function deepMessageIds(c: AccountClient): Promise<string[]> {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < DEEP_SCAN_PAGE_CAP; page += 1) {
+    const result = await c.client.gmail.api.messages.list({
+      maxResults: DEEP_SCAN_PAGE_SIZE,
+      pageToken,
+      q: "has:attachment",
+    });
+    for (const message of result.messages ?? []) {
+      if (!message.id || seen.has(message.id)) continue;
+      seen.add(message.id);
+      ids.push(message.id);
+    }
+    pageToken = result.nextPageToken ?? undefined;
+    if (!pageToken) break;
+  }
+  return ids;
 }
 
 /** Upsert attachment metadata. NEVER writes pinned/pinnedAt so a scan can't clear a pin. */
@@ -265,9 +306,10 @@ async function upsertDocEmbeddings(
 /** Scan every owned account (manual "scan now" + first index). */
 export async function scanAllDocuments(
   clients: AccountClient[],
+  opts: ScanOptions = {},
 ): Promise<{ found: number; embedded: number }> {
   const results = await mapLimit(clients, READ_CONCURRENCY, (c) =>
-    scanAccountDocuments(c).catch(() => ({ found: 0, embedded: 0 })),
+    scanAccountDocuments(c, opts).catch(() => ({ found: 0, embedded: 0 })),
   );
   return results.reduce(
     (acc, r) => ({ found: acc.found + r.found, embedded: acc.embedded + r.embedded }),

@@ -194,7 +194,7 @@ export const documentsRouter = createTRPCRouter({
   scan: authedProcedure.mutation(async () => {
     const clients = await getAccountClients();
     after(() =>
-      scanAllDocuments(clients).finally(() => {
+      scanAllDocuments(clients, { deep: true }).finally(() => {
         for (const c of clients) notifyTenant(c.tenantId, "documents");
       }),
     );

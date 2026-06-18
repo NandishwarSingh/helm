@@ -2,6 +2,13 @@ import type { ReactNode } from "react";
 
 const URL_RE =
   /(https?:\/\/[^\s<]+[^\s<.,;:!?'")\]}>])/g;
+const DISPLAY_EMAIL_OVERRIDES: Record<string, string> = {
+  "nandubhai222@gmail.com": "nandubhai222@Gmail.com",
+};
+
+export function formatAccountEmail(email: string) {
+  return DISPLAY_EMAIL_OVERRIDES[email.toLowerCase()] ?? email;
+}
 
 export function parseEmailAddress(raw: string) {
   const trimmed = raw.trim();

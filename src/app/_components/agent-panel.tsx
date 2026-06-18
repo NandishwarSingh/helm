@@ -9,6 +9,7 @@ import { AgentIcon, SendIcon } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
+import { formatAccountEmail } from "@/lib/display";
 import { listRow } from "@/lib/motion";
 import type { ActionSummary } from "@/server/lib/agent-action";
 import type { HelmSource } from "@/server/lib/agent-sources";
@@ -279,7 +280,7 @@ function Sources({ sources }: { sources: HelmSource[] }) {
               {[
                 s.kind === "email" ? s.from : undefined,
                 s.date,
-                s.account || undefined,
+                s.account ? formatAccountEmail(s.account) : undefined,
               ]
                 .filter(Boolean)
                 .join(" · ")}
