@@ -17,10 +17,25 @@ synced message and event.
 ## Try it
 
 - **Live app:** [helm.houndcode.com](https://helm.houndcode.com) — sign in with Google to use it on your own inbox.
-- **▶ Demo video:** _recording in progress_ <!-- TODO: drop a 2-min walkthrough at docs/demo.mp4 and link it here -->
+- **▶ Demo video:** https://www.youtube.com/watch?v=RC5qz3lX104
 
-> Access is Google-OAuth-only (no guest mode). A short walkthrough video is being
-> added so judges who'd rather not connect a real inbox can still see it working.
+> Access is Google-OAuth-only (no guest mode). The demo video above shows it
+> working end-to-end for judges who'd rather not connect a real inbox.
+
+## Videos
+
+- **Challenge acceptance (X / Twitter)** — https://x.com/SocialRadish/status/2065858432612413766?s=20
+- **Challenge acceptance (LinkedIn)** — https://www.linkedin.com/posts/nandishwar-singh-00b7602b0_chaicode-corsairdev-corsair-activity-7471625885662515200-POQJ?utm_source=share&utm_medium=member_desktop&rcm=ACoAAErcugsBzHETDeFGUQbTRgSolVsjHUAd2co
+- **Day 1 update (LinkedIn)** — https://www.linkedin.com/posts/nandishwar-singh-00b7602b0_chaicode-corsairdev-corsair-activity-7472259667579265024-m9lj?utm_source=share&utm_medium=member_desktop&rcm=ACoAAErcugsBzHETDeFGUQbTRgSolVsjHUAd2co
+- **Day 1 update (X / Twitter)** — https://x.com/SocialRadish/status/2066492338462224839?s=20
+- **Day 2 update (X / Twitter)** — https://x.com/SocialRadish/status/2066920727828451758?s=20
+- **Day 2 update (LinkedIn)** — https://www.linkedin.com/posts/nandishwar-singh-00b7602b0_chaicode-corsairdev-corsair-activity-7472686305198538752-rWYR?utm_source=share&utm_medium=member_desktop&rcm=ACoAAErcugsBzHETDeFGUQbTRgSolVsjHUAd2co
+- **Day 3 update (LinkedIn)** — https://www.linkedin.com/posts/nandishwar-singh-00b7602b0_chaicode-corsairdev-corsair-activity-7473069255362498560-pkJ1?utm_source=share&utm_medium=member_desktop&rcm=ACoAAErcugsBzHETDeFGUQbTRgSolVsjHUAd2co
+- **Day 3 update (X / Twitter)** — https://x.com/SocialRadish/status/2067302527662784922?s=20
+- **Day 4 / final day update (X / Twitter)** — https://x.com/SocialRadish/status/2067651896186478918?s=20
+- **Day 4 / final day update (LinkedIn)** — https://www.linkedin.com/posts/nandishwar-singh-00b7602b0_chaicode-corsairdev-corsair-ugcPost-7473418116425834496-V27_/?utm_source=share&utm_medium=member_desktop&rcm=ACoAAErcugsBzHETDeFGUQbTRgSolVsjHUAd2co
+- **1-min founder intro** — https://youtu.be/CXfxMCgqWDs?si=3Xbdp-6k9SIR-dos
+- **Working demo video** — https://www.youtube.com/watch?v=RC5qz3lX104
 
 ## How Helm maps to the judging criteria
 
