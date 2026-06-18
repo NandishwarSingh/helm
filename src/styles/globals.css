@@ -2009,7 +2009,8 @@
     position: absolute;
     left: 50%;
     bottom: 1.1rem;
-    transform: translateX(-50%);
+    /* The -50% centering offset is carried by motion's `x` (its inline transform
+       would otherwise clobber a CSS translateX), matching the other overlays. */
     z-index: 6;
     display: inline-flex;
     align-items: center;
