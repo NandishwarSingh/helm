@@ -58,10 +58,10 @@ export function ProUpsell({ open, onOpenChange }: Props) {
             exit="exit"
             role="dialog"
             aria-modal="true"
-            aria-label="Add another account with Helm Pro"
+            aria-label="Unlock Helm Pro"
           >
             <div className="compose-head">
-              Add another account
+              Unlock Helm Pro
               <span className="topbar-spacer" />
               <button
                 type="button"
@@ -74,11 +74,11 @@ export function ProUpsell({ open, onOpenChange }: Props) {
             </div>
             <div className="compose-body pro-upsell-body">
               <p className="pro-upsell-lead">
-                Connecting more than one mailbox is a <strong>Helm Pro</strong>{" "}
-                feature.
+                Go further with <strong>Helm Pro</strong>.
               </p>
               <ul className="pro-upsell-perks">
                 <li>Up to six Google accounts in one unified inbox</li>
+                <li>Bulk-unsubscribe from newsletters in a few taps</li>
                 <li>Switch and fan out across every mailbox</li>
                 <li>Everything in the free plan, no limits</li>
               </ul>
