@@ -31,6 +31,11 @@ import { api } from "@/trpc/react";
 type PendingAction = { token: string; summary: ActionSummary };
 type CardState = "confirmed" | "denied" | undefined;
 
+/** Points at a file's bytes server-side: an upload token, or a mail attachment. */
+type AttachRef =
+  | { kind: "upload"; token: string }
+  | { kind: "mail"; accountId: string; messageId: string; attachmentId: string };
+
 /** A file the user has attached to the next turn (uploaded or picked from mail). */
 type PendingAttachment = {
   key: string;
@@ -39,6 +44,8 @@ type PendingAttachment = {
   text: string;
   status: "loading" | "ready" | "error";
   error?: string;
+  // Lets a staged send carry the real file (not just its text).
+  ref?: AttachRef;
 };
 /** Attachment metadata kept on the user message so chips persist in history. */
 type AttachmentMeta = { attachments?: { name: string; mimeType: string }[] };
@@ -539,6 +546,7 @@ export function AgentPanel({ account }: { account: string }) {
           name?: string;
           mimeType?: string;
           text?: string;
+          token?: string;
           error?: string;
         };
         if (!res.ok || !data.text) {
@@ -548,6 +556,7 @@ export function AgentPanel({ account }: { account: string }) {
           text: data.text,
           mimeType: data.mimeType ?? file.type,
           status: "ready",
+          ref: data.token ? { kind: "upload", token: data.token } : undefined,
         });
       } catch (e) {
         patchAttachment(key, {
@@ -570,7 +579,19 @@ export function AgentPanel({ account }: { account: string }) {
     if (pending.some((a) => a.key === key)) return;
     setPending((prev) => [
       ...prev,
-      { key, name: doc.filename, mimeType: doc.mimeType, text: "", status: "loading" },
+      {
+        key,
+        name: doc.filename,
+        mimeType: doc.mimeType,
+        text: "",
+        status: "loading",
+        ref: {
+          kind: "mail",
+          accountId: doc.accountId,
+          messageId: doc.messageId,
+          attachmentId: doc.attachmentId,
+        },
+      },
     ]);
     try {
       const data = await extractText.mutateAsync({
@@ -625,7 +646,14 @@ export function AgentPanel({ account }: { account: string }) {
         body: {
           account,
           ...(ready.length
-            ? { attachments: ready.map((a) => ({ name: a.name, text: a.text })) }
+            ? {
+                attachments: ready.map((a) => ({
+                  name: a.name,
+                  mimeType: a.mimeType,
+                  text: a.text,
+                  ref: a.ref,
+                })),
+              }
             : {}),
         },
       },

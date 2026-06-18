@@ -24,10 +24,88 @@ import { createSourceRegistry, type SourceMedia } from "@/server/lib/agent-sourc
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
 import { rateLimit } from "@/server/lib/rate-limit";
-import { getTenantId } from "@/server/lib/session";
+import { getOwnerId, getTenantId } from "@/server/lib/session";
 import { getAccountClients } from "@/server/lib/tenant";
+import { resolveAccountTenant } from "@/server/lib/users";
+import { getAttachment } from "@/server/lib/attachment-store";
+import {
+  buildRawWithAttachments,
+  type OutgoingAttachment,
+} from "@/server/lib/email";
+import { fetchAttachmentBytes } from "@/server/lib/gmail-attachments";
 
 export const maxDuration = 60;
+
+/** Max combined attachment payload folded into one outgoing email (Gmail's cap). */
+const MAX_OUTGOING_ATTACH_BYTES = 25 * 1024 * 1024;
+
+type AttachRef =
+  | { kind: "upload"; token: string }
+  | { kind: "mail"; accountId: string; messageId: string; attachmentId: string };
+type AttachEntry = {
+  name: string;
+  mimeType?: string;
+  text?: string;
+  ref?: AttachRef;
+};
+
+/** The raw MIME in a compose op's args (messages.send → raw; drafts → message.raw). */
+function getComposeRaw(args: unknown): string | null {
+  const a = args as { raw?: unknown; message?: { raw?: unknown } } | null;
+  if (typeof a?.raw === "string") return a.raw;
+  if (typeof a?.message?.raw === "string") return a.message.raw;
+  return null;
+}
+function setComposeRaw(args: unknown, raw: string): void {
+  const a = args as { raw?: unknown; message?: { raw?: unknown } };
+  if (typeof a.raw === "string") a.raw = raw;
+  else if (a.message && typeof a.message.raw === "string") a.message.raw = raw;
+}
+
+/**
+ * Fold the user's attached files into a STAGED compose op by rebuilding its raw
+ * MIME as multipart — BEFORE the action is signed, so confirm replays exactly
+ * this. Bytes come from the upload store (token) or are re-fetched from Gmail
+ * (mail attachment, ownership-checked). Returns the attached filenames (for the
+ * card), or [] when there's nothing to attach / no raw to rebuild.
+ */
+async function attachFilesToProposed(
+  args: unknown,
+  entries: AttachEntry[],
+  ownerId: string | null,
+): Promise<string[]> {
+  if (entries.length === 0) return [];
+  const raw = getComposeRaw(args);
+  if (!raw) return [];
+  const resolved: OutgoingAttachment[] = [];
+  let total = 0;
+  for (const e of entries) {
+    if (!e.ref) continue;
+    let bytes: Buffer | null = null;
+    let name = e.name;
+    let mimeType = e.mimeType ?? "application/octet-stream";
+    if (e.ref.kind === "upload" && ownerId) {
+      const stored = getAttachment(ownerId, e.ref.token);
+      if (stored) {
+        bytes = stored.bytes;
+        name = stored.name;
+        mimeType = stored.mimeType;
+      }
+    } else if (e.ref.kind === "mail") {
+      const t = await resolveAccountTenant(e.ref.accountId);
+      if (t) bytes = await fetchAttachmentBytes(t, e.ref.messageId, e.ref.attachmentId);
+    }
+    if (!bytes) continue;
+    if (total + bytes.length > MAX_OUTGOING_ATTACH_BYTES) continue;
+    total += bytes.length;
+    resolved.push({ name, mimeType, bytes });
+  }
+  if (resolved.length === 0) return [];
+  const rebuilt = buildRawWithAttachments(raw, resolved);
+  if (!rebuilt) return [];
+  setComposeRaw(args, rebuilt);
+  return resolved.map((r) => r.name);
+}
 
 /** Resolve a Corsair dot-path on the tenant client and call it with `args`. */
 async function callTenantOp(
@@ -224,9 +302,15 @@ export async function POST(request: NextRequest) {
     confirm?: string;
     // The mailbox the UI is showing: a specific account id, or "all".
     account?: string;
-    // Files the user attached this turn (already parsed to text client-side via
-    // /api/agent/attach or documents.extractText). Context only — never stored.
-    attachments?: { name?: string; text?: string }[];
+    // Files the user attached this turn. `text` is the parsed content (context);
+    // `ref` points at the bytes (upload token / mail attachment) so a staged send
+    // can carry the real file. Both are scoped/ownership-checked server-side.
+    attachments?: {
+      name?: string;
+      mimeType?: string;
+      text?: string;
+      ref?: AttachRef;
+    }[];
   } | null;
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
     return NextResponse.json({ error: "No messages." }, { status: 400 });
@@ -338,12 +422,16 @@ export async function POST(request: NextRequest) {
   // the system prompt as context so the agent can summarise them, draft mail
   // from them, or create events from them — capped so a big PDF can't blow the
   // window. Present only on the turn they were attached (ephemeral context).
-  const attached = (Array.isArray(body.attachments) ? body.attachments : [])
-    .filter(
-      (a): a is { name: string; text: string } =>
-        !!a && typeof a.name === "string" && typeof a.text === "string" && a.text.trim().length > 0,
-    )
+  const attachmentEntries: AttachEntry[] = (
+    Array.isArray(body.attachments) ? body.attachments : []
+  )
+    .filter((a): a is AttachEntry => !!a && typeof a.name === "string")
     .slice(0, 5);
+  const attached = attachmentEntries.filter(
+    (a): a is AttachEntry & { text: string } =>
+      typeof a.text === "string" && a.text.trim().length > 0,
+  );
+  const ownerId = await getOwnerId();
   let systemText = systemPrompt(accounts.map((a) => a.email), {
     allMode,
     scopeEmail,
@@ -352,7 +440,7 @@ export async function POST(request: NextRequest) {
     const block = attached
       .map((a) => `## ${a.name}\n${a.text.slice(0, 6000)}`)
       .join("\n\n");
-    systemText += `\n\n# Files the user attached this turn\nThe user attached the file(s) below. Use their content when relevant — to summarise them, draft an email, or create a calendar event — and never invent details that aren't present.\n\n${block}`;
+    systemText += `\n\n# Files the user attached this turn\nThe user attached the file(s) below. Use their content when relevant — to summarise them, draft an email, or create a calendar event — and never invent details that aren't present. IMPORTANT: if the user asks to ATTACH or SEND these file(s), just compose and send the email normally with gmail.api.messages.send (or save a draft); the actual file(s) are attached to the outgoing message automatically by the system. NEVER tell the user you cannot attach files.\n\n${block}`;
   }
   const result = streamText({
     model: openrouter(AGENT_MODEL),
@@ -477,6 +565,26 @@ export async function POST(request: NextRequest) {
         const boundAccount =
           proposed.targetAccount ??
           (accounts.length > 1 ? scopeEmail : undefined);
+        // Card body is derived from the ORIGINAL (clean text) raw first.
+        const summary = summarizeAction(proposed.op, proposed.args);
+        // Then fold the user's attached files into the raw as multipart, MUTATING
+        // proposed.args BEFORE it's signed — so the token, the card, and the
+        // replayed send all carry the same real attachments.
+        const attachedNames = await attachFilesToProposed(
+          proposed.args,
+          attachmentEntries,
+          ownerId,
+        );
+        if (attachedNames.length > 0) {
+          summary.fields.push({
+            label: attachedNames.length > 1 ? "Attachments" : "Attachment",
+            value: attachedNames.join(", "),
+          });
+        }
+        // Show which mailbox the action runs on, so the card stays faithful.
+        if (boundAccount) {
+          summary.fields.unshift({ label: "Account", value: boundAccount });
+        }
         const token = signAction(
           env.AUTH_SECRET,
           {
@@ -487,11 +595,6 @@ export async function POST(request: NextRequest) {
           },
           Date.now(),
         );
-        const summary = summarizeAction(proposed.op, proposed.args);
-        // Show which mailbox the action runs on, so the card stays faithful.
-        if (boundAccount) {
-          summary.fields.unshift({ label: "Account", value: boundAccount });
-        }
         writer.write({
           type: "data-pendingAction",
           id: `pa-${token.slice(-12)}`,

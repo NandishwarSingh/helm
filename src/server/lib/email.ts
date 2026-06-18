@@ -1,4 +1,5 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 
 // Header values must never contain CR/LF — a newline in a crafted subject
 // would otherwise inject extra headers (e.g. a hidden Bcc) into the message.
@@ -46,6 +47,97 @@ export function encodeRawEmail(opts: {
 export function decodeBase64Url(data: string): string {
   const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
   return Buffer.from(base64, "base64").toString("utf-8");
+}
+
+function toBase64Url(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** Wrap a base64 string to 76-char lines (RFC 2045). */
+function wrap76(b64: string): string {
+  return b64.replace(/.{1,76}/g, "$&\r\n").trimEnd();
+}
+
+/** A file to attach to an outgoing message. */
+export type OutgoingAttachment = {
+  name: string;
+  mimeType: string;
+  bytes: Buffer;
+};
+
+/**
+ * Rebuild a base64url RFC 2822 message (the simple text email the agent
+ * composed) into a multipart/mixed message carrying the given attachments. The
+ * original address/subject/threading headers are preserved verbatim; only the
+ * Content-* / MIME-Version headers are replaced. Returns the new base64url raw,
+ * or null when it can't safely rebuild (un-decodable, no header/body split, or
+ * the original is ALREADY multipart — in which case the caller sends as-is).
+ * Filenames and MIME types are CR/LF-stripped so they can't inject headers.
+ */
+export function buildRawWithAttachments(
+  rawBase64Url: string,
+  attachments: OutgoingAttachment[],
+): string | null {
+  if (attachments.length === 0) return null;
+  let mime: string;
+  try {
+    mime = decodeBase64Url(rawBase64Url);
+  } catch {
+    return null;
+  }
+  if (!mime) return null;
+  const sep = mime.includes("\r\n\r\n") ? "\r\n\r\n" : "\n\n";
+  const idx = mime.indexOf(sep);
+  if (idx < 0) return null;
+  const head = mime.slice(0, idx);
+  const body = mime.slice(idx + sep.length);
+
+  const kept: string[] = [];
+  let bodyContentType = 'text/plain; charset="UTF-8"';
+  for (const line of head.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    const name = (colon > 0 ? line.slice(0, colon) : line).trim().toLowerCase();
+    if (name === "content-type") {
+      const value = line.slice(colon + 1).trim();
+      if (value.toLowerCase().includes("multipart")) return null; // already MIME
+      if (value.toLowerCase().startsWith("text/")) bodyContentType = value;
+      continue; // we set our own multipart Content-Type
+    }
+    if (name === "content-transfer-encoding" || name === "mime-version") continue;
+    if (line.trim()) kept.push(line);
+  }
+
+  const boundary = `helm_${randomBytes(16).toString("hex")}`;
+  const safeHeader = (v: string) => v.replace(/[\r\n"]+/g, "_");
+  const lines: string[] = [
+    ...kept,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    `Content-Type: ${headerValue(bodyContentType)}`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap76(Buffer.from(body, "utf-8").toString("base64")),
+  ];
+  for (const att of attachments) {
+    const name = safeHeader(att.name) || "attachment";
+    const type = headerValue(att.mimeType) || "application/octet-stream";
+    lines.push(
+      `--${boundary}`,
+      `Content-Type: ${type}; name="${name}"`,
+      `Content-Disposition: attachment; filename="${name}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      wrap76(att.bytes.toString("base64")),
+    );
+  }
+  lines.push(`--${boundary}--`, "");
+  return toBase64Url(Buffer.from(lines.join("\r\n"), "utf-8"));
 }
 
 type GmailPart = {

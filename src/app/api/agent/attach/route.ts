@@ -1,8 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { putAttachment } from "@/server/lib/attachment-store";
 import { extractDocText, isExtractable } from "@/server/lib/doc-text";
 import { rateLimit } from "@/server/lib/rate-limit";
-import { getTenantId } from "@/server/lib/session";
+import { getOwnerId, getTenantId } from "@/server/lib/session";
 
 // Parsers (unpdf/mammoth/xlsx) are native/server-only — never the edge runtime.
 export const runtime = "nodejs";
@@ -55,9 +56,14 @@ export async function POST(request: NextRequest) {
   }
 
   let text: string;
+  let token = "";
   try {
     const bytes = Buffer.from(await file.arrayBuffer());
     text = await extractDocText(mime, name, bytes);
+    // Stash the bytes so a later "attach this & send it" can fold the real file
+    // into the email's MIME. Owner-scoped; the token rides with the chat turn.
+    const owner = await getOwnerId();
+    if (owner) token = putAttachment(owner, name, mime, bytes);
   } catch {
     return NextResponse.json({ error: "Couldn't read that file." }, { status: 422 });
   }
@@ -67,5 +73,5 @@ export async function POST(request: NextRequest) {
       { status: 422 },
     );
   }
-  return NextResponse.json({ name, mimeType: mime, text: text.slice(0, 8000) });
+  return NextResponse.json({ name, mimeType: mime, text: text.slice(0, 8000), token });
 }
