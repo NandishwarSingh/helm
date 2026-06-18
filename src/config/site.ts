@@ -20,6 +20,23 @@ export const siteConfig = {
     "keyboard-first inbox",
     "superhuman alternative",
   ],
+  // ─── Legal / business details ────────────────────────────────────────────
+  // These render on every policy page (privacy, terms, refund, shipping,
+  // contact) and are exactly what a payment gateway (Razorpay) verifies. FILL
+  // THESE IN with real, working details before going live — a non-working
+  // contact or placeholder address will fail Razorpay activation.
+  legal: {
+    entity: "Helm", // your registered business / legal name
+    email: "support@houndcode.com", // a working support inbox — VERIFY/REPLACE
+    phone: "+91 00000 00000", // a reachable phone number — REPLACE
+    address: "Add your registered business address here", // REPLACE
+    jurisdiction: "India", // governing law / courts
+    effectiveDate: "June 16, 2026", // last-updated date shown on each policy
+    // What the customer pays for + the refund window, in plain words.
+    offering:
+      "paid subscription plans that unlock Helm's full feature set (multi-account, the AI agent, and advanced search and triage)",
+    refundWindowDays: 7,
+  },
 } as const;
 
 export type SiteConfig = typeof siteConfig;

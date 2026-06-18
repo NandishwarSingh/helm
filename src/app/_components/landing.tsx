@@ -806,17 +806,28 @@ export function Landing() {
       </main>
 
       <footer className="lp-foot">
-        <span className="lp-brand">
-          <BrandMark size={15} />
-          {siteConfig.name}
-        </span>
-        <div className="lp-foot-links">
-          <a href="#features">Features</a>
-          <a href="#compare">Compare</a>
-          <a href="#faq">FAQ</a>
+        <div className="lp-foot-row">
+          <span className="lp-brand">
+            <BrandMark size={15} />
+            {siteConfig.name}
+          </span>
+          <div className="lp-foot-links">
+            <a href="#features">Features</a>
+            <a href="#compare">Compare</a>
+            <a href="#faq">FAQ</a>
+          </div>
+          <span className="topbar-spacer" />
+          <span className="lp-foot-note tnum">
+            Built with Next.js, Postgres and Corsair
+          </span>
         </div>
-        <span className="topbar-spacer" />
-        <span className="lp-foot-note tnum">Built with Next.js, Postgres and Corsair</span>
+        <nav className="lp-foot-legal" aria-label="Legal">
+          <a href="/privacy-policy">Privacy Policy</a>
+          <a href="/terms">Terms &amp; Conditions</a>
+          <a href="/refund-policy">Cancellation &amp; Refund</a>
+          <a href="/shipping-policy">Shipping &amp; Delivery</a>
+          <a href="/contact">Contact Us</a>
+        </nav>
       </footer>
     </div>
   );
