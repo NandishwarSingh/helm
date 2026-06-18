@@ -76,6 +76,21 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { keys: ["⌘", "↵"], label: "Save / send (in dialog)" },
     ],
   },
+  {
+    title: "Documents",
+    rows: [
+      { keys: ["J"], label: "Next document" },
+      { keys: ["K"], label: "Previous document" },
+      { keys: ["↵"], label: "Preview selected document" },
+      { keys: ["O"], label: "Preview selected document" },
+      { keys: ["P"], label: "Pin / unpin selected document" },
+      { keys: ["D"], label: "Download selected document" },
+      { keys: ["H"], label: "Previous type filter" },
+      { keys: ["L"], label: "Next type filter" },
+      { keys: ["M"], label: "Load more" },
+      { keys: ["R"], label: "Scan mail for attachments" },
+    ],
+  },
 ];
 
 export function ShortcutsHelp({ open, onOpenChange }: Props) {

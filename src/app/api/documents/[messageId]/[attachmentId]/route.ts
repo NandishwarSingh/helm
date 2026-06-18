@@ -101,7 +101,11 @@ export async function GET(
   }
 
   const [row] = await db
-    .select({ filename: documents.filename, mimeType: documents.mimeType })
+    .select({
+      filename: documents.filename,
+      mimeType: documents.mimeType,
+      contentHash: documents.contentHash,
+    })
     .from(documents)
     .where(
       and(
@@ -113,6 +117,23 @@ export async function GET(
     .limit(1);
   if (!row) {
     return new Response("not found", { status: 404 });
+  }
+
+  const etag = `"${row.contentHash}"`;
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (ifNoneMatch?.split(",").map((tag) => tag.trim()).includes(etag)) {
+    return new Response(null, {
+      status: 304,
+      headers: {
+        ETag: etag,
+        "Cache-Control": "private, max-age=300",
+        "Content-Security-Policy":
+          "default-src 'none'; base-uri 'none'; frame-ancestors 'self'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data:",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    });
   }
 
   const bytes = await fetchAttachmentBytes(tenantId, messageId, attachmentId);
@@ -149,8 +170,9 @@ export async function GET(
       "Content-Type": contentType,
       "Content-Length": String(bytes.length),
       "Content-Disposition": `${disposition}; filename="${ascii}"; filename*=UTF-8''${utf8}`,
-      // Per-user bytes — never let a shared proxy cache them.
-      "Cache-Control": "private, no-store",
+      ETag: etag,
+      // Per-user bytes — browser cache only; shared proxies must not store them.
+      "Cache-Control": "private, max-age=300",
       // Honour the declared type; don't let the browser sniff bytes into HTML.
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy":

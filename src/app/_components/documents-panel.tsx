@@ -13,7 +13,7 @@ import {
   SearchIcon,
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
-import { useAction, useOverlay } from "@/lib/actions";
+import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import { formatAccountEmail } from "@/lib/display";
 import { drawerRight, listRow, scrim, viewSwap } from "@/lib/motion";
 import { useFocusTrap } from "@/lib/use-focus-trap";
@@ -57,6 +57,8 @@ const CATEGORY_ORDER = [
   "other",
 ] as const;
 const SYNC_TIMEOUT_MS = 120_000;
+const PAGE_SIZE = 60;
+const MAX_LIMIT = 200;
 
 type GroupBy = "type" | "sender" | "date";
 
@@ -168,17 +170,30 @@ function previewUrl(d: DocItem, disposition: "inline" | "attachment"): string {
   )}?${qs.toString()}`;
 }
 
+function previewKind(d: DocItem | null): "pdf" | "image" | "none" {
+  if (!d) return "none";
+  if (d.category === "pdf" || d.mimeType === "application/pdf") return "pdf";
+  if (d.category === "image") return "image";
+  return "none";
+}
+
 export function DocumentsPanel({ account }: { account: string }) {
   const utils = api.useUtils();
   const [groupBy, setGroupBy] = useState<GroupBy>("type");
   const [category, setCategory] = useState<Category>("all");
-  const [limit, setLimit] = useState(60);
+  const [limits, setLimits] = useState<Partial<Record<Category, number>>>({
+    all: PAGE_SIZE,
+  });
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [preview, setPreview] = useState<DocItem | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [activeDocKey, setActiveDocKey] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const syncTimeoutRef = useRef<number | null>(null);
+  const previewWarmRef = useRef<Set<string>>(new Set());
+  const limit = limits[category] ?? PAGE_SIZE;
 
   // Suppress the app's global key layer (1/2/3/4, g-chord, ⌘J, c, n, /) while a
   // preview is open, so a stray key can't switch views and unmount the preview.
@@ -211,11 +226,22 @@ export function DocumentsPanel({ account }: { account: string }) {
     },
   );
 
+  const facetCounts = facetsQuery.data?.counts;
+  const facetTotal = facetsQuery.data?.total ?? 0;
+  const visibleCategories = useMemo(
+    () => CATEGORY_ORDER.filter((c) => (facetCounts?.[c] ?? 0) > 0),
+    [facetCounts],
+  );
+  const categoryTabs = useMemo<Category[]>(
+    () => ["all", ...visibleCategories],
+    [visibleCategories],
+  );
+
   const listInput = { category, account, limit };
   const listQuery = api.documents.list.useQuery(listInput, {
     enabled: !searching,
-    placeholderData: keepPreviousData,
-    staleTime: 15_000,
+    placeholderData: loadingMore ? keepPreviousData : undefined,
+    staleTime: 60_000,
     refetchInterval: () => (document.visibilityState === "visible" ? 30_000 : false),
   });
 
@@ -273,6 +299,30 @@ export function DocumentsPanel({ account }: { account: string }) {
       void utils.documents.facets.invalidate();
     },
   });
+
+  useEffect(() => {
+    if (searching || visibleCategories.length === 0) return;
+    for (const c of categoryTabs) {
+      if (c === category) continue;
+      void utils.documents.list.prefetch({
+        category: c,
+        account,
+        limit: limits[c] ?? PAGE_SIZE,
+      });
+    }
+  }, [
+    account,
+    category,
+    categoryTabs,
+    limits,
+    searching,
+    utils.documents.list,
+    visibleCategories.length,
+  ]);
+
+  useEffect(() => {
+    if (!listQuery.isFetching) setLoadingMore(false);
+  }, [listQuery.isFetching]);
 
   function clearSyncTimeout() {
     if (syncTimeoutRef.current === null) return;
@@ -347,9 +397,54 @@ export function DocumentsPanel({ account }: { account: string }) {
     });
   }
 
-  const facetCounts = facetsQuery.data?.counts ?? {};
-  const facetTotal = facetsQuery.data?.total ?? 0;
-  const visibleCategories = CATEGORY_ORDER.filter((c) => (facetCounts[c] ?? 0) > 0);
+  function changeCategory(next: Category) {
+    if (next === category) return;
+    setLoadingMore(false);
+    setCategory(next);
+  }
+
+  function stepCategory(delta: number) {
+    const index = categoryTabs.indexOf(category);
+    if (index === -1) return;
+    const next = categoryTabs[(index + delta + categoryTabs.length) % categoryTabs.length];
+    if (next) changeCategory(next);
+  }
+
+  function loadMore() {
+    if (!hasMore || loadingMore) return;
+    setLoadingMore(true);
+    setLimits((prev) => ({
+      ...prev,
+      [category]: Math.min((prev[category] ?? PAGE_SIZE) + PAGE_SIZE, MAX_LIMIT),
+    }));
+  }
+
+  function triggerDownload(doc: DocItem) {
+    const a = document.createElement("a");
+    a.href = previewUrl(doc, "attachment");
+    a.download = doc.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function warmPreview(doc: DocItem) {
+    const kind = previewKind(doc);
+    if (kind === "none") return;
+    const key = docKey(doc);
+    if (previewWarmRef.current.has(key)) return;
+    previewWarmRef.current.add(key);
+    const url = previewUrl(doc, "inline");
+    if (kind === "image") {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = url;
+      return;
+    }
+    void fetch(url, { credentials: "include" }).catch(() => {
+      previewWarmRef.current.delete(key);
+    });
+  }
 
   const listItems = listQuery.data?.items;
   const searchItems = searchQuery.data?.items;
@@ -364,11 +459,89 @@ export function DocumentsPanel({ account }: { account: string }) {
         : groupDocs(items, groupBy),
     [items, groupBy, searching],
   );
+  const visibleDocs = useMemo(() => groups.flatMap((group) => group.docs), [groups]);
+  const activeDoc = useMemo(
+    () => visibleDocs.find((doc) => docKey(doc) === activeDocKey) ?? null,
+    [activeDocKey, visibleDocs],
+  );
   const hasMore = !searching && (listQuery.data?.hasMore ?? false);
   const loading =
     (searching ? searchQuery.isLoading : listQuery.isLoading) &&
     items.length === 0;
   const empty = !loading && items.length === 0;
+
+  useEffect(() => {
+    if (visibleDocs.length === 0) {
+      setActiveDocKey(null);
+      return;
+    }
+    if (!activeDocKey || !visibleDocs.some((doc) => docKey(doc) === activeDocKey)) {
+      setActiveDocKey(docKey(visibleDocs[0]!));
+    }
+  }, [activeDocKey, visibleDocs]);
+
+  function selectDocAt(delta: number) {
+    if (visibleDocs.length === 0) return;
+    const current = activeDocKey
+      ? visibleDocs.findIndex((doc) => docKey(doc) === activeDocKey)
+      : -1;
+    const nextIndex =
+      current === -1
+        ? delta > 0
+          ? 0
+          : visibleDocs.length - 1
+        : Math.max(0, Math.min(visibleDocs.length - 1, current + delta));
+    const next = visibleDocs[nextIndex];
+    if (!next) return;
+    const key = docKey(next);
+    setActiveDocKey(key);
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-doc-key="${CSS.escape(key)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (isTypingTarget(event.target) || hasOverlay()) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "j" || event.key === "ArrowDown") {
+        event.preventDefault();
+        selectDocAt(1);
+      } else if (key === "k" || event.key === "ArrowUp") {
+        event.preventDefault();
+        selectDocAt(-1);
+      } else if (key === "enter" || key === "o") {
+        if (!activeDoc) return;
+        event.preventDefault();
+        setPreview(activeDoc);
+      } else if (key === "p") {
+        if (!activeDoc) return;
+        event.preventDefault();
+        togglePin(activeDoc);
+      } else if (key === "d") {
+        if (!activeDoc) return;
+        event.preventDefault();
+        triggerDownload(activeDoc);
+      } else if (key === "h") {
+        event.preventDefault();
+        stepCategory(-1);
+      } else if (key === "l") {
+        event.preventDefault();
+        stepCategory(1);
+      } else if (key === "m") {
+        event.preventDefault();
+        loadMore();
+      } else if (key === "r") {
+        event.preventDefault();
+        startScan();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   return (
     <motion.div
@@ -439,7 +612,7 @@ export function DocumentsPanel({ account }: { account: string }) {
           type="button"
           className="docs-chip"
           data-active={category === "all"}
-          onClick={() => setCategory("all")}
+          onClick={() => changeCategory("all")}
         >
           All
           {facetTotal > 0 && <span className="docs-chip-n">{facetTotal}</span>}
@@ -450,10 +623,10 @@ export function DocumentsPanel({ account }: { account: string }) {
             type="button"
             className="docs-chip"
             data-active={category === c}
-            onClick={() => setCategory(c)}
+            onClick={() => changeCategory(c)}
           >
             {CATEGORY_LABEL[c]}
-            <span className="docs-chip-n">{facetCounts[c]}</span>
+            <span className="docs-chip-n">{facetCounts?.[c] ?? 0}</span>
           </button>
         ))}
       </div>
@@ -502,6 +675,8 @@ export function DocumentsPanel({ account }: { account: string }) {
                     key={docKey(doc)}
                     className="docs-row"
                     data-pinned={doc.pinned}
+                    data-selected={docKey(doc) === activeDocKey}
+                    data-doc-key={docKey(doc)}
                     variants={listRow}
                     initial="initial"
                     animate="animate"
@@ -512,6 +687,8 @@ export function DocumentsPanel({ account }: { account: string }) {
                     <button
                       type="button"
                       className="docs-row-open"
+                      onFocus={() => setActiveDocKey(docKey(doc))}
+                      onPointerEnter={() => warmPreview(doc)}
                       onClick={() => setPreview(doc)}
                     >
                       <span className="docs-row-icon">
@@ -571,10 +748,18 @@ export function DocumentsPanel({ account }: { account: string }) {
           <div className="docs-more">
             <button
               type="button"
-              className="btn"
-              onClick={() => setLimit((l) => Math.min(l + 60, 200))}
+              className="btn btn-primary docs-load-more"
+              onClick={loadMore}
+              disabled={loadingMore}
             >
-              Load more
+              {loadingMore ? (
+                <>
+                  <HelmLoader size={16} />
+                  Loading
+                </>
+              ) : (
+                "Load more"
+              )}
             </button>
           </div>
         )}
@@ -594,7 +779,15 @@ function DocPreview({
 }) {
   const ref = useRef<HTMLElement>(null);
   const open = Boolean(doc);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const previewKey = doc ? docKey(doc) : "";
   useFocusTrap(ref, open);
+
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [previewKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -608,13 +801,7 @@ function DocPreview({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const kind: "pdf" | "image" | "none" = !doc
-    ? "none"
-    : doc.category === "pdf" || doc.mimeType === "application/pdf"
-      ? "pdf"
-      : doc.category === "image"
-        ? "image"
-        : "none";
+  const kind = previewKind(doc);
 
   return (
     <AnimatePresence>
@@ -663,25 +850,43 @@ function DocPreview({
               </div>
             </div>
             <div className="doc-preview-body">
+              {(kind === "pdf" || kind === "image") && !loaded && !failed && (
+                <div className="doc-preview-loading" role="status">
+                  <HelmLoader size={34} />
+                  <span>Loading preview</span>
+                </div>
+              )}
               {kind === "pdf" && (
                 <iframe
                   // Remount per document so the prior PDF's bytes never linger
                   // when switching docs without closing the drawer.
-                  key={docKey(doc)}
+                  key={previewKey}
                   className="doc-preview-frame"
                   src={previewUrl(doc, "inline")}
                   title={doc.filename}
+                  onLoad={() => setLoaded(true)}
                 />
               )}
-              {kind === "image" && (
+              {kind === "image" && !failed && (
                 <div className="doc-preview-imgwrap">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    key={docKey(doc)}
+                    key={previewKey}
                     className="doc-preview-img"
                     src={previewUrl(doc, "inline")}
                     alt={doc.filename}
+                    onLoad={() => setLoaded(true)}
+                    onError={() => setFailed(true)}
                   />
+                </div>
+              )}
+              {failed && (
+                <div className="empty docs-empty">
+                  <DocumentsIcon size={28} />
+                  <p>Preview failed to load.</p>
+                  <a className="btn" href={previewUrl(doc, "attachment")}>
+                    Download to open
+                  </a>
                 </div>
               )}
               {kind === "none" && (
