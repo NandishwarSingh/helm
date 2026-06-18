@@ -17,6 +17,7 @@ import {
   verifyAction,
 } from "@/server/lib/agent-action";
 import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
+import { createSourceRegistry } from "@/server/lib/agent-sources";
 import { suggestFollowups } from "@/server/lib/agent-suggest";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
@@ -301,12 +302,21 @@ export async function POST(request: NextRequest) {
     : accounts.find((a) => a.accountId === body.account);
   const scopeTenant = selected?.tenantId ?? tenantId;
   const scopeEmail = accounts.find((a) => a.tenantId === scopeTenant)?.email;
+  const scopeAccountId =
+    selected?.accountId ??
+    accounts.find((a) => a.tenantId === scopeTenant)?.accountId ??
+    "";
+  // Cites the real records the agent reads — harvested from run_script returns.
+  const sources = createSourceRegistry(
+    accounts.map((a) => ({ accountId: a.accountId, email: a.email })),
+    scopeAccountId,
+  );
 
   // Spin up a tenant-scoped Corsair MCP server and bridge it to the AI SDK.
   // Every tool call the model makes now travels the real MCP protocol.
   let mcp: Awaited<ReturnType<typeof createCorsairMcp>>;
   try {
-    mcp = await createCorsairMcp(scopeTenant, accounts);
+    mcp = await createCorsairMcp(scopeTenant, accounts, sources.harvest);
   } catch (error) {
     console.error(
       "corsair mcp init failed:",
@@ -367,6 +377,15 @@ export async function POST(request: NextRequest) {
     execute: async ({ writer }) => {
       writer.merge(result.toUIMessageStream());
       await result.finishReason; // wait for the model to finish staging
+      // Cite the records the agent actually read (harvested from run_script).
+      const cited = sources.resolve();
+      if (cited.length > 0) {
+        writer.write({
+          type: "data-sources",
+          id: "sources",
+          data: { sources: cited },
+        });
+      }
       const proposed = mcp.gate.proposed;
       if (proposed && isAllowedPath(proposed.op) && isDestructive(proposed.op)) {
         // Bind the action to the account it was STAGED on. A script that named a

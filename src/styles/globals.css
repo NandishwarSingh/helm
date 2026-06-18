@@ -1458,6 +1458,51 @@
   }
 
   /* Staged-action confirmation card (agent human-in-the-loop). */
+  /* End-of-answer Sources — a compact numbered citation list under the reply. */
+  .agent-sources {
+    margin: 10px 0 2px;
+    max-width: 560px;
+  }
+  .agent-sources-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    margin: 0 0 0.35rem;
+  }
+  .agent-sources ol {
+    list-style: none;
+    counter-reset: src;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .agent-sources li {
+    counter-increment: src;
+    display: grid;
+    grid-template-columns: 1.4rem 1fr;
+    align-items: baseline;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+  .agent-sources li::before {
+    content: counter(src);
+    color: var(--color-ink-3);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.74rem;
+  }
+  .agent-source-title {
+    color: var(--color-ink);
+  }
+  .agent-source-meta {
+    grid-column: 2;
+    display: block;
+    color: var(--color-ink-3);
+    font-size: 0.74rem;
+  }
   .agent-action {
     margin: 8px 0 2px;
     max-width: 470px;

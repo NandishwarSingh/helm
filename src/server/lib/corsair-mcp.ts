@@ -33,6 +33,9 @@ import type { AccountClient } from "@/server/lib/tenant";
 export async function createCorsairMcp(
   tenantId: string,
   accounts: AccountClient[] = [],
+  // Called with every successful run_script return value, so the route can
+  // harvest the records the agent read and cite them as Sources. Best-effort.
+  onResult?: (value: unknown) => void,
 ) {
   const tenant = corsair.withTenant(tenantId);
   // The connected accounts the script may target via corsair.account("email")
@@ -59,6 +62,12 @@ export async function createCorsairMcp(
     const result = await runScriptSandboxed(tenant, code, gate, bridges);
     if (!result.ok) {
       return { isError: true, content: [{ type: "text", text: `Error: ${result.error}` }] };
+    }
+    // Harvest the returned records for end-of-answer Sources (never throws).
+    try {
+      onResult?.(result.value);
+    } catch {
+      /* citation harvest is best-effort */
     }
     // Compact (no indent): this text is re-fed into the model's growing context
     // every subsequent step, so the 2-space pretty-print was ~30% wasted tokens.

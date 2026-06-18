@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/skeleton";
 import { useAction } from "@/lib/actions";
 import { listRow } from "@/lib/motion";
 import type { ActionSummary } from "@/server/lib/agent-action";
+import type { HelmSource } from "@/server/lib/agent-sources";
 import type { Suggestion } from "@/server/lib/agent-suggest";
 import { api } from "@/trpc/react";
 
@@ -257,6 +258,32 @@ function toolLabel(
   return done ? name : `${name}…`;
 }
 
+/** End-of-answer citations: the real emails/events the agent's reply drew on. */
+function Sources({ sources }: { sources: HelmSource[] }) {
+  if (sources.length === 0) return null;
+  return (
+    <div className="agent-sources">
+      <p className="agent-sources-label">Sources</p>
+      <ol>
+        {sources.map((s) => (
+          <li key={`${s.accountId}:${s.id}`}>
+            <span className="agent-source-title">{s.title}</span>
+            <span className="agent-source-meta tnum">
+              {[
+                s.kind === "email" ? s.from : undefined,
+                s.date,
+                s.account || undefined,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /** Decode a server error body — the route returns JSON; the SDK surfaces the raw text. */
 function agentErrorText(error: Error): string {
   try {
@@ -427,6 +454,12 @@ export function AgentPanel({ account }: { account: string }) {
                       onConfirm={() => confirmAction(data.token)}
                       onDeny={() => denyAction(data.token)}
                     />
+                  );
+                }
+                if (part.type === "data-sources") {
+                  const data = part.data as { sources: HelmSource[] };
+                  return (
+                    <Sources key={`${message.id}-src`} sources={data.sources} />
                   );
                 }
                 if (part.type.startsWith("tool-")) {
