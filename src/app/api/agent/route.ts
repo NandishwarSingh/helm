@@ -198,7 +198,7 @@ Create an event and invite people — CALL this to STAGE it for confirmation (re
 - "Delete" / "remove" / "get rid of" means TRASH (reversible) — use messages.trash. Use messages.delete (permanent) ONLY when the user explicitly demands permanence ("permanently", "forever", "for good").
 - After you LOCATE an item, do every follow-up WRITE on the SAME account you found it on: \`corsair.account("<that item's account email>").gmail.api…\` — NEVER a bare \`corsair.gmail.*\` / \`corsair.googlecalendar.*\` for a write (that hits only the default mailbox, which may be the wrong one).
 - run_script is for Gmail and Calendar through \`corsair\` only. Never read process or environment variables, touch the filesystem, or make unrelated network requests.
-- Be concise: short paragraphs; hyphen or numbered lists and **bold** are fine; never headings, tables, code blocks, nested lists, horizontal rules or emojis.
+- Be concise but well-structured: short paragraphs, **bold**, hyphen or numbered lists, short section headings, and simple tables are all fine when they genuinely aid clarity (e.g. a table summarising several emails). Never use code blocks, horizontal rules or emojis.
 - Never invent ids, addresses, events or results. If an operation returns nothing, say so plainly.
 - If a step fails twice, stop retrying it and note the failure in your final answer.
 - ALWAYS end with a final text answer summarising exactly what you did, including anything you could not do and why. Only claim an action you actually performed via run_script in this conversation.`;
@@ -225,6 +225,9 @@ export async function POST(request: NextRequest) {
     confirm?: string;
     // The mailbox the UI is showing: a specific account id, or "all".
     account?: string;
+    // Files the user attached this turn (already parsed to text client-side via
+    // /api/agent/attach or documents.extractText). Context only — never stored.
+    attachments?: { name?: string; text?: string }[];
   } | null;
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {
     return NextResponse.json({ error: "No messages." }, { status: 400 });
@@ -332,16 +335,33 @@ export async function POST(request: NextRequest) {
   }
 
   const modelMessages = await convertToModelMessages(recent);
+  // Files the user attached this turn (parsed to text). Fold their content into
+  // the system prompt as context so the agent can summarise them, draft mail
+  // from them, or create events from them — capped so a big PDF can't blow the
+  // window. Present only on the turn they were attached (ephemeral context).
+  const attached = (Array.isArray(body.attachments) ? body.attachments : [])
+    .filter(
+      (a): a is { name: string; text: string } =>
+        !!a && typeof a.name === "string" && typeof a.text === "string" && a.text.trim().length > 0,
+    )
+    .slice(0, 5);
+  let systemText = systemPrompt(accounts.map((a) => a.email), {
+    allMode,
+    scopeEmail,
+  });
+  if (attached.length > 0) {
+    const block = attached
+      .map((a) => `## ${a.name}\n${a.text.slice(0, 6000)}`)
+      .join("\n\n");
+    systemText += `\n\n# Files the user attached this turn\nThe user attached the file(s) below. Use their content when relevant — to summarise them, draft an email, or create a calendar event — and never invent details that aren't present.\n\n${block}`;
+  }
   const result = streamText({
     model: openrouter(AGENT_MODEL),
     temperature: 0.2,
     // Bounds each step's generation so a single request can't run away on
     // tokens; a run_script snippet plus a recap fits comfortably under this.
     maxOutputTokens: 1500,
-    system: systemPrompt(accounts.map((a) => a.email), {
-      allMode,
-      scopeEmail,
-    }),
+    system: systemText,
     messages: modelMessages,
     tools: mcp.tools,
     // If the client disconnects mid-stream, stop generating and let onAbort tear

@@ -12,6 +12,7 @@ import {
   CloseIcon,
   DocumentsIcon,
   HistoryIcon,
+  PaperclipIcon,
   PlusIcon,
   SendIcon,
   TrashIcon,
@@ -29,6 +30,18 @@ import { api } from "@/trpc/react";
 /** What the agent stages for confirmation, carried on a `data-pendingAction` part. */
 type PendingAction = { token: string; summary: ActionSummary };
 type CardState = "confirmed" | "denied" | undefined;
+
+/** A file the user has attached to the next turn (uploaded or picked from mail). */
+type PendingAttachment = {
+  key: string;
+  name: string;
+  mimeType: string;
+  text: string;
+  status: "loading" | "ready" | "error";
+  error?: string;
+};
+/** Attachment metadata kept on the user message so chips persist in history. */
+type AttachmentMeta = { attachments?: { name: string; mimeType: string }[] };
 
 /**
  * The confirmation card for a staged destructive action. Its contents are
@@ -347,6 +360,12 @@ export function AgentPanel({ account }: { account: string }) {
 
   const busy = status === "submitted" || status === "streaming";
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Files attached to the NEXT turn (uploaded or picked from mail), each parsed
+  // to text before it can be sent.
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Which staged actions the user has resolved, keyed by signed token. Persisted
   // in a module store so a confirmed card doesn't reset to live buttons after a
@@ -429,6 +448,99 @@ export function AgentPanel({ account }: { account: string }) {
     }
   }
 
+  // Mail attachments the user can attach (text-bearing types only — images
+  // can't be read as text). Loaded only while the attach popover is open.
+  const docsForPicker = api.documents.list.useQuery(
+    { account, limit: 40 },
+    { enabled: attachOpen, staleTime: 30_000 },
+  );
+  const pickerDocs = (docsForPicker.data?.items ?? []).filter(
+    (d) =>
+      ["pdf", "doc", "sheet", "other"].includes(d.category) &&
+      (pickerSearch.trim() === "" ||
+        d.filename.toLowerCase().includes(pickerSearch.trim().toLowerCase())),
+  );
+  const extractText = api.documents.extractText.useMutation();
+
+  function patchAttachment(key: string, patch: Partial<PendingAttachment>) {
+    setPending((prev) =>
+      prev.map((a) => (a.key === key ? { ...a, ...patch } : a)),
+    );
+  }
+  function removeAttachment(key: string) {
+    setPending((prev) => prev.filter((a) => a.key !== key));
+  }
+
+  async function uploadFiles(files: FileList | null) {
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      const key = newConversationId();
+      setPending((prev) => [
+        ...prev,
+        {
+          key,
+          name: file.name || "file",
+          mimeType: file.type,
+          text: "",
+          status: "loading",
+        },
+      ]);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/agent/attach", { method: "POST", body: form });
+        const data = (await res.json()) as {
+          name?: string;
+          mimeType?: string;
+          text?: string;
+          error?: string;
+        };
+        if (!res.ok || !data.text) {
+          throw new Error(data.error ?? "Couldn't read that file.");
+        }
+        patchAttachment(key, {
+          text: data.text,
+          mimeType: data.mimeType ?? file.type,
+          status: "ready",
+        });
+      } catch (e) {
+        patchAttachment(key, {
+          status: "error",
+          error: e instanceof Error ? e.message : "Upload failed.",
+        });
+      }
+    }
+  }
+
+  async function attachFromMail(doc: {
+    accountId: string;
+    messageId: string;
+    attachmentId: string;
+    filename: string;
+    mimeType: string;
+  }) {
+    const key = `${doc.accountId}:${doc.messageId}:${doc.attachmentId}`;
+    setAttachOpen(false);
+    if (pending.some((a) => a.key === key)) return;
+    setPending((prev) => [
+      ...prev,
+      { key, name: doc.filename, mimeType: doc.mimeType, text: "", status: "loading" },
+    ]);
+    try {
+      const data = await extractText.mutateAsync({
+        account: doc.accountId,
+        messageId: doc.messageId,
+        attachmentId: doc.attachmentId,
+      });
+      patchAttachment(key, { text: data.text, name: data.name, status: "ready" });
+    } catch (e) {
+      patchAttachment(key, {
+        status: "error",
+        error: e instanceof Error ? e.message : "Couldn't read that attachment.",
+      });
+    }
+  }
+
   // Show a thinking skeleton whenever the agent is busy but no text is
   // visibly streaming: before the first token, and between tool steps.
   const last = messages[messages.length - 1];
@@ -444,15 +556,35 @@ export function AgentPanel({ account }: { account: string }) {
       (last.role === "assistant" && lastContentPart?.type !== "text"));
 
   function submit(text: string) {
+    const ready = pending.filter((a) => a.status === "ready");
+    const anyLoading = pending.some((a) => a.status === "loading");
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    // Nothing to send, still parsing an attachment, or a turn is in flight.
+    if ((!trimmed && ready.length === 0) || anyLoading || busy) return;
     // Open a conversation id for a fresh chat so the settled thread persists.
     if (!currentConversationId) currentConversationId = newConversationId();
-    // Tell the server which mailbox(es) the user is looking at: a specific
-    // account id, or "all" so the agent fans out across every connected inbox
-    // instead of silently defaulting to one.
-    void sendMessage({ text: trimmed }, { body: { account } });
+    const meta: AttachmentMeta | undefined = ready.length
+      ? { attachments: ready.map((a) => ({ name: a.name, mimeType: a.mimeType })) }
+      : undefined;
+    // Tell the server which mailbox(es) the user is looking at, plus any attached
+    // files' parsed text (context only). The names ride in metadata so the chips
+    // persist on the user message in history.
+    void sendMessage(
+      {
+        text: trimmed || "Review the attached file(s) and tell me what I can do with them.",
+        ...(meta ? { metadata: meta } : {}),
+      },
+      {
+        body: {
+          account,
+          ...(ready.length
+            ? { attachments: ready.map((a) => ({ name: a.name, text: a.text })) }
+            : {}),
+        },
+      },
+    );
     setInput("");
+    setPending([]);
   }
 
   // Keep the newest message in view — but only when the user is already near the
@@ -652,6 +784,21 @@ export function AgentPanel({ account }: { account: string }) {
                 }
                 return null;
               })}
+              {message.role === "user" &&
+                (() => {
+                  const meta = message.metadata as AttachmentMeta | undefined;
+                  if (!meta?.attachments?.length) return null;
+                  return (
+                    <div className="agent-msg-files">
+                      {meta.attachments.map((f, i) => (
+                        <span className="agent-msg-file" key={i} title={f.name}>
+                          <DocumentsIcon size={12} />
+                          <span>{f.name}</span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
             </motion.div>
           ))}
 
@@ -702,35 +849,141 @@ export function AgentPanel({ account }: { account: string }) {
         </div>
       </div>
 
-      <form
-        className="agent-inputrow"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit(input);
-        }}
-      >
+      <div className="agent-compose">
+        {pending.length > 0 && (
+          <div className="agent-attach-chips">
+            {pending.map((a) => (
+              <span
+                key={a.key}
+                className="agent-attach-chip"
+                data-status={a.status}
+                title={a.error ?? a.name}
+              >
+                {a.status === "loading" ? (
+                  <span className="mini-spinner" />
+                ) : (
+                  <DocumentsIcon size={12} />
+                )}
+                <span className="agent-attach-name">{a.name}</span>
+                <button
+                  type="button"
+                  className="agent-attach-x"
+                  onClick={() => removeAttachment(a.key)}
+                  aria-label={`Remove ${a.name}`}
+                >
+                  <CloseIcon size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {attachOpen && (
+          <div className="agent-attach-pop">
+            <div className="agent-attach-pop-head">
+              <button
+                type="button"
+                className="agent-bar-btn"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <PaperclipIcon size={14} />
+                Upload a file
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setAttachOpen(false)}
+                aria-label="Close"
+              >
+                <CloseIcon size={16} />
+              </button>
+            </div>
+            <input
+              className="field agent-attach-search"
+              type="text"
+              placeholder="Search mail attachments…"
+              value={pickerSearch}
+              onChange={(e) => setPickerSearch(e.target.value)}
+            />
+            <div className="agent-attach-list">
+              {docsForPicker.isLoading ? (
+                <p className="agent-attach-empty">Loading attachments…</p>
+              ) : pickerDocs.length === 0 ? (
+                <p className="agent-attach-empty">No matching attachments.</p>
+              ) : (
+                pickerDocs.map((d) => (
+                  <button
+                    key={`${d.accountId}:${d.messageId}:${d.attachmentId}`}
+                    type="button"
+                    className="agent-attach-doc"
+                    onClick={() => void attachFromMail(d)}
+                    title={d.filename}
+                  >
+                    <DocumentsIcon size={13} />
+                    <span className="agent-attach-doc-name">{d.filename}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        <form
+          className="agent-inputrow"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit(input);
+          }}
+        >
+          <button
+            type="button"
+            className="agent-attach-btn"
+            data-on={attachOpen}
+            onClick={() => setAttachOpen((open) => !open)}
+            aria-label="Attach a file"
+            title="Attach a file"
+          >
+            <PaperclipIcon size={16} />
+          </button>
+          <input
+            ref={inputRef}
+            className="field"
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Tell the agent what to do…"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") inputRef.current?.blur();
+              // Don't let an Enter that only commits an IME candidate submit.
+              if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault();
+            }}
+          />
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={
+              busy ||
+              pending.some((a) => a.status === "loading") ||
+              (!input.trim() && !pending.some((a) => a.status === "ready"))
+            }
+          >
+            {busy ? "Working…" : "Send"}
+            {!busy && <SendIcon size={14} />}
+          </button>
+        </form>
         <input
-          ref={inputRef}
-          className="field"
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Tell the agent what to do…"
-          onKeyDown={(e) => {
-            if (e.key === "Escape") inputRef.current?.blur();
-            // Don't let an Enter that only commits an IME candidate submit.
-            if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault();
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf"
+          multiple
+          hidden
+          onChange={(e) => {
+            void uploadFiles(e.target.files);
+            e.target.value = "";
+            setAttachOpen(false);
           }}
         />
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={busy || !input.trim()}
-        >
-          {busy ? "Working…" : "Send"}
-          {!busy && <SendIcon size={14} />}
-        </button>
-      </form>
+      </div>
       <p className="agent-fine tnum">
         Acts on your real account. Sends only when you ask it to.
         <Kbd>↵</Kbd>

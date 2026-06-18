@@ -214,6 +214,12 @@ export const HistoryIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const PaperclipIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M20 11.5 11.5 20a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.5 3.5 0 0 1 5 5l-8.5 8.5a1.5 1.5 0 0 1-2.2-2.1l7.8-7.8" />
+  </Svg>
+);
+
 export const SpamIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2L8.2 3Z" />

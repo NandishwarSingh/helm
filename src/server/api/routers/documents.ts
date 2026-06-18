@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { z } from "zod";
@@ -5,7 +6,9 @@ import { z } from "zod";
 import { conn, db } from "@/server/db";
 import { documents } from "@/server/db/schema";
 import { mapLimit } from "@/server/lib/concurrency";
+import { extractDocText } from "@/server/lib/doc-text";
 import { scanAllDocuments } from "@/server/lib/documents";
+import { fetchAttachmentBytes } from "@/server/lib/gmail-attachments";
 import { embedQuery, toVectorLiteral } from "@/server/lib/embeddings";
 import { notifyTenant } from "@/server/lib/realtime";
 import { getAccountClients } from "@/server/lib/tenant";
@@ -184,6 +187,54 @@ export const documentsRouter = createTRPCRouter({
           ),
         );
       return { ok: true };
+    }),
+
+  // Extract the text of one mail attachment for the agent to reason over (attach
+  // a doc to a chat). Ownership-scoped via opAccount + a documents-row check;
+  // bytes are fetched live and never stored.
+  extractText: authedProcedure
+    .input(
+      z.object({
+        account: accountInput,
+        messageId: z.string().min(1),
+        attachmentId: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { tenantId } = await opAccount(input.account, { requireAccount: true });
+      const [row] = await db
+        .select({ filename: documents.filename, mimeType: documents.mimeType })
+        .from(documents)
+        .where(
+          and(
+            eq(documents.tenantId, tenantId),
+            eq(documents.messageId, input.messageId),
+            eq(documents.attachmentId, input.attachmentId),
+          ),
+        )
+        .limit(1);
+      if (!row) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Attachment not found." });
+      }
+      const bytes = await fetchAttachmentBytes(
+        tenantId,
+        input.messageId,
+        input.attachmentId,
+      );
+      if (!bytes) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Could not fetch that attachment.",
+        });
+      }
+      const text = await extractDocText(row.mimeType, row.filename, bytes);
+      if (!text.trim()) {
+        throw new TRPCError({
+          code: "UNPROCESSABLE_CONTENT",
+          message: "No readable text in that attachment.",
+        });
+      }
+      return { name: row.filename, mimeType: row.mimeType, text: text.slice(0, 8000) };
     }),
 
   // Manual "scan now" (realtime also auto-scans on new mail). Fire-and-forget so
