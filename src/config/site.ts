@@ -26,10 +26,10 @@ export const siteConfig = {
   // THESE IN with real, working details before going live — a non-working
   // contact or placeholder address will fail Razorpay activation.
   legal: {
-    entity: "Helm", // your registered business / legal name
-    email: "support@houndcode.com", // a working support inbox — VERIFY/REPLACE
-    phone: "+91 00000 00000", // a reachable phone number — REPLACE
-    address: "Add your registered business address here", // REPLACE
+    entity: "Nandishwar Singh", // registered owner / legal name
+    email: "nandubhai222@gmail.com", // working support inbox
+    phone: "+91 6005886885", // reachable phone number
+    address: "Kathua, Jammu and Kashmir 184142, India", // registered address
     jurisdiction: "India", // governing law / courts
     effectiveDate: "June 16, 2026", // last-updated date shown on each policy
     // What the customer pays for + the refund window, in plain words.
