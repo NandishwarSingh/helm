@@ -130,6 +130,12 @@ export function CalendarPanel({
   const [editingAccount, setEditingAccount] = useState<string | undefined>(
     undefined,
   );
+  // Which calendar a NEW event is created on while in the unified ("all") view.
+  // Defaults to the active account (so the default target is unchanged); the
+  // user can pick another in the composer.
+  const [createAccount, setCreateAccount] = useState<string | undefined>(
+    undefined,
+  );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
@@ -240,6 +246,7 @@ export function CalendarPanel({
     setEnd(toDatetimeLocalValue(defaults.endAt));
     setEditingId(null);
     setEditingAccount(undefined);
+    setCreateAccount(undefined);
     setConfirmingDelete(false);
     setConfirmEvent(null);
     onCreateOpenChange(false);
@@ -291,6 +298,8 @@ export function CalendarPanel({
     setSummary(seed.summary);
     setAttendees(seed.attendee);
     setDescription(seed.description);
+    // Default the new event to the calendar of the account the email arrived in.
+    if (seed.account) setCreateAccount(seed.account);
     onSeedConsumed();
   }, [createOpen, seed, onSeedConsumed]);
 
@@ -551,6 +560,15 @@ export function CalendarPanel({
       .filter(Boolean);
   }
 
+  // The calendar a new event lands on in the unified view: the user's pick in
+  // the composer, else the active account (the same target as before, so the
+  // default is unchanged — the picker only adds an explicit override).
+  const defaultCreateAccountId =
+    accountsQuery.data?.activeId ??
+    accountsQuery.data?.accounts.find((a) => a.isPrimary)?.id ??
+    accountsQuery.data?.accounts[0]?.id;
+  const createAccountId = createAccount ?? defaultCreateAccountId;
+
   const eventInput = {
     summary,
     description: description || undefined,
@@ -560,12 +578,12 @@ export function CalendarPanel({
     start: allDay ? start : new Date(start).toISOString(),
     end: allDay ? shiftDateString(end, 1) : new Date(end).toISOString(),
     attendees: parseAttendees(),
-    // New events go on the active calendar (the primary in the unified view);
-    // an edit stays on the calendar the event already lives in.
+    // A new event goes on the chosen (or active) calendar; an edit stays on the
+    // calendar the event already lives in.
     account: editingId
       ? editingAccount
       : account === "all"
-        ? undefined
+        ? createAccountId
         : account,
   };
 
@@ -935,6 +953,22 @@ export function CalendarPanel({
                 </button>
               </div>
               <div className="compose-body">
+                {!editingId && account === "all" && multiAccount && (
+                  <label className="label">
+                    Calendar
+                    <select
+                      className="field"
+                      value={createAccountId ?? ""}
+                      onChange={(e) => setCreateAccount(e.target.value)}
+                    >
+                      {accountsQuery.data?.accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label ? `${a.label} — ${a.email}` : a.email}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <input
                   className="field"
                   type="text"

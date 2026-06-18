@@ -48,6 +48,9 @@ export type EventSeed = {
   summary: string;
   attendee: string;
   description: string;
+  // The account the source email arrived in, so the event defaults to that
+  // calendar in the unified view (undefined => the active account).
+  account?: string;
 };
 
 type Props = {
@@ -1090,6 +1093,8 @@ export function GmailPanel({
         0,
         400,
       ),
+      // Default the event to the calendar of the account this email is in.
+      account: selectedId ? accountOf(selectedId) : undefined,
     });
   }
 
