@@ -259,14 +259,23 @@
  * ------------------------------------------------------------------ */
 @layer components {
   .app {
+    --agent-w: 420px;
     display: grid;
     grid-template-columns: 232px minmax(0, 1fr) 0;
     height: 100dvh;
     overflow: hidden;
-    transition: grid-template-columns 0.18s var(--ease-snap);
+    /* A fixed-length open track (NOT minmax): grid-template-columns can't tween
+       a length to a minmax(), which made the panel snap open. A length→length
+       track interpolates, so the column glides; the easing matches the drawer. */
+    transition: grid-template-columns 0.34s cubic-bezier(0.32, 0.72, 0, 1);
   }
   .app[data-agent-drawer="true"] {
-    grid-template-columns: 232px minmax(0, 1fr) minmax(360px, 460px);
+    grid-template-columns: 232px minmax(0, 1fr) var(--agent-w);
+  }
+  /* Give the open message more room while the agent panel is open by trimming
+     the mail list column. */
+  .app[data-agent-drawer="true"] .mail {
+    grid-template-columns: minmax(240px, 300px) 1fr;
   }
 
   .rail {
@@ -599,6 +608,8 @@
     grid-template-columns: minmax(300px, 380px) 1fr;
     height: 100%;
     min-height: 0;
+    /* Glide the list column when the agent panel opens, in step with the app grid. */
+    transition: grid-template-columns 0.34s cubic-bezier(0.32, 0.72, 0, 1);
   }
   .mail-list {
     display: flex;
@@ -1875,8 +1886,11 @@
     right: auto;
     top: auto;
     z-index: 1;
-    width: 100%;
+    /* Fixed width = the open track, so the panel content never reflows while the
+       grid column animates — the column's growth slides the panel in cleanly. */
+    width: var(--agent-w);
     height: 100dvh;
+    overflow: hidden;
     box-shadow: none;
   }
   .agent-drawer-head {
@@ -4090,15 +4104,19 @@
 
 @media (max-width: 860px) {
   .app {
+    /* Near-full-width panel on small screens; still a length so it interpolates. */
+    --agent-w: min(420px, 88vw);
     grid-template-columns: minmax(0, 1fr) 0;
   }
   .app[data-agent-drawer="true"] {
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 85vw);
+    grid-template-columns: minmax(0, 1fr) var(--agent-w);
   }
   .rail {
     display: none;
   }
-  .mail {
+  /* Single column on mobile regardless of the agent panel (which overlays here). */
+  .mail,
+  .app[data-agent-drawer="true"] .mail {
     grid-template-columns: 1fr;
   }
   .mail-read {

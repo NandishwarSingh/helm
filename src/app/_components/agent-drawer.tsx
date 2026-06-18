@@ -5,7 +5,6 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { AgentPanel } from "@/app/_components/agent-panel";
 import { CloseIcon } from "@/components/icons";
-import { drawerRight } from "@/lib/motion";
 
 /**
  * The Agent as a right-side slide-over, usable from any view without leaving the
@@ -40,10 +39,13 @@ export function AgentDrawer({
       {open && (
         <motion.aside
           className="agent-drawer agent-drawer-push"
-          variants={drawerRight}
-          initial="initial"
-          animate="animate"
-          exit="exit"
+          // The slide comes from the .app grid column animating open/closed; this
+          // just fades the panel in/out and — crucially — keeps it mounted for the
+          // column's collapse duration so it slides out instead of vanishing.
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.34, ease: [0.32, 0.72, 0, 1] }}
           role="complementary"
           aria-label="Agent"
         >
