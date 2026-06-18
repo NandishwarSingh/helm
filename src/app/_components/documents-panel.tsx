@@ -13,6 +13,7 @@ import {
   SearchIcon,
 } from "@/components/icons";
 import { HelmLoader } from "@/components/helm-loader";
+import { Kbd } from "@/components/kbd";
 import { hasOverlay, isTypingTarget, useAction, useOverlay } from "@/lib/actions";
 import { formatAccountEmail } from "@/lib/display";
 import { drawerRight, listRow, scrim, viewSwap } from "@/lib/motion";
@@ -59,6 +60,7 @@ const CATEGORY_ORDER = [
 const SYNC_TIMEOUT_MS = 120_000;
 const PAGE_SIZE = 60;
 const MAX_LIMIT = 200;
+const LOAD_MORE_MIN_MS = 650;
 
 type GroupBy = "type" | "sender" | "date";
 
@@ -192,6 +194,7 @@ export function DocumentsPanel({ account }: { account: string }) {
   const [activeDocKey, setActiveDocKey] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const syncTimeoutRef = useRef<number | null>(null);
+  const loadMoreStartedRef = useRef(0);
   const previewWarmRef = useRef<Set<string>>(new Set());
   const limit = limits[category] ?? PAGE_SIZE;
 
@@ -321,8 +324,12 @@ export function DocumentsPanel({ account }: { account: string }) {
   ]);
 
   useEffect(() => {
-    if (!listQuery.isFetching) setLoadingMore(false);
-  }, [listQuery.isFetching]);
+    if (!loadingMore || listQuery.isFetching) return;
+    const elapsed = performance.now() - loadMoreStartedRef.current;
+    const remaining = Math.max(0, LOAD_MORE_MIN_MS - elapsed);
+    const timeout = window.setTimeout(() => setLoadingMore(false), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [listQuery.isFetching, loadingMore]);
 
   function clearSyncTimeout() {
     if (syncTimeoutRef.current === null) return;
@@ -412,6 +419,7 @@ export function DocumentsPanel({ account }: { account: string }) {
 
   function loadMore() {
     if (!hasMore || loadingMore) return;
+    loadMoreStartedRef.current = performance.now();
     setLoadingMore(true);
     setLimits((prev) => ({
       ...prev,
@@ -574,6 +582,7 @@ export function DocumentsPanel({ account }: { account: string }) {
               <CloseIcon size={14} />
             </button>
           )}
+          {!query && <Kbd>/</Kbd>}
         </div>
         <div className="seg" role="group" aria-label="Group by">
           {(["type", "sender", "date"] as const).map((g) => (
@@ -595,7 +604,9 @@ export function DocumentsPanel({ account }: { account: string }) {
           data-spinning={scan.isPending || syncing}
           disabled={scan.isPending || syncing}
           aria-label="Scan for new documents"
-          title="Scan mail for new attachments"
+          title="Scan mail for new attachments — R"
+          data-tip="Scan attachments — R"
+          data-tip-pos="down"
         >
           <RefreshIcon size={16} />
         </button>
@@ -608,6 +619,10 @@ export function DocumentsPanel({ account }: { account: string }) {
       )}
 
       <div className="docs-chips" role="group" aria-label="Filter by type">
+        <span className="docs-chip-keys" aria-label="Previous and next type filter">
+          <Kbd>H</Kbd>
+          <Kbd>L</Kbd>
+        </span>
         <button
           type="button"
           className="docs-chip"
@@ -665,9 +680,18 @@ export function DocumentsPanel({ account }: { account: string }) {
           groups.map((group) => (
             <section key={group.key} className="docs-group">
               <header className="docs-group-head">
-                {group.key === "__pinned" && <PinIcon size={13} />}
-                <span>{group.label}</span>
-                <span className="docs-group-n">{group.docs.length}</span>
+                <span className="docs-group-title">
+                  {group.key === "__pinned" && <PinIcon size={13} />}
+                  <span>{group.label}</span>
+                  <span className="docs-group-n">{group.docs.length}</span>
+                </span>
+                {group.key === groups[0]?.key && (
+                  <span className="docs-row-keys" aria-label="Document shortcuts">
+                    <Kbd>J</Kbd>
+                    <Kbd>K</Kbd>
+                    <Kbd>↵</Kbd>
+                  </span>
+                )}
               </header>
               <ul className="docs-rows">
                 {group.docs.map((doc, i) => (
@@ -726,7 +750,9 @@ export function DocumentsPanel({ account }: { account: string }) {
                       onClick={() => togglePin(doc)}
                       aria-label={doc.pinned ? "Unpin" : "Pin to top"}
                       aria-pressed={doc.pinned}
-                      title={doc.pinned ? "Unpin" : "Pin to top"}
+                      title={doc.pinned ? "Unpin — P" : "Pin to top — P"}
+                      data-tip={doc.pinned ? "Unpin — P" : "Pin — P"}
+                      data-tip-pos="down"
                     >
                       <PinIcon size={15} filled={doc.pinned} />
                     </button>
@@ -734,7 +760,9 @@ export function DocumentsPanel({ account }: { account: string }) {
                       className="icon-btn docs-row-act"
                       href={previewUrl(doc, "attachment")}
                       aria-label={`Download ${doc.filename}`}
-                      title="Download"
+                      title="Download — D"
+                      data-tip="Download — D"
+                      data-tip-pos="down"
                     >
                       <DownloadIcon size={15} />
                     </a>
@@ -746,27 +774,143 @@ export function DocumentsPanel({ account }: { account: string }) {
 
         {hasMore && (
           <div className="docs-more">
-            <button
-              type="button"
-              className="btn btn-primary docs-load-more"
-              onClick={loadMore}
-              disabled={loadingMore}
-            >
-              {loadingMore ? (
-                <>
-                  <HelmLoader size={16} />
-                  Loading
-                </>
-              ) : (
-                "Load more"
-              )}
-            </button>
+            <LoadMoreButton loading={loadingMore} onClick={loadMore} />
           </div>
         )}
       </div>
 
       <DocPreview doc={preview} onClose={() => setPreview(null)} />
     </motion.div>
+  );
+}
+
+function LoadMoreGlyph({ loading }: { loading: boolean }) {
+  return (
+    <motion.svg
+      className="docs-load-more-glyph"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      data-loading={loading}
+      initial={false}
+      animate={loading ? "loading" : "idle"}
+    >
+      <motion.circle
+        className="docs-load-glyph-track"
+        cx="12"
+        cy="12"
+        r="8"
+        pathLength="1"
+        variants={{
+          idle: { opacity: 0, scale: 0.82 },
+          loading: { opacity: 0.28, scale: 1 },
+        }}
+        transition={{ duration: 0.18 }}
+      />
+      <motion.circle
+        className="docs-load-glyph-progress"
+        cx="12"
+        cy="12"
+        r="8"
+        pathLength="1"
+        variants={{
+          idle: { opacity: 0, pathLength: 0, rotate: 0 },
+          loading: {
+            opacity: 1,
+            pathLength: [0.2, 0.72, 0.2],
+            rotate: [0, 360],
+          },
+        }}
+        transition={{
+          opacity: { duration: 0.12 },
+          pathLength: { duration: 1.05, repeat: Infinity, ease: "easeInOut" },
+          rotate: { duration: 0.92, repeat: Infinity, ease: "linear" },
+        }}
+      />
+      <motion.g
+        className="docs-load-glyph-arrow"
+        variants={{
+          idle: { opacity: 1, y: 0, scale: 1 },
+          loading: { opacity: 0, y: 4, scale: 0.7 },
+        }}
+        transition={{ duration: 0.16 }}
+      >
+        <motion.path
+          d="M12 5v10"
+          initial={false}
+          variants={{
+            idle: { pathLength: 1 },
+            loading: { pathLength: 0 },
+          }}
+          transition={{ duration: 0.18 }}
+        />
+        <motion.path
+          d="M8 11l4 4 4-4"
+          initial={false}
+          variants={{
+            idle: { pathLength: 1 },
+            loading: { pathLength: 0 },
+          }}
+          transition={{ duration: 0.18 }}
+        />
+      </motion.g>
+      <motion.path
+        className="docs-load-glyph-sweep"
+        d="M7.8 12a4.2 4.2 0 0 1 8.4 0"
+        variants={{
+          idle: { opacity: 0, pathLength: 0 },
+          loading: { opacity: [0, 1, 0], pathLength: [0, 1, 0] },
+        }}
+        transition={{ duration: 1.05, repeat: Infinity, ease: "easeInOut" }}
+      />
+    </motion.svg>
+  );
+}
+
+function LoadMoreButton({
+  loading,
+  onClick,
+}: {
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      className="docs-load-more"
+      data-loading={loading}
+      aria-busy={loading}
+      onClick={onClick}
+      disabled={loading}
+      whileHover={loading ? undefined : { y: -1 }}
+      whileTap={loading ? undefined : { scale: 0.985 }}
+      transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+    >
+      <motion.span
+        className="docs-load-more-shine"
+        aria-hidden="true"
+        initial={false}
+        animate={loading ? { x: ["-120%", "120%"], opacity: [0, 0.42, 0] } : { opacity: 0 }}
+        transition={{
+          duration: 1.25,
+          repeat: loading ? Infinity : 0,
+          ease: "easeInOut",
+        }}
+      />
+      <LoadMoreGlyph loading={loading} />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={loading ? "loading" : "idle"}
+          className="docs-load-more-label"
+          initial={{ opacity: 0, y: 6, filter: "blur(3px)" }}
+          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={{ opacity: 0, y: -6, filter: "blur(3px)" }}
+          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+        >
+          {loading ? "Loading more" : "Load more"}
+        </motion.span>
+      </AnimatePresence>
+      {!loading && <Kbd>M</Kbd>}
+    </motion.button>
   );
 }
 

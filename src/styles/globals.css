@@ -2046,6 +2046,15 @@
     width: 24px;
     height: 24px;
   }
+  .docs-search > .kbd {
+    flex: none;
+    pointer-events: none;
+    opacity: 0.72;
+    transition: opacity 0.12s var(--ease-snap);
+  }
+  .docs-search:focus-within > .kbd {
+    opacity: 0;
+  }
   .docs-chips {
     flex: none;
     display: flex;
@@ -2055,6 +2064,26 @@
     overflow-x: auto;
     border-bottom: 1px solid var(--color-line);
     scrollbar-width: none;
+  }
+  .docs-chip-keys,
+  .docs-row-keys {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--color-ink-3);
+  }
+  .docs-chip-keys {
+    margin-right: 0.2rem;
+    opacity: 0.82;
+  }
+  .docs-chip-keys .kbd,
+  .docs-row-keys .kbd {
+    font-size: 0.66rem;
+    min-width: 1.35em;
+    height: 1.45em;
+    padding: 0 0.34em;
+    background: transparent;
   }
   .docs-chips::-webkit-scrollbar {
     display: none;
@@ -2102,12 +2131,19 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    justify-content: space-between;
     padding: 0.4rem 0.45rem 0.3rem;
     color: var(--color-ink-3);
     font-size: 0.74rem;
     font-weight: 600;
     letter-spacing: 0.02em;
     text-transform: uppercase;
+  }
+  .docs-group-title {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
   }
   .docs-group-n {
     font-variant-numeric: tabular-nums;
@@ -2136,7 +2172,6 @@
   }
   .docs-row[data-selected="true"] {
     background: var(--color-paper-sunken);
-    box-shadow: inset 2px 0 0 var(--color-accent);
   }
   .docs-row[data-pinned="true"] {
     background: var(--color-accent-wash);
@@ -2233,8 +2268,93 @@
     padding: 1rem 0 0.4rem;
   }
   .docs-load-more {
+    position: relative;
+    isolation: isolate;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     gap: 0.45rem;
-    min-width: 128px;
+    min-width: 154px;
+    height: 38px;
+    padding: 0 1rem;
+    overflow: hidden;
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent-strong) 78%, var(--color-line));
+    border-bottom-width: 2px;
+    border-radius: 8px;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--color-accent) 86%, var(--color-paper) 14%),
+        color-mix(in srgb, var(--color-accent) 74%, var(--color-ink) 26%)
+      );
+    box-shadow:
+      0 1px 0 color-mix(in srgb, var(--color-on-accent) 18%, transparent) inset,
+      0 10px 26px -18px var(--color-accent-strong);
+    color: var(--color-on-accent);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+  .docs-load-more:hover:not(:disabled) {
+    border-color: var(--color-accent);
+    filter: saturate(1.04);
+  }
+  .docs-load-more:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .docs-load-more:disabled {
+    cursor: wait;
+  }
+  .docs-load-more-shine {
+    position: absolute;
+    inset: -35% auto -35% 0;
+    z-index: -1;
+    width: 58%;
+    transform: skewX(-18deg);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--color-on-accent) 42%, transparent),
+      transparent
+    );
+  }
+  .docs-load-more-label {
+    flex: none;
+    line-height: 1;
+  }
+  .docs-load-more .kbd {
+    color: color-mix(in srgb, var(--color-on-accent) 82%, transparent);
+    background: color-mix(in srgb, var(--color-on-accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-on-accent) 26%, transparent);
+  }
+  .docs-load-more-glyph {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    overflow: visible;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    fill: none;
+  }
+  .docs-load-glyph-track,
+  .docs-load-glyph-progress {
+    transform-origin: 12px 12px;
+  }
+  .docs-load-glyph-track {
+    stroke: currentColor;
+  }
+  .docs-load-glyph-progress {
+    stroke: currentColor;
+    stroke-dasharray: 1;
+  }
+  .docs-load-glyph-sweep {
+    stroke: color-mix(in srgb, var(--color-on-accent) 86%, transparent);
   }
   .docs-empty {
     gap: 0.7rem;
