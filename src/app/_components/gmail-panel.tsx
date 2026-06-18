@@ -308,6 +308,11 @@ export function GmailPanel({
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  // The mailbox a NEW compose sends from while in the unified ("all") view.
+  // Defaults to the primary (unchanged behavior); the From picker overrides it.
+  const [composeAccount, setComposeAccount] = useState<string | undefined>(
+    undefined,
+  );
   // Threading: set when replying so the sent message nests in its conversation.
   const [replyThread, setReplyThread] = useState<{
     threadId: string;
@@ -339,6 +344,9 @@ export function GmailPanel({
   });
   const accountList = accountsQuery.data?.accounts ?? [];
   const multiAccount = accountsQuery.data?.multi ?? false;
+  // The default "from" for a new compose in unified view: primary, else first.
+  const composeFromDefault =
+    accountList.find((a) => a.isPrimary)?.id ?? accountList[0]?.id;
   const accountColor = (id: string | undefined): string | null =>
     id ? (accountList.find((a) => a.id === id)?.color ?? null) : null;
 
@@ -740,6 +748,7 @@ export function GmailPanel({
     setShowCcBcc(false);
     setSubject("");
     setBody("");
+    setComposeAccount(undefined);
     setReplyThread(null);
     setEditingDraftId(null);
     onComposeOpenChange(false);
@@ -755,7 +764,7 @@ export function GmailPanel({
       if (resolved) return resolved;
     }
     if (account !== "all") return account;
-    return accountList.find((a) => a.isPrimary)?.id ?? accountList[0]?.id;
+    return composeAccount ?? composeFromDefault;
   }
 
   // Fields shared by send/draft/update, including Cc/Bcc and any reply thread.
@@ -2229,6 +2238,25 @@ export function GmailPanel({
                 </button>
               </div>
               <div className="compose-body">
+                {account === "all" &&
+                  multiAccount &&
+                  !replyThread &&
+                  !editingDraftId && (
+                    <label className="label">
+                      From
+                      <select
+                        className="field"
+                        value={composeAccount ?? composeFromDefault ?? ""}
+                        onChange={(e) => setComposeAccount(e.target.value)}
+                      >
+                        {accountList.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.label ? `${a.label} — ${a.email}` : a.email}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 <div className="compose-recip">
                   <input
                     ref={toRef}
