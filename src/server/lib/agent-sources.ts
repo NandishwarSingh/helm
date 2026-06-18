@@ -1,5 +1,13 @@
 import "server-only";
 
+/** An attachment on a cited email, surfaced inline under the answer. */
+export type SourceMedia = {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  category: string;
+};
+
 /** A record the agent's answer drew on, cited at the end of the reply. */
 export type HelmSource = {
   kind: "email" | "event";
@@ -9,6 +17,8 @@ export type HelmSource = {
   title: string;
   from?: string;
   date?: string;
+  // Indexed attachments on this email (images/docs), filled in by the route.
+  media?: SourceMedia[];
 };
 
 type AccountRef = { accountId: string; email: string };

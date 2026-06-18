@@ -36,6 +36,9 @@ type Props = {
   onSeedConsumed: () => void;
   // Active account selection from the shell: a specific account id, or "all".
   account: string;
+  // Request to open a specific event (e.g. an agent source citation): jump to
+  // its week and select it. nonce makes a repeat request re-fire the effect.
+  openEvent?: { accountId: string; id: string; date?: string; nonce: number } | null;
 };
 
 type EventItem = {
@@ -59,6 +62,17 @@ type EventItem = {
  */
 function eventKey(ev: { accountId?: string; id: string }): string {
   return `${ev.accountId ?? ""}:${ev.id}`;
+}
+
+/** Whole-week offset from this week to the week containing `value` (Mon-based). */
+function weekOffsetForDate(value: string): number {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return 0;
+  const thisStart = getWeekBounds(0).start.getTime();
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+  return Math.round((d.getTime() - thisStart) / (7 * 86_400_000));
 }
 
 function formatHour(hour: number) {
@@ -106,6 +120,7 @@ export function CalendarPanel({
   seed,
   onSeedConsumed,
   account,
+  openEvent,
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
@@ -263,6 +278,22 @@ export function CalendarPanel({
     closeDialog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
+
+  // Open a specific event on request (an agent source citation): jump to its
+  // week and select it. Runs AFTER the account reset so a simultaneous account
+  // switch can't clear the selection we just set.
+  useEffect(() => {
+    if (!openEvent) return;
+    if (openEvent.date) setWeekOffset(weekOffsetForDate(openEvent.date));
+    const key = `${openEvent.accountId}:${openEvent.id}`;
+    setSelectedEventId(key);
+    const raf = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-event-id="${CSS.escape(key)}"]`)
+        ?.scrollIntoView({ block: "center" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [openEvent]);
 
   const createDraft = api.calendar.createDraft.useMutation({
     onSuccess: async () => {

@@ -65,6 +65,9 @@ type Props = {
   // False while the first-sync veil is driving the initial refresh, so the
   // panel doesn't fire a duplicate sync underneath it.
   autoSync?: boolean;
+  // Request to open a specific message (e.g. an agent source citation). The
+  // nonce makes a repeat request a fresh object so the effect re-fires.
+  openEmail?: { accountId: string; id: string; nonce: number } | null;
 };
 
 // Mirrors folderSchema's enum in src/server/lib/mail-view.ts (server-only, so
@@ -276,6 +279,7 @@ export function GmailPanel({
   onAddToCalendar,
   account,
   autoSync = true,
+  openEmail,
 }: Props) {
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
@@ -1446,6 +1450,15 @@ export function GmailPanel({
     setLocalEdits(new Map());
     setLimit(MAIL_PAGE);
   }, [account]);
+
+  // Open a specific message on request (an agent source citation). readId follows
+  // selectedId, so this surfaces it in the reading pane even when the message
+  // isn't in the current list/folder. Runs AFTER the account reset above so a
+  // simultaneous account switch can't clear the selection we just set.
+  useEffect(() => {
+    if (!openEmail) return;
+    setSelectedId(`${openEmail.accountId}:${openEmail.id}`);
+  }, [openEmail]);
 
   // Classify the active account's untriaged mail, re-running as the count moves:
   // a fresh batch from the push/poll, or progress from the last slice. It stays

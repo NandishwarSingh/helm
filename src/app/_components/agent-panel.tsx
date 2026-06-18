@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 import {
   AgentIcon,
   CloseIcon,
+  DocumentsIcon,
   HistoryIcon,
   PlusIcon,
   SendIcon,
@@ -17,7 +18,7 @@ import {
 } from "@/components/icons";
 import { Kbd } from "@/components/kbd";
 import { Skeleton } from "@/components/skeleton";
-import { useAction } from "@/lib/actions";
+import { dispatchOpenRecord, useAction } from "@/lib/actions";
 import { formatAccountEmail } from "@/lib/display";
 import { listRow } from "@/lib/motion";
 import type { ActionSummary } from "@/server/lib/agent-action";
@@ -178,7 +179,19 @@ function toolLabel(
   return done ? name : `${name}…`;
 }
 
-/** End-of-answer citations: the real emails/events the agent's reply drew on. */
+/** Byte-stream URL for a cited email's attachment (preview/download). */
+function mediaUrl(accountId: string, messageId: string, attachmentId: string): string {
+  const qs = new URLSearchParams({ account: accountId, disposition: "inline" });
+  return `/api/documents/${encodeURIComponent(messageId)}/${encodeURIComponent(
+    attachmentId,
+  )}?${qs.toString()}`;
+}
+
+/**
+ * End-of-answer citations: the real emails/events the reply drew on. Each is a
+ * button that navigates to and opens the record; indexed attachments (images /
+ * docs) render inline beneath it — images as thumbnails, docs as openable chips.
+ */
 function Sources({ sources }: { sources: HelmSource[] }) {
   if (sources.length === 0) return null;
   return (
@@ -187,16 +200,64 @@ function Sources({ sources }: { sources: HelmSource[] }) {
       <ol>
         {sources.map((s) => (
           <li key={`${s.accountId}:${s.id}`}>
-            <span className="agent-source-title">{s.title}</span>
-            <span className="agent-source-meta tnum">
-              {[
-                s.kind === "email" ? s.from : undefined,
-                s.date,
-                s.account ? formatAccountEmail(s.account) : undefined,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
+            <button
+              type="button"
+              className="agent-source"
+              onClick={() =>
+                dispatchOpenRecord({
+                  kind: s.kind,
+                  accountId: s.accountId,
+                  id: s.id,
+                  date: s.date,
+                })
+              }
+              title={`Open ${s.kind === "event" ? "event" : "email"}`}
+            >
+              <span className="agent-source-title">{s.title}</span>
+              <span className="agent-source-meta tnum">
+                {[
+                  s.kind === "email" ? s.from : undefined,
+                  s.date,
+                  s.account ? formatAccountEmail(s.account) : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </button>
+            {s.media?.length ? (
+              <div className="agent-source-media">
+                {s.media.map((m) => {
+                  const url = mediaUrl(s.accountId, s.id, m.attachmentId);
+                  const isImage =
+                    m.category === "image" || m.mimeType.startsWith("image/");
+                  return isImage ? (
+                    <a
+                      key={m.attachmentId}
+                      className="agent-source-thumb"
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={m.filename}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={m.filename} loading="lazy" />
+                    </a>
+                  ) : (
+                    <a
+                      key={m.attachmentId}
+                      className="agent-source-doc"
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={m.filename}
+                    >
+                      <DocumentsIcon size={13} />
+                      <span>{m.filename}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            ) : null}
           </li>
         ))}
       </ol>

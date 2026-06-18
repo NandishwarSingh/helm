@@ -39,7 +39,14 @@ import { Kbd } from "@/components/kbd";
 import { ShortcutsHelp } from "@/components/shortcuts-help";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { siteConfig } from "@/config/site";
-import { dispatchAction, hasOverlay, isTypingTarget, useOverlay } from "@/lib/actions";
+import {
+  dispatchAction,
+  hasOverlay,
+  isTypingTarget,
+  type OpenTarget,
+  useOpenRecord,
+  useOverlay,
+} from "@/lib/actions";
 import { formatAccountEmail } from "@/lib/display";
 import { useFocusTrap } from "@/lib/use-focus-trap";
 import { chordBar, iconMorph, viewSwap } from "@/lib/motion";
@@ -228,6 +235,22 @@ export function AppShell() {
       void utils.calendar.invalidate();
       void utils.documents.invalidate();
     },
+  });
+
+  // An agent source citation (or any deep component) can ask the shell to open a
+  // specific email/event: switch to the right view, scope to its mailbox, and
+  // hand the target to the panel (nonce so re-clicking the same one re-opens).
+  const [openTarget, setOpenTarget] = useState<
+    (OpenTarget & { nonce: number }) | null
+  >(null);
+  useOpenRecord((target) => {
+    setAgentDrawerOpen(false);
+    setView(target.kind === "event" ? "calendar" : "mail");
+    const known = accountList.some((a) => a.id === target.accountId);
+    const acct = known ? target.accountId : "all";
+    setActiveAccount(acct);
+    if (acct !== "all") setActiveAccountM.mutate({ accountId: acct });
+    setOpenTarget({ ...target, nonce: Date.now() });
   });
   // "Add account" is an authenticated form POST (intent=add); submit one
   // programmatically so it can be triggered from the menu or the palette.
@@ -760,6 +783,9 @@ export function AppShell() {
                     onComposeOpenChange={setComposeOpen}
                     account={activeAccount}
                     autoSync={!firstRun}
+                    openEmail={
+                      openTarget?.kind === "email" ? openTarget : null
+                    }
                     onAddToCalendar={(seed) => {
                       setEventSeed(seed);
                       setView("calendar");
@@ -773,6 +799,9 @@ export function AppShell() {
                     seed={eventSeed}
                     onSeedConsumed={() => setEventSeed(null)}
                     account={activeAccount}
+                    openEvent={
+                      openTarget?.kind === "event" ? openTarget : null
+                    }
                   />
                 )}
               </motion.div>

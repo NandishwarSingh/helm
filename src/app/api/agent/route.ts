@@ -6,10 +6,13 @@ import {
   streamText,
   type UIMessage,
 } from "ai";
+import { and, inArray } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { corsair } from "@/server/corsair";
+import { db } from "@/server/db";
+import { documents } from "@/server/db/schema";
 import {
   type ActionSummary,
   signAction,
@@ -17,7 +20,7 @@ import {
   verifyAction,
 } from "@/server/lib/agent-action";
 import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
-import { createSourceRegistry } from "@/server/lib/agent-sources";
+import { createSourceRegistry, type SourceMedia } from "@/server/lib/agent-sources";
 import { suggestFollowups, type Suggestion } from "@/server/lib/agent-suggest";
 import { createCorsairMcp } from "@/server/lib/corsair-mcp";
 import { AGENT_MODEL, openrouter } from "@/server/lib/openrouter";
@@ -383,6 +386,59 @@ export async function POST(request: NextRequest) {
       await result.finishReason; // wait for the model to finish staging
       // Cite the records the agent actually read (harvested from run_script).
       const cited = sources.resolve();
+      // Enrich email citations with any INDEXED attachments (images/docs) so the
+      // reply can show them inline. Best-effort + cheap: one query over the
+      // documents table for the cited messages; un-indexed mail simply has none.
+      const emailCited = cited.filter((s) => s.kind === "email");
+      if (emailCited.length > 0) {
+        try {
+          const rows = await db
+            .select({
+              accountId: documents.accountId,
+              messageId: documents.messageId,
+              attachmentId: documents.attachmentId,
+              filename: documents.filename,
+              mimeType: documents.mimeType,
+              category: documents.category,
+            })
+            .from(documents)
+            .where(
+              and(
+                inArray(
+                  documents.accountId,
+                  Array.from(new Set(emailCited.map((s) => s.accountId))),
+                ),
+                inArray(
+                  documents.messageId,
+                  Array.from(new Set(emailCited.map((s) => s.id))),
+                ),
+              ),
+            );
+          const byMsg = new Map<string, SourceMedia[]>();
+          for (const r of rows) {
+            const key = `${r.accountId}:${r.messageId}`;
+            const list = byMsg.get(key) ?? [];
+            if (list.length < 4) {
+              list.push({
+                attachmentId: r.attachmentId,
+                filename: r.filename,
+                mimeType: r.mimeType,
+                category: r.category,
+              });
+            }
+            byMsg.set(key, list);
+          }
+          for (const s of cited) {
+            const media = byMsg.get(`${s.accountId}:${s.id}`);
+            if (media?.length) s.media = media;
+          }
+        } catch (error) {
+          console.error(
+            "source media enrich failed:",
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
       if (cited.length > 0) {
         writer.write({
           type: "data-sources",
