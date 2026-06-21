@@ -81,4 +81,21 @@ export const billingRouter = createTRPCRouter({
       });
       return { ok: true };
     }),
+
+  // Hackathon demo shortcut: unlock Pro instantly for the active account with no
+  // real payment. The full Razorpay flow above (subscribe → Checkout → verify,
+  // plus the webhook source-of-truth) is what production uses; this only exists
+  // so a reviewer can try the Pro features without a card. It writes a clearly
+  // marked sentinel "demo:" subscription so it can never be confused with — or
+  // clobber — a real Razorpay-backed row.
+  activateDemo: authedProcedure.mutation(async () => {
+    const subscriberId = await getSubscriberId();
+    if (!subscriberId) throw new TRPCError({ code: "UNAUTHORIZED" });
+    await upsertSubscription({
+      subscriberId,
+      razorpaySubscriptionId: `demo:${subscriberId}`,
+      status: "active",
+    });
+    return { ok: true };
+  }),
 });

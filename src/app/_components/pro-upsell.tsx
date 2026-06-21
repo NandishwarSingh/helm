@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { useProCheckout } from "@/app/_components/use-pro-checkout";
 import { CloseIcon } from "@/components/icons";
 import { scrim, slideOver } from "@/lib/motion";
 import { useFocusTrap } from "@/lib/use-focus-trap";
+import { api } from "@/trpc/react";
 
 type Props = {
   open: boolean;
@@ -24,6 +25,26 @@ export function ProUpsell({ open, onOpenChange }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, open);
   const { upgrade, busy, error } = useProCheckout();
+
+  // Demo unlock: flips the active account to Pro instantly (no card) so a
+  // hackathon reviewer can try the Pro features. Payments above are the real
+  // path; this just calls the labelled `billing.activateDemo` mutation and
+  // refreshes status so every `billing.status` consumer flips to Pro.
+  const utils = api.useUtils();
+  const activateDemo = api.billing.activateDemo.useMutation();
+  const [demoError, setDemoError] = useState<string | null>(null);
+
+  async function unlockDemo() {
+    if (activateDemo.isPending) return;
+    setDemoError(null);
+    try {
+      await activateDemo.mutateAsync();
+      await utils.billing.status.invalidate();
+      onOpenChange(false);
+    } catch {
+      setDemoError("Couldn't unlock the demo — please try again.");
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -94,6 +115,25 @@ export function ProUpsell({ open, onOpenChange }: Props) {
               <p className="pro-upsell-fine">
                 Billed monthly via Razorpay. Cancel anytime.
               </p>
+
+              <div className="pro-upsell-or" aria-hidden="true">
+                <span>for the hackathon demo</span>
+              </div>
+              <p className="pro-upsell-demo-note">
+                Payments are fully implemented (Razorpay above). You can also
+                unlock Pro instantly for this demo — no card needed.
+              </p>
+              {demoError && <p className="error">{demoError}</p>}
+              <button
+                type="button"
+                className="btn pro-upsell-demo"
+                onClick={() => void unlockDemo()}
+                disabled={activateDemo.isPending}
+              >
+                {activateDemo.isPending
+                  ? "Unlocking…"
+                  : "Activate Pro for demo (no payment)"}
+              </button>
             </div>
           </motion.div>
         </>

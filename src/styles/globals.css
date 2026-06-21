@@ -440,6 +440,34 @@
     font-size: 0.74rem;
     color: var(--color-ink-3);
   }
+  /* Divider between the real (paid) CTA and the demo unlock. */
+  .pro-upsell-or {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.35rem;
+    color: var(--color-ink-3);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .pro-upsell-or::before,
+  .pro-upsell-or::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--color-line);
+  }
+  .pro-upsell-demo-note {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--color-ink-2);
+  }
+  .pro-upsell-demo {
+    width: 100%;
+    justify-content: center;
+    border-style: dashed;
+  }
 
   /* ---- Subscriptions manager (Pro auto-unsubscribe) ---- */
   .compose.subscriptions {
