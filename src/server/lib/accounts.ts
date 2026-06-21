@@ -104,11 +104,11 @@ export async function linkAddedAccount(opts: {
   ownerId?: string;
   newTenantId: string;
   email: string;
-}): Promise<void> {
+}): Promise<string | null> {
   const { ownerKind, ownerId, newTenantId, email } = opts;
   if (!ownerId) {
     await teardownTenant(newTenantId);
-    return;
+    return null;
   }
 
   if (ownerKind === "user") {
@@ -130,7 +130,7 @@ export async function linkAddedAccount(opts: {
       !(await isProForEmails(existing.map((e) => e.email)))
     ) {
       await teardownTenant(newTenantId);
-      return;
+      return null;
     }
     await db
       .insert(userAccounts)
@@ -156,12 +156,24 @@ export async function linkAddedAccount(opts: {
       .limit(1);
     if (added[0]) {
       await setActiveAccountCookie(added[0].id);
-    } else {
-      // The (user, email) dedupe rejected it → the fresh tenant is orphaned.
-      // Don't revoke: the duplicate shares its grant with the kept account.
-      await teardownTenant(newTenantId, { revoke: false });
+      return newTenantId;
     }
-    return;
+    // Duplicate (user, email): keep the EXISTING tenant and REVIVE it — the
+    // caller writes the fresh refresh token to the tenant we return, so
+    // reconnecting a dead account actually heals it instead of stranding the
+    // fresh grant on a throwaway tenant. Tear the new tenant down (don't revoke:
+    // it shares the grant with the kept account).
+    const [dup] = await db
+      .select({ id: userAccounts.id, tenantId: userAccounts.tenantId })
+      .from(userAccounts)
+      .where(and(eq(userAccounts.userId, ownerId), eq(userAccounts.email, email)))
+      .limit(1);
+    await teardownTenant(newTenantId, { revoke: false });
+    if (dup) {
+      await setActiveAccountCookie(dup.id);
+      return dup.tenantId;
+    }
+    return null;
   }
 
   // Single-account (tenant) session → materialize a user owning old + new.
@@ -169,9 +181,11 @@ export async function linkAddedAccount(opts: {
   // Re-consenting the SAME mailbox (oldEmail is "" when unknown, which never
   // matches the new non-empty email): nothing to add, tear the new tenant down.
   if (oldEmail.toLowerCase() === email.toLowerCase()) {
-    // Same grant as the account they're already on — purge but DON'T revoke.
+    // Re-consenting the mailbox this session is already on: REVIVE the existing
+    // tenant with the fresh grant (caller writes the token to the returned id),
+    // and tear the throwaway new tenant down (DON'T revoke — shared grant).
     await teardownTenant(newTenantId, { revoke: false });
-    return;
+    return ownerId;
   }
 
   // Multi-account is Pro-only: a single-account (free) session can't materialize
@@ -180,7 +194,7 @@ export async function linkAddedAccount(opts: {
   // is a distinct grant we're rejecting, so revoke it as we tear it down.
   if (!(await isProForEmails([oldEmail]))) {
     await teardownTenant(newTenantId);
-    return;
+    return null;
   }
 
   const userId = randomUUID();
@@ -218,6 +232,10 @@ export async function linkAddedAccount(opts: {
     )
     .limit(1);
   await issueUserCookie(userId);
-  if (newRow[0]) await setActiveAccountCookie(newRow[0].id);
-  else await teardownTenant(newTenantId, { revoke: false });
+  if (newRow[0]) {
+    await setActiveAccountCookie(newRow[0].id);
+    return newTenantId;
+  }
+  await teardownTenant(newTenantId, { revoke: false });
+  return null;
 }

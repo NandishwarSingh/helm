@@ -73,12 +73,25 @@ export async function GET(request: NextRequest) {
       // Need the verified email synchronously to link + dedupe the account.
       const email = await getGmailEmail(tenantId);
       if (!email) return err("oauth_callback");
-      await linkAddedAccount({ ownerKind, ownerId, newTenantId: tenantId, email });
+      // Returns the tenant actually adopted: the new one for a genuinely new
+      // mailbox, or an EXISTING tenant when re-connecting one the owner already
+      // has (so we heal it instead of spawning a dead duplicate). null ⇒ rejected
+      // / torn down — arm nothing (this is what used to leave orphan watches).
+      const adopted = await linkAddedAccount({
+        ownerKind,
+        ownerId,
+        newTenantId: tenantId,
+        email,
+      });
       after(async () => {
+        if (!adopted) return;
         try {
-          await rememberGmailTenant(tenantId, email);
-          await armGmailWatch(tenantId);
-          await armCalendarWatch(tenantId);
+          // Revived an existing tenant → write the fresh grant to it so its dead
+          // refresh token is replaced. Then arm ONLY the adopted tenant.
+          if (adopted !== tenantId) await storeGoogleTokens(adopted, tokens);
+          await rememberGmailTenant(adopted, email);
+          await armGmailWatch(adopted);
+          await armCalendarWatch(adopted);
         } catch (error) {
           console.error(
             "[oauth] watch registration failed:",
