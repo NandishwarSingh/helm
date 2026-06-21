@@ -45,6 +45,38 @@ const MAX_HOST_CALLS = 80;
  * only Proxy/JSON, both of which exist in a bare isolate.
  */
 const BOOTSTRAP = `
+// Encoding helpers — a bare V8 isolate has no btoa / Buffer / TextEncoder, so
+// the model previously had no way to base64-encode a MIME message for
+// messages.send / drafts.create (it failed with "btoa is not defined"). These
+// are pure ECMAScript (no host round-trip) and use split/join, never regex, so
+// they're safe inside this template literal. toBase64Url() builds Gmail's "raw".
+var __B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function __utf8(str) {
+  var b = [], i, c, c2, cp;
+  for (i = 0; i < str.length; i++) {
+    c = str.charCodeAt(i);
+    if (c < 0x80) { b.push(c); }
+    else if (c < 0x800) { b.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f)); }
+    else if (c < 0xd800 || c >= 0xe000) { b.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f)); }
+    else { i++; c2 = str.charCodeAt(i); cp = 0x10000 + (((c & 0x3ff) << 10) | (c2 & 0x3ff)); b.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f)); }
+  }
+  return b;
+}
+function __b64(bytes) {
+  var out = "", i, n, rem;
+  for (i = 0; i + 2 < bytes.length; i += 3) {
+    n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    out += __B64[(n >> 18) & 63] + __B64[(n >> 12) & 63] + __B64[(n >> 6) & 63] + __B64[n & 63];
+  }
+  rem = bytes.length - i;
+  if (rem === 1) { n = bytes[i] << 16; out += __B64[(n >> 18) & 63] + __B64[(n >> 12) & 63] + "=="; }
+  else if (rem === 2) { n = (bytes[i] << 16) | (bytes[i + 1] << 8); out += __B64[(n >> 18) & 63] + __B64[(n >> 12) & 63] + __B64[(n >> 6) & 63] + "="; }
+  return out;
+}
+function __b64url(s) { return __b64(__utf8(String(s))).split("+").join("-").split("/").join("_").split("=").join(""); }
+globalThis.btoa = function (s) { var t = String(s), b = [], i; for (i = 0; i < t.length; i++) b.push(t.charCodeAt(i) & 0xff); return __b64(b); };
+globalThis.toBase64Url = __b64url;
+globalThis.Buffer = { from: function (s) { var by = __utf8(String(s)); return { toString: function (enc) { return enc === "base64url" ? __b64(by).split("+").join("-").split("/").join("_").split("=").join("") : __b64(by); } }; } };
 globalThis.corsair = (function () {
   var accounts = JSON.parse(__corsairAccountsJson || "[]");
   function make(path, account) {

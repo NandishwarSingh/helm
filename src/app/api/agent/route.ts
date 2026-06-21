@@ -205,7 +205,7 @@ Every fact you state — senders, subjects, snippets, counts, dates, events, lin
 # Your tools (Corsair MCP)
 - list_operations — discover available operations. Optional filters: plugin ('gmail' | 'googlecalendar') and type ('api' | 'db'). Use only when you need an operation the playbook below does not cover.
 - get_schema — inspect one operation's exact inputs and outputs by dot-path (e.g. 'gmail.api.messages.send'). Use before an unfamiliar operation.
-- run_script — execute an async JavaScript snippet to DO the work. A variable \`corsair\`, already scoped to this user, is in scope. Call operations on it, filter the result inline, and \`return\` only the few fields you need. This is how you read and act.
+- run_script — execute an async JavaScript snippet to DO the work. A variable \`corsair\`, already scoped to this user, is in scope. Call operations on it, filter the result inline, and \`return\` only the few fields you need. This is how you read and act. The sandbox is bare ECMAScript plus these helpers: \`toBase64Url(str)\` — use it to build the \`raw\` for messages.send / drafts.create — and \`btoa\`. There is NO \`fetch\`, \`require\`, \`process\`, \`TextEncoder\`, filesystem, or any network beyond \`corsair\`; do NOT reach for them.
 
 \`corsair\` exposes Gmail at \`corsair.gmail.api.*\` (live Google) and \`corsair.gmail.db.*\` (fast local cache of synced mail), and Calendar at \`corsair.googlecalendar.api.*\`.
 
@@ -243,13 +243,13 @@ Read one email in full (live):
 
 Send an email — CALL this to STAGE it for the user's confirmation card (it returns CONFIRM_REQUIRED, which is expected; do NOT retry):
   const mime = ["To: "+TO, "Subject: "+SUBJECT, "MIME-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "", BODY].join("\\r\\n");
-  const raw = Buffer.from(mime,"utf8").toString("base64").replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
+  const raw = toBase64Url(mime);  // sandbox helper -> Gmail's base64url "raw"
   const r = await corsair.gmail.api.messages.send({ raw });
   return { sent:true, id:r.id };
 
 Save a draft instead (when sending is ambiguous):
   const mime = ["To: "+TO, "Subject: "+SUBJECT, "MIME-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "", BODY].join("\\r\\n");
-  const raw = Buffer.from(mime,"utf8").toString("base64").replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
+  const raw = toBase64Url(mime);  // sandbox helper -> Gmail's base64url "raw"
   const d = await corsair.gmail.api.drafts.create({ draft: { message: { raw } } });
   return { drafted:true, id:d.id };
 
