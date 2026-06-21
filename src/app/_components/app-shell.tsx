@@ -778,7 +778,7 @@ export function AppShell() {
                     : "Agent"}
             </span>
             <span className="topbar-spacer" />
-            <UpgradePro />
+            <UpgradePro onUpgrade={() => setProUpsellOpen(true)} />
             <button
               type="button"
               className="icon-btn"

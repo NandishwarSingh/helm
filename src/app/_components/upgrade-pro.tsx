@@ -1,12 +1,19 @@
 "use client";
 
-import { useProCheckout } from "@/app/_components/use-pro-checkout";
 import { api } from "@/trpc/react";
 
-/** Rail CTA: starts a ₹99/month Helm Pro subscription via Razorpay Checkout. */
-export function UpgradePro() {
+type Props = {
+  /** Open the Pro upsell modal (real Razorpay checkout + the demo unlock). */
+  onUpgrade: () => void;
+};
+
+/**
+ * Topbar CTA. Opens the Pro upsell modal — the single upgrade surface that holds
+ * both the real ₹99/month Razorpay checkout and the no-payment demo unlock — so
+ * the demo option is reachable from the most prominent entry point too.
+ */
+export function UpgradePro({ onUpgrade }: Props) {
   const status = api.billing.status.useQuery(undefined, { staleTime: 60_000 });
-  const { upgrade, busy, error } = useProCheckout();
 
   // Nothing until we know the state (avoids flashing the wrong CTA in the topbar).
   if (status.isLoading) return null;
@@ -22,11 +29,10 @@ export function UpgradePro() {
     <button
       type="button"
       className="btn upgrade-pro"
-      onClick={() => void upgrade()}
-      disabled={busy}
-      title={error ?? "Unlock Helm Pro"}
+      onClick={onUpgrade}
+      title="Unlock Helm Pro"
     >
-      {busy ? "Opening…" : "Upgrade to Pro"}
+      Upgrade to Pro
     </button>
   );
 }
