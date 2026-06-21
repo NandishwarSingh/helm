@@ -20,7 +20,11 @@ import {
   mapLimit,
   requireExplicitAccount,
 } from "@/server/lib/concurrency";
-import { isNotConnectedError, listOrEmpty } from "@/server/lib/corsair-errors";
+import {
+  isAuthExpiredError,
+  isNotConnectedError,
+  listOrEmpty,
+} from "@/server/lib/corsair-errors";
 import {
   encodeRawEmail,
   extractBodyFromPayload,
@@ -36,7 +40,7 @@ import {
   sortMessagesNewestFirst,
 } from "@/server/lib/mail-view";
 import { notifyTenant } from "@/server/lib/realtime";
-import { withRetry } from "@/server/lib/retry";
+import { withRetry, withTimeout } from "@/server/lib/retry";
 import {
   deleteMessageEmbeddings,
   embedText,
@@ -484,8 +488,15 @@ export const gmailRouter = createTRPCRouter({
         const { tenant } = await opAccount(input.account);
         // Always fetch the full message so the open view consistently has both
         // the rich HTML and a plain-text fallback (the list cache holds neither).
-        const message = await withRetry(() =>
-          tenant.gmail.api.messages.get({ id: input.id, format: "full" }),
+        // Timeout-bounded: Node fetch has no default timeout, so a stalled Gmail
+        // connection would otherwise hang the reading pane on a skeleton forever.
+        const message = await withTimeout(
+          () =>
+            withRetry(() =>
+              tenant.gmail.api.messages.get({ id: input.id, format: "full" }),
+            ),
+          15_000,
+          "Loading the message",
         );
 
         const headers = message.payload?.headers;
@@ -507,6 +518,13 @@ export const gmailRouter = createTRPCRouter({
         };
       } catch (error) {
         if (isNotConnectedError(error)) return null;
+        if (isAuthExpiredError(error)) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message:
+              "RECONNECT_REQUIRED: this account's Google connection has expired — reconnect it (sign out and back in, or re-add the account) to read this email.",
+          });
+        }
         throw error;
       }
     }),
@@ -1123,8 +1141,13 @@ export const gmailRouter = createTRPCRouter({
     .query(async ({ input }) => {
       try {
         const { tenant } = await opAccount(input.account);
-        const thread = await withRetry(() =>
-          tenant.gmail.api.threads.get({ id: input.id, format: "full" }),
+        const thread = await withTimeout(
+          () =>
+            withRetry(() =>
+              tenant.gmail.api.threads.get({ id: input.id, format: "full" }),
+            ),
+          15_000,
+          "Loading the conversation",
         );
         const messages = (thread.messages ?? []).map((message) => {
           const headers = message.payload?.headers;
@@ -1152,6 +1175,13 @@ export const gmailRouter = createTRPCRouter({
         return { id: thread.id ?? input.id, messages };
       } catch (error) {
         if (isNotConnectedError(error)) return null;
+        if (isAuthExpiredError(error)) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message:
+              "RECONNECT_REQUIRED: this account's Google connection has expired — reconnect it to read this conversation.",
+          });
+        }
         throw error;
       }
     }),

@@ -55,6 +55,10 @@ export function putAttachment(
     if (!oldestToken) break;
     store.delete(oldestToken);
   }
+  // Fail closed: if it still doesn't fit after evicting everything (a single
+  // entry larger than the whole budget), refuse rather than blow past the cap.
+  // Empty token => "not stored"; callers treat it as bytes-missing.
+  if (totalBytes() + bytes.length > MAX_TOTAL_BYTES) return "";
   const token = randomUUID();
   store.set(token, {
     ownerId,

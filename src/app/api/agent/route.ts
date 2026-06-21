@@ -196,6 +196,12 @@ The user has ${accounts.length} mailboxes connected (${accounts.join(", ")}) and
 
 Current date and time: ${now.toISOString()} (UTC). The user's local timezone is Asia/Kolkata (+05:30) — when they say "tomorrow 9am" they mean their local time; produce ISO datetimes with an explicit +05:30 offset unless they specify otherwise.
 ${multiAccount}
+# Truthfulness — this overrides every other instruction
+Every fact you state — senders, subjects, snippets, counts, dates, events, links, amounts — MUST come from a run_script result you ACTUALLY received this turn. Never invent, guess, or use placeholder/example data.
+- If a run_script call returns an Error (an expired connection, "fetch failed", or no data), you MUST report that plainly and MUST NOT summarise, brief, or describe any mail/events for it. An honest "I couldn't read account X (its Google connection has expired — reconnect it)" is always correct; a fabricated briefing is the single worst thing you can do.
+- When you fan out across accounts, wrap EACH account's reads in try/catch. If one fails, include it tagged "needs reconnect" and continue with the others — never drop it silently and never fill it with invented content.
+- If ALL your reads failed, say exactly that and ask the user to reconnect — do not produce a summary from memory.
+
 # Your tools (Corsair MCP)
 - list_operations — discover available operations. Optional filters: plugin ('gmail' | 'googlecalendar') and type ('api' | 'db'). Use only when you need an operation the playbook below does not cover.
 - get_schema — inspect one operation's exact inputs and outputs by dot-path (e.g. 'gmail.api.messages.send'). Use before an unfamiliar operation.
@@ -277,6 +283,8 @@ Create an event and invite people — CALL this to STAGE it for confirmation (re
 - run_script is for Gmail and Calendar through \`corsair\` only. Never read process or environment variables, touch the filesystem, or make unrelated network requests.
 - Be concise but well-structured: short paragraphs, **bold**, hyphen or numbered lists, short section headings, and simple tables are all fine when they genuinely aid clarity (e.g. a table summarising several emails). Never use code blocks, horizontal rules or emojis.
 - Never invent ids, addresses, events or results. If an operation returns nothing, say so plainly.
+- "Send/email/forward X to name@example.com" means that address is the RECIPIENT (the To: line) — NOT an account to act on. You always send FROM a connected account and can email ANY address; never refuse to email an address just because it isn't a connected account.
+- Do exactly what THIS turn's message asks. A short follow-up ("send it", "reply", "forward it to …") or a file attached this turn is a NEW instruction — NEVER restart or repeat a previous task (e.g. re-running a briefing). "it"/"this"/"that" refers to the most recent relevant item or the file attached this turn.
 - If a step fails twice, stop retrying it and note the failure in your final answer.
 - ALWAYS end with a final text answer summarising exactly what you did, including anything you could not do and why. Only claim an action you actually performed via run_script in this conversation.`;
 }
@@ -440,7 +448,7 @@ export async function POST(request: NextRequest) {
     const block = attached
       .map((a) => `## ${a.name}\n${a.text.slice(0, 6000)}`)
       .join("\n\n");
-    systemText += `\n\n# Files the user attached this turn\nThe user attached the file(s) below. Use their content when relevant — to summarise them, draft an email, or create a calendar event — and never invent details that aren't present. IMPORTANT: if the user asks to ATTACH or SEND these file(s), just compose and send the email normally with gmail.api.messages.send (or save a draft); the actual file(s) are attached to the outgoing message automatically by the system. NEVER tell the user you cannot attach files.\n\n${block}`;
+    systemText += `\n\n# Files the user attached this turn\nThe user attached the file(s) below. Use their content when relevant — to summarise them, draft an email, or create a calendar event — and never invent details that aren't present. IMPORTANT: if the user asks to ATTACH or SEND these file(s), just compose and send the email normally with gmail.api.messages.send (or save a draft); the actual file(s) are attached to the outgoing message automatically by the system. NEVER tell the user you cannot attach files. If the user gives a recipient ("send it to X@example.com"), compose the email TO that address and STAGE the send now — do not restart any earlier task and do not ask again.\n\n${block}`;
   }
   const result = streamText({
     model: openrouter(AGENT_MODEL),

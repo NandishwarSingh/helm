@@ -24,3 +24,29 @@ export async function withRetry<T>(
   }
   throw lastError;
 }
+
+/**
+ * Reject after `ms` if `fn` hasn't settled. Node's `fetch` has NO default
+ * timeout, so a stalled Google/Corsair connection would otherwise hang the
+ * request (and the reading-pane on an endless skeleton) forever. The underlying
+ * promise may keep running in the background; this only bounds how long a caller
+ * waits before surfacing a clean error.
+ */
+export async function withTimeout<T>(
+  fn: () => Promise<T>,
+  ms: number,
+  label = "operation",
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([fn(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

@@ -21,15 +21,77 @@ export const ALLOWED_PATH = /^(gmail|googlecalendar)\.(api|db)\.[a-zA-Z0-9_.]+$/
  * can only ever resolve to an own operation.
  */
 const RESERVED_SEGMENT = new Set([
+  // Prototype-pollution / prototype-walk names.
   "__proto__",
   "prototype",
   "constructor",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+  // Every inherited Object.prototype / Function.prototype callable. The host
+  // walk resolves inherited members, so without these a path like
+  // `gmail.api.hasOwnProperty` would resolve to a real (host) function and be
+  // `.call()`-ed. Block the whole built-in surface so a path can only ever land
+  // on a Corsair-defined operation, not a JS built-in.
   "valueOf",
+  "toString",
+  "toLocaleString",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "call",
+  "apply",
+  "bind",
+  "caller",
+  "arguments",
+  "length",
+  "name",
 ]);
 
 export function isAllowedPath(path: string): boolean {
   if (!ALLOWED_PATH.test(path)) return false;
   return path.split(".").every((seg) => !RESERVED_SEGMENT.has(seg));
+}
+
+/**
+ * Leaf verbs that mutate state. Used to FAIL CLOSED: any op whose leaf is a
+ * write verb but which is neither an explicitly-handled destructive op
+ * (DESTRUCTIVE, staged for confirmation) nor a known-benign write
+ * (BENIGN_WRITES) is BLOCKED outright. `ALLOWED_PATH` admits every Corsair leaf,
+ * so without this a mutating op the DESTRUCTIVE list forgot — Gmail
+ * `settings.updateAutoForwarding` / `settings.filters.create` /
+ * `settings.delegates.create` / `messages.import`, Calendar `acl.insert` /
+ * `calendars.clear` — would run UNCONFIRMED via prompt injection (silent
+ * mailbox/calendar takeover). Reads (get/list/getMany/search/…) are not write
+ * verbs, so they're unaffected.
+ */
+// Prefix match (verb + optional suffix) so compound leaves are caught too —
+// e.g. `update` matches `updateImap`/`updateAutoForwarding`, `create` matches
+// `sendAs.create`. Read leaves (get*/list*/search/history/profile) start with
+// none of these, so reads are never blocked.
+const WRITE_LEAF =
+  /\.(create|insert|import|update|patch|delete|batch|modify|send|trash|untrash|clear|move|stop|watch|enable|disable|setup|register|verify)\w*$/i;
+
+/** Reversible single-item writes intentionally allowed WITHOUT confirmation. */
+const BENIGN_WRITES = new Set([
+  "gmail.api.drafts.create", // saving a draft is benign (not sent)
+  "gmail.api.messages.modify", // reversible single-message label toggle
+  "gmail.api.threads.modify", // reversible single-thread label toggle
+]);
+
+/** True if the op's leaf is a state-mutating verb. */
+export function isWriteOp(path: string): boolean {
+  return WRITE_LEAF.test(path);
+}
+
+/**
+ * A mutating op that is NEITHER an explicitly-handled destructive op (which is
+ * staged for confirmation) NOR a known-benign write — must be refused outright.
+ * This is the fail-closed backstop for the denylist gap in DESTRUCTIVE.
+ */
+export function isBlockedWrite(path: string): boolean {
+  return isWriteOp(path) && !isDestructive(path) && !BENIGN_WRITES.has(path);
 }
 
 /**

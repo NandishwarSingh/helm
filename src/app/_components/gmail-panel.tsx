@@ -2039,7 +2039,13 @@ export function GmailPanel({
           <ReadingSkeleton />
         ) : selectedEmail.error ? (
           <div className="empty">
-            <p className="error">This message could not be loaded.</p>
+            <p className="error">
+              {/RECONNECT_REQUIRED|reconnect|expired/i.test(
+                selectedEmail.error.message,
+              )
+                ? "This account's Google connection has expired. Reconnect it (sign out and back in, or re-add the account) to read this email."
+                : "This message could not be loaded."}
+            </p>
             <button
               type="button"
               className="btn"

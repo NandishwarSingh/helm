@@ -2,7 +2,12 @@ import "server-only";
 
 import ivm from "isolated-vm";
 
-import { isAllowedPath, isDestructive } from "@/server/lib/agent-policy";
+import {
+  isAllowedPath,
+  isBlockedWrite,
+  isDestructive,
+} from "@/server/lib/agent-policy";
+import { isAuthExpiredError } from "@/server/lib/corsair-errors";
 import {
   resolveAccountTarget,
   type AccountBridge,
@@ -27,6 +32,11 @@ const MEMORY_LIMIT_MB = 128;
 const SYNC_TIMEOUT_MS = 8_000; // CPU time for one synchronous turn in the isolate
 const OVERALL_TIMEOUT_MS = 20_000; // wall-clock ceiling incl. awaited Corsair calls
 const MAX_RESULT_BYTES = 512 * 1024; // per Corsair call; reduce a `limit:` if hit
+const MAX_ARG_BYTES = 512 * 1024; // per Corsair call's args — caps host-ward copy
+// Bounds host-side work per script: `arguments:{copy:true}` deep-copies every
+// arg into the NODE heap (outside the isolate's memory limit), so an await-loop
+// of huge calls could OOM/hammer the DB within the 20s wall-clock. Cap the count.
+const MAX_HOST_CALLS = 80;
 
 /**
  * Builds a recursive `corsair` Proxy inside the isolate. Property access
@@ -101,6 +111,8 @@ export async function runScriptSandboxed(
 ): Promise<ScriptResult> {
   const isolate = new ivm.Isolate({ memoryLimit: MEMORY_LIMIT_MB });
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // Per-script host-call budget — see MAX_HOST_CALLS.
+  let hostCalls = 0;
 
   // The host side of the bridge: validate the path against the allowlist,
   // resolve the method on the tenant-scoped Corsair client, call it, and hand
@@ -114,6 +126,14 @@ export async function runScriptSandboxed(
     accountEmail: string,
   ): Promise<string> => {
     try {
+      if (++hostCalls > MAX_HOST_CALLS) {
+        return fail(
+          `too many operations in one script (limit ${MAX_HOST_CALLS}) — batch your reads and cap list sizes; do not loop over the same call`,
+        );
+      }
+      if (argsJson.length > MAX_ARG_BYTES) {
+        return fail("arguments too large — pass only the fields the operation needs");
+      }
       if (!isAllowedPath(pathStr)) return fail(`operation not allowed: ${pathStr}`);
       // Resolve the target mailbox. A named account (corsair.account("email"))
       // must be one the user OWNS — `accounts` is the session's own list, so the
@@ -154,6 +174,14 @@ export async function runScriptSandboxed(
           );
         }
         gate.budget.remaining -= 1;
+      } else if (isBlockedWrite(pathStr)) {
+        // Fail closed: a mutating op that is neither an explicitly-handled
+        // destructive op (staged above) nor a known-benign write must NOT run —
+        // closes the denylist gap where e.g. settings.updateAutoForwarding /
+        // acl.insert / calendars.clear would otherwise execute unconfirmed.
+        return fail(
+          `operation not permitted: "${pathStr}" is a write Helm's agent can't perform. Only reading, sending/replying, drafts, trashing/deleting mail, label toggles, and calendar events are available — tell the user this isn't supported.`,
+        );
       }
       const parts = pathStr.split(".");
       const method = parts.pop()!;
@@ -175,6 +203,11 @@ export async function runScriptSandboxed(
       }
       return `{"ok":true,"data":${dataJson}}`;
     } catch (err) {
+      if (isAuthExpiredError(err)) {
+        return fail(
+          `account connection expired — this mailbox must be reconnected by the user (its Google access token is no longer valid). Report this account as needing reconnection; do NOT retry, and do NOT fabricate or guess its mail/events.`,
+        );
+      }
       return fail(err instanceof Error ? err.message : String(err));
     }
   };

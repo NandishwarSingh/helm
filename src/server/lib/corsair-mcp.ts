@@ -61,7 +61,13 @@ export async function createCorsairMcp(
     const code = typeof args.code === "string" ? args.code : "";
     const result = await runScriptSandboxed(tenant, code, gate, bridges);
     if (!result.ok) {
-      return { isError: true, content: [{ type: "text", text: `Error: ${result.error}` }] };
+      // A CONFIRM_REQUIRED carries its own instructions; any other failure means
+      // the read did NOT return data — make that unmissable so the model reports
+      // the failure instead of fabricating a summary/briefing from nothing.
+      const text = result.error.includes("CONFIRM_REQUIRED")
+        ? `Error: ${result.error}`
+        : `Error — this call FAILED and returned NO data. Report the failure to the user; do NOT summarize, brief, or invent any mail/events/counts for it: ${result.error}`;
+      return { isError: true, content: [{ type: "text", text }] };
     }
     // Harvest the returned records for end-of-answer Sources (never throws).
     try {
